@@ -10,7 +10,7 @@ from conversations.models import (
     Era, ContextHeap, ContextHeapType,
     Message, Thought, ToolUse, ToolResult, ThinkingEntity,
     ConversationParticipant,
-    CompactingAction
+    CompactingAction, MotionSession
 )
 from constant_sorrow.constants import EVENT_TYPE_WE_DO_NOT_HANDLE_YET
 
@@ -153,6 +153,23 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
         # Extract timestamp (common to all message types)
         timestamp = extract_timestamp(event)
 
+        # Fields every message carries, extracted once.
+        #
+        # These were being dropped: each get_or_create below listed its own
+        # defaults and none of them included session_id, so 99.6% of the
+        # corpus has no session at all and nothing could be grouped by
+        # conversation. `motion` is resolved here too, so a message lands in
+        # its Motion as it arrives rather than waiting for a later pass.
+        session_id = event.get('sessionId')
+        common = {
+            'session_id': session_id,
+            'cwd': event.get('cwd'),
+            'git_branch': event.get('gitBranch'),
+            'client_version': event.get('version'),
+            'motion': MotionSession.motion_for(session_id),
+            'created_at': timezone.now(),
+        }
+
         if event_type == "summary":
                 compacting_action, created = handle_summary(event, filename)
                 return compacting_action, created
@@ -189,7 +206,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
                     'content': content,
                     'signature': signature,
                     'timestamp': timestamp,
-                    'created_at': timezone.now(),
+                    **common,
                 }
             )
             # Thoughts are internal deliberation - magent talking to self
@@ -213,7 +230,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
                     'tool_id': tool_use_item.get('id', ''),
                     'content': tool_use_item.get('input', {}),
                     'timestamp': timestamp,
-                    'created_at': timezone.now(),
+                    **common,
                 }
             )
             # Tool use is magent invoking a tool
@@ -256,7 +273,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
                     'tool_id': tool_use_item.get('id', ''),
                     'content': content,
                     'timestamp': timestamp,
-                    'created_at': timezone.now(),
+                    **common,
                 }
             )
             # Tool use is magent invoking a tool
@@ -298,7 +315,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
                     'source_file': filename,
                     'content': content,
                     'timestamp': timestamp,
-                    'created_at': timezone.now(),
+                    **common,
                 }
             )
             # Thought-out response is magent responding to user
@@ -320,7 +337,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
                     'is_error': event.get('is_error', False),
                     'tool_use_id': event.get('tool_use_id', ''),
                     'timestamp': timestamp,
-                    'created_at': timezone.now(),
+                    **common,
                 }
             )
             # Tool result goes back to magent
@@ -337,7 +354,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
                     'content': event['message']['content'],
                     'is_continuation_message': True,
                     'timestamp': timestamp,
-                    'created_at': timezone.now(),
+                    **common,
                 }
             )
             # Continuation is magent to user (resuming after compact)
@@ -364,7 +381,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
                     'source_file': filename,
                     'content': content,
                     'timestamp': timestamp,
-                    'created_at': timezone.now(),
+                    **common,
                 }
             )
 
@@ -390,7 +407,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
                     'source_file': filename,
                     'content': content,
                     'timestamp': timestamp,
-                    'created_at': timezone.now(),
+                    **common,
                 }
             )
             # Add recipient for uncertain messages
@@ -409,7 +426,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
                     'source_file': filename,
                     'content': content[0]['text'],
                     'timestamp': timestamp,
-                    'created_at': timezone.now(),
+                    **common,
                 }
             )
             message.recipients.add(magent)
@@ -449,7 +466,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
                     'source_file': filename,
                     'content': parsed_content,
                     'timestamp': timestamp,
-                    'created_at': timezone.now(),
+                    **common,
                 }
             )
 
@@ -473,7 +490,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
                     'source_file': filename,
                     'content': content,
                     'timestamp': timestamp,
-                    'created_at': timezone.now(),
+                    **common,
                 }
             )
             if created:

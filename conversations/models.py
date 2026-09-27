@@ -321,8 +321,47 @@ class Motion(models.Model):
             sent_messages__motion=self
         ).distinct()
 
+    def claim(self, session_id):
+        """Route a session's messages into this Motion as they arrive."""
+        claim, _ = MotionSession.objects.update_or_create(
+            session_id=session_id, defaults={'motion': self}
+        )
+        return claim
+
     def __str__(self):
         return self.title or self.slug
+
+
+class MotionSession(models.Model):
+    """A runtime session claimed by a Motion.
+
+    Sessions are instances of a process; Motions are subjects. One Motion
+    collects as many sessions as the subject needed -- across compactions,
+    resumes, machines, people and backends.
+
+    This exists so routing happens at import time. A message lands in its
+    Motion as it arrives, rather than being swept up by a later pass, which
+    means a Motion is live rather than periodically reconciled.
+    """
+
+    session_id = models.UUIDField(primary_key=True)
+    motion = models.ForeignKey(Motion, models.CASCADE, related_name='claimed_sessions')
+    claimed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'motion_sessions'
+        ordering = ['claimed_at']
+
+    @classmethod
+    def motion_for(cls, session_id):
+        """The Motion claiming this session, or None. Used by importers."""
+        if not session_id:
+            return None
+        claim = cls.objects.filter(session_id=session_id).select_related('motion').first()
+        return claim.motion if claim else None
+
+    def __str__(self):
+        return f"{self.session_id} → {self.motion_id}"
 
 
 # ============================================================================
