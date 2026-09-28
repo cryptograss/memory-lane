@@ -46,6 +46,30 @@ class RenderHtmlTest(TestCase):
         self.assertNotIn('<strong>', out)
         self.assertNotIn('wikilink', out)
 
+    def test_markdown_links(self):
+        out = render_html('see [the PR](https://github.com/x/y/pull/10), then.')
+        self.assertIn('<a href="https://github.com/x/y/pull/10">the PR</a>, then.', out)
+
+    def test_bare_url_stops_before_punctuation(self):
+        out = render_html('(at https://example.com/a). And https://example.com/b, ok')
+        self.assertIn('<a href="https://example.com/a">https://example.com/a</a>).', out)
+        self.assertIn('<a href="https://example.com/b">https://example.com/b</a>, ok', out)
+
+    def test_inline_code_is_literal(self):
+        out = render_html('write `**bold**` and `[[x]]` and `https://a.b` literally')
+        self.assertIn('<code>**bold**</code>', out)
+        self.assertIn('<code>[[x]]</code>', out)
+        self.assertIn('<code>https://a.b</code>', out)
+        self.assertNotIn('<strong>', out)
+        self.assertNotIn('<a ', out)
+
+    def test_markdown_tables(self):
+        out = render_html('intro\n| when | block | where |\n|---|---:|---|\n| mine | **26,078,743** | hunter |\nafter')
+        self.assertIn('<table><thead><tr><th>when</th><th>block</th><th>where</th></tr></thead>', out)
+        self.assertIn('<tbody><tr><td>mine</td><td><strong>26,078,743</strong></td><td>hunter</td></tr></tbody></table>', out)
+        self.assertIn('<p>intro</p>', out)
+        self.assertIn('<p>after</p>', out)
+
     def test_headings_become_small(self):
         self.assertIn('<h4>Where we are</h4>', render_html('## Where we are'))
 

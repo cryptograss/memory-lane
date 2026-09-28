@@ -77,10 +77,21 @@ _INLINE_CODE = re.compile(r'`([^`\n]+)`')
 _BOLD = re.compile(r'\*\*([^*\n]+)\*\*')
 _ITALIC = re.compile(r'(?<![*\w])\*([^*\n]+)\*(?!\*)')
 _WIKILINK = re.compile(r'\[\[([^\]|]+)(?:\|([^\]]+))?\]\]')
-_URL = re.compile(r'(?<!["\'>])(https?://[^\s<]+)')
+_MD_LINK = re.compile(r'\[([^\]]+)\]\((https?://[^)\s]+)\)')
+_URL = re.compile(r'(?<!["\'>=])(https?://[^\s<]+)')
+_TRAILING_PUNCT = '.,;:!?)]\'"'
 _HEADING = re.compile(r'^#{1,6}\s+(.+)$')
 _BULLET = re.compile(r'^\s*[-*–]\s+(.*)$')
 _NUMBERED = re.compile(r'^\s*\d+[.)]\s+(.*)$')
+_TABLE_SEP_CELL = re.compile(r'^:?-+:?$')
+
+
+def _table_cells(line):
+    return [c.strip() for c in line.strip().strip('|').split('|')]
+
+
+def _is_table_separator(cells):
+    return all(_TABLE_SEP_CELL.match(c) for c in cells if c) and any(cells)
 
 
 def _wikilink(match):
@@ -90,12 +101,30 @@ def _wikilink(match):
     return f'<a class="wikilink" href="{href}">{label}</a>'
 
 
+def _link_url(match):
+    """Link a bare URL, leaving sentence punctuation outside the anchor."""
+    url, tail = match.group(1), ''
+    while url and url[-1] in _TRAILING_PUNCT:
+        tail, url = url[-1] + tail, url[:-1]
+    return f'<a href="{url}">{url}</a>{tail}'
+
+
 def _inline(text):
-    text = _INLINE_CODE.sub(r'<code>\1</code>', text)
+    # Inline code is literal: lift it out so nothing below formats it.
+    codes = []
+
+    def keep(match):
+        codes.append(match.group(1))
+        return f'\x01{len(codes) - 1}\x01'
+
+    text = _INLINE_CODE.sub(keep, text)
     text = _BOLD.sub(r'<strong>\1</strong>', text)
     text = _ITALIC.sub(r'<em>\1</em>', text)
     text = _WIKILINK.sub(_wikilink, text)
-    text = _URL.sub(r'<a href="\1">\1</a>', text)
+    text = _MD_LINK.sub(r'<a href="\2">\1</a>', text)
+    text = _URL.sub(_link_url, text)
+    for i, code in enumerate(codes):
+        text = text.replace(f'\x01{i}\x01', f'<code>{code}</code>')
     return text
 
 
@@ -114,6 +143,7 @@ def render_html(text):
 
     blocks = []
     paragraph, list_items, list_tag = [], [], None
+    table_rows = []
 
     def flush_paragraph():
         if paragraph:
@@ -128,12 +158,30 @@ def render_html(text):
             list_items.clear()
         list_tag = None
 
+    def flush_table():
+        rows = [r for r in table_rows if not _is_table_separator(r)]
+        if rows:
+            head = ''.join(f'<th>{_inline(c)}</th>' for c in rows[0])
+            body = ''.join(
+                '<tr>' + ''.join(f'<td>{_inline(c)}</td>' for c in r) + '</tr>'
+                for r in rows[1:]
+            )
+            blocks.append(f'<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>')
+        table_rows.clear()
+
     for line in text.split('\n'):
         stripped = line.strip()
         if not stripped:
             flush_paragraph()
             flush_list()
+            flush_table()
             continue
+        if stripped.startswith('|') and stripped.endswith('|'):
+            flush_paragraph()
+            flush_list()
+            table_rows.append(_table_cells(stripped))
+            continue
+        flush_table()
         if stripped.startswith('\x00'):
             flush_paragraph()
             flush_list()
@@ -159,6 +207,7 @@ def render_html(text):
 
     flush_paragraph()
     flush_list()
+    flush_table()
 
     out = '\n'.join(blocks)
     for i, code in enumerate(fences):
