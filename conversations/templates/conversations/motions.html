@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Motions</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b6560;
+    --line: #e6e1d8; --accent: #b8106b; --accent-soft: #fbe7f1;
+    --human: #2a5d9f; --agent: #b8106b; --code: #f3efe8;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.5; color: var(--ink); background: var(--bg);
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 14px; padding: 10px 18px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header .brand { font-weight: 700; color: var(--accent); letter-spacing: .02em; }
+  header .brand small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+  header .status { margin-left: auto; font-size: 12px; color: var(--muted); }
+  header .status.live::before { content: "●"; color: #2e9e5b; margin-right: 5px; }
+  header .status.stale::before { content: "●"; color: #d08b00; margin-right: 5px; }
+
+  .layout { flex: 1; display: flex; min-height: 0; }
+
+  nav {
+    width: 270px; flex: none; overflow-y: auto; background: var(--panel);
+    border-right: 1px solid var(--line); padding: 10px 0;
+  }
+  nav .label { padding: 4px 16px 8px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--muted); }
+  nav a.motion {
+    display: block; padding: 9px 16px; text-decoration: none; color: inherit;
+    border-left: 3px solid transparent;
+  }
+  nav a.motion:hover { background: #f6f3ee; }
+  nav a.motion.active { background: var(--accent-soft); border-left-color: var(--accent); }
+  nav a.motion .title { font-weight: 600; }
+  nav a.motion .meta { font-size: 12px; color: var(--muted); }
+
+  main { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 0 60px; }
+  .inner { max-width: 760px; margin: 0 auto; padding: 0 22px; }
+
+  .motion-head h1 { font-size: 22px; margin: 0 0 4px; }
+  .motion-head .desc { color: var(--muted); margin: 0 0 6px; }
+  .motion-head .meta { font-size: 12px; color: var(--muted); }
+  .motion-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+
+  .turn { padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .turn .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .turn .who .name { font-weight: 700; }
+  .turn.human .who .name { color: var(--human); }
+  .turn.agent .who .name { color: var(--agent); }
+  .turn .who time { font-size: 12px; color: var(--muted); }
+  .turn .body > :first-child { margin-top: 0; }
+  .turn .body > :last-child { margin-bottom: 0; }
+  .turn .body p { margin: 0 0 .7em; }
+  .turn .body ul, .turn .body ol { margin: 0 0 .7em; padding-left: 1.4em; }
+  .turn .body h4 { margin: .8em 0 .3em; font-size: 15px; }
+  .turn .body code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  .turn .body pre { background: var(--code); padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: 13px; }
+  .turn .body pre code { background: none; padding: 0; }
+  .turn .body a { color: var(--human); }
+  .turn .body a.wikilink { color: var(--accent); text-decoration: underline dotted; }
+  .turn.new { animation: arrive .6s ease-out; }
+  @keyframes arrive { from { background: var(--accent-soft); } to { background: transparent; } }
+
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  @media (max-width: 720px) {
+    .layout { flex-direction: column; }
+    nav { width: auto; max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">Motions<small>memory-lane</small></span>
+  <span class="status" id="status">connecting…</span>
+</header>
+<div class="layout">
+  <nav id="nav"><div class="label">Motions</div></nav>
+  <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div></main>
+</div>
+
+<script>
+(function () {
+  const POLL_MS = 4000;
+  const initialSlug = "{{ initial_slug|escapejs }}" || null;
+  const nav = document.getElementById('nav');
+  const inner = document.getElementById('inner');
+  const main = document.getElementById('main');
+  const status = document.getElementById('status');
+
+  let motions = [];
+  let current = null;       // slug
+  let lastId = null;        // last turn id rendered, for ?after=
+  let timer = null;
+
+  function setStatus(text, cls) { status.textContent = text; status.className = 'status ' + (cls || ''); }
+  function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function ago(iso) {
+    if (!iso) return 'never';
+    const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+  function stamp(iso) {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function renderNav() {
+    const items = motions.map(m => `
+      <a class="motion ${m.slug === current ? 'active' : ''}" href="/motions/${encodeURIComponent(m.slug)}/" data-slug="${esc(m.slug)}">
+        <div class="title">${esc(m.title)}</div>
+        <div class="meta">${esc(m.participants.join(', ') || '—')} · ${m.message_count} · ${ago(m.last_at)}</div>
+      </a>`).join('');
+    nav.innerHTML = '<div class="label">Motions</div>' + items;
+  }
+
+  function renderHead(m) {
+    const block = m.eth_blockheight ? 'opened at block ' + m.eth_blockheight.toLocaleString() : '';
+    return `<div class="motion-head">
+      <h1>${esc(m.title)}</h1>
+      ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
+      <div class="meta">${esc(m.participants.join(', '))}${block ? ' · ' + block : ''} · ${m.message_count} messages in the record</div>
+    </div><div id="turns"></div>`;
+  }
+
+  function turnEl(t, isNew) {
+    const el = document.createElement('article');
+    el.className = 'turn ' + (t.is_human ? 'human' : 'agent') + (isNew ? ' new' : '');
+    el.innerHTML = `<div class="who"><span class="name">${esc(t.sender)}</span><time datetime="${t.created_at}">${stamp(t.created_at)}</time></div><div class="body">${t.html}</div>`;
+    return el;
+  }
+
+  async function loadMotions() {
+    const r = await fetch('/api/motions/');
+    if (!r.ok) throw new Error('motions ' + r.status);
+    motions = (await r.json()).motions;
+    renderNav();
+  }
+
+  async function open(slug, push) {
+    current = slug; lastId = null;
+    if (push) history.pushState({ slug }, '', '/motions/' + encodeURIComponent(slug) + '/');
+    renderNav();
+    inner.innerHTML = '<div class="empty">Loading…</div>';
+    await poll(true);
+  }
+
+  async function poll(full) {
+    if (!current) return;
+    const url = '/api/motions/' + encodeURIComponent(current) + '/turns/' + (lastId && !full ? '?after=' + lastId : '');
+    let data;
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(r.status);
+      data = await r.json();
+      setStatus('live', 'live');
+    } catch (e) {
+      setStatus('reconnecting…', 'stale');
+      return;
+    }
+    if (full) {
+      inner.innerHTML = renderHead(data.motion);
+      document.title = data.motion.title + ' · Motions';
+    }
+    const turnsEl = document.getElementById('turns');
+    if (!turnsEl) return;
+    if (full && data.turns.length === 0) {
+      turnsEl.innerHTML = '<div class="empty">Nothing said here yet.</div>';
+    }
+    if (data.turns.length) {
+      const nearBottom = main.scrollHeight - main.scrollTop - main.clientHeight < 120;
+      const emptyNote = turnsEl.querySelector('.empty'); if (emptyNote) emptyNote.remove();
+      for (const t of data.turns) turnsEl.appendChild(turnEl(t, !full));
+      lastId = data.turns[data.turns.length - 1].id;
+      if (full || nearBottom) main.scrollTop = main.scrollHeight;
+      if (!full) { await loadMotions(); }
+    }
+  }
+
+  nav.addEventListener('click', e => {
+    const a = e.target.closest('a.motion'); if (!a) return;
+    e.preventDefault(); open(a.dataset.slug, true);
+  });
+  window.addEventListener('popstate', e => {
+    const slug = (e.state && e.state.slug) || location.pathname.split('/')[2];
+    if (slug) open(decodeURIComponent(slug), false);
+  });
+
+  (async function start() {
+    try { await loadMotions(); } catch (e) { setStatus('cannot reach memory-lane', 'stale'); return; }
+    const slug = initialSlug || (motions[0] && motions[0].slug);
+    if (!slug) { inner.innerHTML = '<div class="empty">No Motions yet.</div>'; setStatus('live', 'live'); return; }
+    await open(slug, false);
+    timer = setInterval(() => poll(false), POLL_MS);
+  })();
+})();
+</script>
+</body>
+</html>
