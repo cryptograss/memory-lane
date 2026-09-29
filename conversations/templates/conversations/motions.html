@@ -8,7 +8,7 @@
   :root {
     --bg: #fbfaf7; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b6560;
     --line: #e6e1d8; --accent: #b8106b; --accent-soft: #fbe7f1;
-    --human: #2a5d9f; --agent: #b8106b; --code: #f3efe8;
+    --human: #2a5d9f; --agent: #b8106b; --code: #f3efe8; --mention: #fff3c4;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -18,11 +18,15 @@
     display: flex; flex-direction: column;
   }
   header {
-    display: flex; align-items: baseline; gap: 14px; padding: 10px 18px;
-    border-bottom: 1px solid var(--line); background: var(--panel);
+    display: flex; align-items: center; gap: 14px; padding: 8px 18px;
+    border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap;
   }
   header .brand { font-weight: 700; color: var(--accent); letter-spacing: .02em; }
   header .brand small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+  header .me { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  header select { font: inherit; font-size: 13px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink); }
+  header label.only { display: none; align-items: center; gap: 5px; font-size: 13px; color: var(--muted); cursor: pointer; }
+  body.has-me header label.only { display: inline-flex; }
   header .status { margin-left: auto; font-size: 12px; color: var(--muted); }
   header .status.live::before { content: "●"; color: #2e9e5b; margin-right: 5px; }
   header .status.stale::before { content: "●"; color: #d08b00; margin-right: 5px; }
@@ -41,8 +45,13 @@
   }
   nav a.motion:hover { background: #f6f3ee; }
   nav a.motion.active { background: var(--accent-soft); border-left-color: var(--accent); }
-  nav a.motion .title { font-weight: 600; }
+  nav a.motion .title { font-weight: 600; display: flex; align-items: center; gap: 8px; }
   nav a.motion .meta { font-size: 12px; color: var(--muted); }
+  .badge {
+    display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px;
+    background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
+    line-height: 18px; text-align: center;
+  }
 
   main { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 0 60px; }
   .inner { max-width: 760px; margin: 0 auto; padding: 0 22px; }
@@ -52,7 +61,9 @@
   .motion-head .meta { font-size: 12px; color: var(--muted); }
   .motion-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
 
-  .turn { padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .turn { padding: 14px 0 14px 10px; margin-left: -10px; border-bottom: 1px solid var(--line); border-left: 3px solid transparent; }
+  .turn.mentions-me { border-left-color: var(--accent); }
+  body.only-mine .turn:not(.mentions-me) { display: none; }
   .turn .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
   .turn .who .name { font-weight: 700; }
   .turn.human .who .name { color: var(--human); }
@@ -71,6 +82,8 @@
   .turn .body th { background: var(--code); font-weight: 600; }
   .turn .body a { color: var(--human); }
   .turn .body a.wikilink { color: var(--accent); text-decoration: underline dotted; }
+  .mention { background: var(--code); border-radius: 4px; padding: 0 4px; font-weight: 600; }
+  .mention.me { background: var(--mention); }
   .turn.new { animation: arrive .6s ease-out; }
   @keyframes arrive { from { background: var(--accent-soft); } to { background: transparent; } }
 
@@ -84,6 +97,8 @@
 <body>
 <header>
   <span class="brand">Motions<small>memory-lane</small></span>
+  <span class="me">viewing as <select id="me"><option value="">nobody</option></select></span>
+  <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
   <span class="status" id="status">connecting…</span>
 </header>
 <div class="layout">
@@ -99,11 +114,24 @@
   const inner = document.getElementById('inner');
   const main = document.getElementById('main');
   const status = document.getElementById('status');
+  const meSelect = document.getElementById('me');
+  const onlyMine = document.getElementById('onlyMine');
+
+  // Who is looking. Lives in the browser: the view has no accounts, and a
+  // filter is not a permission. Everything here stays readable to anyone.
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('motions.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem('motions.' + k, JSON.stringify(v)); } catch (e) {} },
+  };
 
   let motions = [];
+  let names = new Set();
   let current = null;       // slug
   let lastId = null;        // last turn id rendered, for ?after=
-  let timer = null;
+  let me = store.get('me', '') || '';
+  let lastSeen = store.get('lastSeen', {});   // slug -> iso
+  let badges = {};          // slug -> count of my mentions since lastSeen
+  let baseTitle = 'Motions';
 
   function setStatus(text, cls) { status.textContent = text; status.className = 'status ' + (cls || ''); }
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -116,17 +144,33 @@
     return Math.floor(s / 86400) + 'd ago';
   }
   function stamp(iso) {
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+  function setTitle() {
+    const n = Object.values(badges).reduce((a, b) => a + b, 0);
+    document.title = (n ? '(' + n + ') ' : '') + baseTitle;
   }
 
   function renderNav() {
     const items = motions.map(m => `
       <a class="motion ${m.slug === current ? 'active' : ''}" href="/motions/${encodeURIComponent(m.slug)}/" data-slug="${esc(m.slug)}">
-        <div class="title">${esc(m.title)}</div>
+        <div class="title">${esc(m.title)}${badges[m.slug] ? `<span class="badge">${badges[m.slug]}</span>` : ''}</div>
         <div class="meta">${esc(m.participants.join(', ') || '—')} · ${m.message_count} · ${ago(m.last_at)}</div>
       </a>`).join('');
     nav.innerHTML = '<div class="label">Motions</div>' + items;
+  }
+
+  function renderMe() {
+    const opts = ['<option value="">nobody</option>'].concat(
+      [...names].sort().map(n => `<option value="${esc(n)}" ${n === me ? 'selected' : ''}>${esc(n)}</option>`));
+    meSelect.innerHTML = opts.join('');
+    document.body.classList.toggle('has-me', !!me);
+    if (!me) { onlyMine.checked = false; document.body.classList.remove('only-mine'); }
+  }
+
+  function markTurn(el, mentions) {
+    el.classList.toggle('mentions-me', !!me && mentions.includes(me));
+    el.querySelectorAll('.mention').forEach(s => s.classList.toggle('me', s.dataset.who === me));
   }
 
   function renderHead(m) {
@@ -141,20 +185,53 @@
   function turnEl(t, isNew) {
     const el = document.createElement('article');
     el.className = 'turn ' + (t.is_human ? 'human' : 'agent') + (isNew ? ' new' : '');
+    el.dataset.mentions = JSON.stringify(t.mentions || []);
     el.innerHTML = `<div class="who"><span class="name">${esc(t.sender)}</span><time datetime="${t.created_at}">${stamp(t.created_at)}</time></div><div class="body">${t.html}</div>`;
+    markTurn(el, t.mentions || []);
     return el;
+  }
+
+  function remarkAll() {
+    document.querySelectorAll('.turn').forEach(el => markTurn(el, JSON.parse(el.dataset.mentions || '[]')));
   }
 
   async function loadMotions() {
     const r = await fetch('/api/motions/');
     if (!r.ok) throw new Error('motions ' + r.status);
     motions = (await r.json()).motions;
+    motions.forEach(m => m.participants.forEach(p => names.add(p)));
+    renderMe();
     renderNav();
+  }
+
+  async function refreshBadges() {
+    badges = {};
+    if (!me) { renderNav(); setTitle(); return; }
+    // Look back as far as the oldest lastSeen we have, else a week.
+    const seen = Object.values(lastSeen).sort();
+    const since = seen[0] || new Date(Date.now() - 7 * 86400 * 1000).toISOString();
+    try {
+      const r = await fetch('/api/mentions/' + encodeURIComponent(me) + '/?since=' + encodeURIComponent(since) + '&limit=200');
+      if (!r.ok) return;
+      for (const m of (await r.json()).mentions) {
+        if (m.motion === current) continue;
+        const floor = lastSeen[m.motion];
+        if (!floor || m.turn.created_at > floor) badges[m.motion] = (badges[m.motion] || 0) + 1;
+      }
+    } catch (e) {}
+    renderNav(); setTitle();
+  }
+
+  function touch(slug) {
+    lastSeen[slug] = new Date().toISOString();
+    store.set('lastSeen', lastSeen);
+    if (badges[slug]) { delete badges[slug]; renderNav(); setTitle(); }
   }
 
   async function open(slug, push) {
     current = slug; lastId = null;
     if (push) history.pushState({ slug }, '', '/motions/' + encodeURIComponent(slug) + '/');
+    touch(slug);
     renderNav();
     inner.innerHTML = '<div class="empty">Loading…</div>';
     await poll(true);
@@ -175,7 +252,8 @@
     }
     if (full) {
       inner.innerHTML = renderHead(data.motion);
-      document.title = data.motion.title + ' · Motions';
+      baseTitle = data.motion.title + ' · Motions';
+      setTitle();
     }
     const turnsEl = document.getElementById('turns');
     if (!turnsEl) return;
@@ -188,9 +266,17 @@
       for (const t of data.turns) turnsEl.appendChild(turnEl(t, !full));
       lastId = data.turns[data.turns.length - 1].id;
       if (full || nearBottom) main.scrollTop = main.scrollHeight;
+      touch(current);
       if (!full) { await loadMotions(); }
     }
+    await refreshBadges();
   }
+
+  meSelect.addEventListener('change', () => {
+    me = meSelect.value; store.set('me', me);
+    renderMe(); remarkAll(); refreshBadges();
+  });
+  onlyMine.addEventListener('change', () => document.body.classList.toggle('only-mine', onlyMine.checked));
 
   nav.addEventListener('click', e => {
     const a = e.target.closest('a.motion'); if (!a) return;
@@ -206,7 +292,7 @@
     const slug = initialSlug || (motions[0] && motions[0].slug);
     if (!slug) { inner.innerHTML = '<div class="empty">No Motions yet.</div>'; setStatus('live', 'live'); return; }
     await open(slug, false);
-    timer = setInterval(() => poll(false), POLL_MS);
+    setInterval(() => poll(false), POLL_MS);
   })();
 })();
 </script>

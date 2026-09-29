@@ -77,6 +77,8 @@ _INLINE_CODE = re.compile(r'`([^`\n]+)`')
 _BOLD = re.compile(r'\*\*([^*\n]+)\*\*')
 _ITALIC = re.compile(r'(?<![*\w])\*([^*\n]+)\*(?!\*)')
 _WIKILINK = re.compile(r'\[\[([^\]|]+)(?:\|([^\]]+))?\]\]')
+# @name, but not inside an email, a URL path, or another handle.
+_MENTION = re.compile(r'(?<![\w@/.])@([A-Za-z][\w.-]*)')
 _MD_LINK = re.compile(r'\[([^\]]+)\]\((https?://[^)\s]+)\)')
 _URL = re.compile(r'(?<!["\'>=])(https?://[^\s<]+)')
 _TRAILING_PUNCT = '.,;:!?)]\'"'
@@ -101,6 +103,46 @@ def _wikilink(match):
     return f'<a class="wikilink" href="{href}">{label}</a>'
 
 
+def known_names():
+    """Names that can be mentioned: every thinking entity, human or agent."""
+    from conversations.models import ThinkingEntity
+    return set(ThinkingEntity.objects.values_list('name', flat=True))
+
+
+def mentions_in(text, mentionable):
+    """Ordered, de-duplicated names mentioned in text, restricted to known ones.
+
+    Restricting to known names is what keeps an email address or a stray
+    handle from becoming a mention. Matching is case-insensitive; the
+    canonical (lowercase) name is returned.
+    """
+    lowered = {n.lower() for n in mentionable}
+    # Code is literal for the renderer, so it must be literal here too, or
+    # the mention count and the highlighted text disagree.
+    text = _INLINE_CODE.sub('', _FENCE.sub('', text))
+    seen, out = set(), []
+    for match in _MENTION.finditer(text):
+        name = match.group(1).rstrip('.').lower()
+        if name in lowered and name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def _mention(mentionable):
+    lowered = {n.lower() for n in mentionable}
+
+    def repl(match):
+        raw = match.group(1)
+        trailing = ''
+        if raw.endswith('.'):
+            raw, trailing = raw[:-1], '.'
+        if raw.lower() not in lowered:
+            return match.group(0)
+        return f'<span class="mention" data-who="{raw.lower()}">@{raw}</span>{trailing}'
+    return repl
+
+
 def _link_url(match):
     """Link a bare URL, leaving sentence punctuation outside the anchor."""
     url, tail = match.group(1), ''
@@ -109,7 +151,7 @@ def _link_url(match):
     return f'<a href="{url}">{url}</a>{tail}'
 
 
-def _inline(text):
+def _inline(text, mentionable=()):
     # Inline code is literal: lift it out so nothing below formats it.
     codes = []
 
@@ -123,14 +165,19 @@ def _inline(text):
     text = _WIKILINK.sub(_wikilink, text)
     text = _MD_LINK.sub(r'<a href="\2">\1</a>', text)
     text = _URL.sub(_link_url, text)
+    if mentionable:
+        text = _MENTION.sub(_mention(mentionable), text)
     for i, code in enumerate(codes):
         text = text.replace(f'\x01{i}\x01', f'<code>{code}</code>')
     return text
 
 
-def render_html(text):
+def render_html(text, mentionable=()):
     """Escape, then translate the markdown the agent writes into HTML."""
     text = html.escape(text, quote=False)
+
+    def inline(s):
+        return _inline(s, mentionable)
 
     # Lift fenced code out before anything else can touch it.
     fences = []
@@ -147,13 +194,13 @@ def render_html(text):
 
     def flush_paragraph():
         if paragraph:
-            blocks.append('<p>' + _inline('<br>'.join(paragraph)) + '</p>')
+            blocks.append('<p>' + inline('<br>'.join(paragraph)) + '</p>')
             paragraph.clear()
 
     def flush_list():
         nonlocal list_tag
         if list_items:
-            items = ''.join(f'<li>{_inline(i)}</li>' for i in list_items)
+            items = ''.join(f'<li>{inline(i)}</li>' for i in list_items)
             blocks.append(f'<{list_tag}>{items}</{list_tag}>')
             list_items.clear()
         list_tag = None
@@ -161,9 +208,9 @@ def render_html(text):
     def flush_table():
         rows = [r for r in table_rows if not _is_table_separator(r)]
         if rows:
-            head = ''.join(f'<th>{_inline(c)}</th>' for c in rows[0])
+            head = ''.join(f'<th>{inline(c)}</th>' for c in rows[0])
             body = ''.join(
-                '<tr>' + ''.join(f'<td>{_inline(c)}</td>' for c in r) + '</tr>'
+                '<tr>' + ''.join(f'<td>{inline(c)}</td>' for c in r) + '</tr>'
                 for r in rows[1:]
             )
             blocks.append(f'<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>')
@@ -191,7 +238,7 @@ def render_html(text):
         if heading:
             flush_paragraph()
             flush_list()
-            blocks.append(f'<h4>{_inline(heading.group(1))}</h4>')
+            blocks.append(f'<h4>{inline(heading.group(1))}</h4>')
             continue
         bullet, numbered = _BULLET.match(line), _NUMBERED.match(line)
         if bullet or numbered:
@@ -215,14 +262,15 @@ def render_html(text):
     return out
 
 
-def turn_payload(msg, text):
+def turn_payload(msg, text, mentionable=()):
     return {
         'id': str(msg.id),
         'sender': msg.sender_id,
         'is_human': bool(getattr(getattr(msg.sender, 'thinkingentity', None),
                                  'is_biological_human', False)),
         'created_at': msg.created_at.isoformat(),
-        'html': render_html(text),
+        'mentions': mentions_in(text, mentionable),
+        'html': render_html(text, mentionable),
     }
 
 

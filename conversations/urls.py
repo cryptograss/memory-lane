@@ -7,6 +7,7 @@ urlpatterns = [
     path('motions/<slug:slug>/', views_motions.motions_page, name='motion'),
     path('api/motions/', views_motions.api_motions, name='api_motions'),
     path('api/motions/<slug:slug>/turns/', views_motions.api_motion_turns, name='api_motion_turns'),
+    path('api/mentions/<slug:name>/', views_motions.api_mentions, name='api_mentions'),
     path('memory_lane/', views.memory_lane, name='memory_lane'),
     path('spy/', views.stream, name='spy'),
     path('api/recent_messages/', views.recent_messages, name='recent_messages'),

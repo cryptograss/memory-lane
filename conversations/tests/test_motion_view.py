@@ -46,6 +46,34 @@ class RenderHtmlTest(TestCase):
         self.assertNotIn('<strong>', out)
         self.assertNotIn('wikilink', out)
 
+    def test_mentions_render_only_known_names(self):
+        out = render_html('hey @Justin and @nobody, mail a@b.com, see https://x.y/@z. cc @magent.',
+                          mentionable={'justin', 'magent'})
+        self.assertIn('<span class="mention" data-who="justin">@Justin</span>', out)
+        self.assertIn('<span class="mention" data-who="magent">@magent</span>.', out)
+        self.assertIn('@nobody', out)
+        self.assertNotIn('data-who="nobody"', out)
+        self.assertIn('a@b.com', out)
+        self.assertNotIn('data-who="b', out)
+        self.assertNotIn('data-who="z"', out)
+
+    def test_mentions_without_mentionable_are_plain(self):
+        self.assertNotIn('mention', render_html('hi @justin'))
+
+    def test_mentions_inside_code_are_literal(self):
+        from conversations.services.motion_view import mentions_in
+        text = 'run `@justin` and ```\n@justin\n```'
+        self.assertNotIn('class="mention"', render_html(text, mentionable={'justin'}))
+        # The count must agree with the rendering.
+        self.assertEqual(mentions_in(text, {'justin'}), [])
+        self.assertEqual(mentions_in(text + ' but @justin here', {'justin'}), ['justin'])
+
+    def test_mentions_in(self):
+        from conversations.services.motion_view import mentions_in
+        self.assertEqual(mentions_in('@Magent @justin @magent @nobody.', {'justin', 'magent'}),
+                         ['magent', 'justin'])
+        self.assertEqual(mentions_in('nothing here', {'justin'}), [])
+
     def test_markdown_links(self):
         out = render_html('see [the PR](https://github.com/x/y/pull/10), then.')
         self.assertIn('<a href="https://github.com/x/y/pull/10">the PR</a>, then.', out)
@@ -120,6 +148,61 @@ class ProseAndTurnsTest(TestCase):
         first = Message.objects.get(id=self.ids[0])
         texts = [t for _, t in turns(self.motion, after=first)]
         self.assertEqual(texts, ["reply **one**", "untyped block"])
+
+
+class MentionsApiTest(TestCase):
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.justin = ThinkingEntity.objects.create(name="justin", is_biological_human=True)
+        cls.magent = ThinkingEntity.objects.create(name="magent", is_biological_human=False)
+        tool = ConversationParticipant.objects.create(name="tool-result")
+        a = Motion.objects.create(slug="a")
+        b = Motion.objects.create(slug="b")
+        base = timezone.now() - timedelta(hours=2)
+        rows = [
+            (a, cls.magent, "@justin first", 0),
+            (b, cls.magent, "no mention", 1),
+            (b, cls.justin, "@magent are you there", 2),
+            (a, cls.magent, "second, @Justin.", 3),
+            (None, cls.magent, "@justin but not in any motion", 4),
+            (a, tool, "@justin from a tool result", 5),
+        ]
+        cls.ids = []
+        for motion, sender, text, minute in rows:
+            m = Message.objects.create(id=uuid.uuid4(), sender=sender, content=text, motion=motion)
+            Message.objects.filter(id=m.id).update(created_at=base + timedelta(minutes=minute))
+            cls.ids.append(m.id)
+
+    def test_newest_first_across_motions_from_thinking_entities_only(self):
+        data = self.client.get('/api/mentions/justin/').json()
+        self.assertEqual(data['name'], 'justin')
+        self.assertEqual([(m['motion'], m['turn']['sender']) for m in data['mentions']],
+                         [('a', 'magent'), ('a', 'magent')])
+        self.assertEqual(data['mentions'][0]['turn']['mentions'], ['justin'])
+        self.assertIn('data-who="justin"', data['mentions'][0]['turn']['html'])
+
+    def test_since_and_limit(self):
+        from urllib.parse import quote
+        first = Message.objects.get(id=self.ids[0])
+        # A '+' in an unencoded query string is a space; clients must encode.
+        data = self.client.get(f"/api/mentions/justin/?since={quote(first.created_at.isoformat())}").json()
+        self.assertEqual(len(data['mentions']), 1)
+        data = self.client.get('/api/mentions/JUSTIN/?limit=1').json()
+        self.assertEqual(len(data['mentions']), 1)
+
+    def test_bots_are_mentionable(self):
+        data = self.client.get('/api/mentions/magent/').json()
+        self.assertEqual([(m['motion'], m['turn']['sender']) for m in data['mentions']],
+                         [('b', 'justin')])
+
+    def test_unknown_name_is_404_and_read_only(self):
+        self.assertEqual(self.client.get('/api/mentions/nobody/').status_code, 404)
+        self.assertEqual(self.client.post('/api/mentions/justin/').status_code, 405)
+
+    def test_turns_carry_mentions(self):
+        data = self.client.get('/api/motions/b/turns/').json()
+        self.assertEqual([t['mentions'] for t in data['turns']], [[], ['magent']])
 
 
 class MotionApiTest(TestCase):
