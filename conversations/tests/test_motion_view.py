@@ -19,6 +19,21 @@ class RenderHtmlTest(TestCase):
         self.assertIn('&lt;script&gt;', out)
         self.assertIn('&amp; done', out)
 
+    def test_quotes_cannot_break_out_of_an_attribute(self):
+        # Escaping without quote=True let a " in a link target close href.
+        for attack in ('[[x"onmouseover="alert(1)|hover]]',
+                       'https://x.test/"onmouseover="alert(1)',
+                       '[hover](https://x.test/"onmouseover="alert(1))',
+                       "[[x'onmouseover='alert(1)]]"):
+            with self.subTest(attack=attack):
+                out = render_html(attack)
+                self.assertNotIn('"onmouseover', out)
+                self.assertNotIn("'onmouseover", out)
+
+    def test_a_quoted_url_links_without_the_quote(self):
+        out = render_html('see "https://pickipedia.xyz/wiki/Tony_Rice" there')
+        self.assertIn('href="https://pickipedia.xyz/wiki/Tony_Rice"', out)
+
     def test_inline_markdown(self):
         out = render_html('say **bold** and *soft* and `code`')
         self.assertIn('<strong>bold</strong>', out)
