@@ -466,6 +466,10 @@ class Message(models.Model):
             models.Index(fields=['session_id', 'timestamp']),
             models.Index(fields=['sender']),
             models.Index(fields=['motion', 'created_at']),
+            # stamp_blockheights looks for these every few minutes; without
+            # this each look is a full scan.
+            models.Index(fields=['timestamp'], condition=models.Q(eth_blockheight__isnull=True),
+                         name='message_unstamped_ts'),
         ]
         unique_together = [['context_heap', 'message_number']]
 
@@ -1251,6 +1255,26 @@ class RawImportedContent(models.Model):
 
     def __str__(self):
         return f"Raw data for {self.content_type} {str(self.object_id)[:8]}"
+
+
+class BlockAnchor(models.Model):
+    """
+    A real Ethereum block and its timestamp, fetched from a node.
+
+    Sparse on purpose: eth_blockheight elsewhere is interpolated between
+    anchors (see conversations/services/eth_blocks.py), so the record never
+    needs a node at ingest time.
+    """
+
+    number = models.BigIntegerField(primary_key=True)
+    timestamp = models.BigIntegerField(db_index=True, help_text='Unix seconds')
+
+    class Meta:
+        db_table = 'block_anchors'
+        ordering = ['number']
+
+    def __str__(self):
+        return f"Block {self.number} @ {self.timestamp}"
 
 
 # ============================================================================
