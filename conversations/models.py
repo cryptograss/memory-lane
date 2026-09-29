@@ -512,6 +512,12 @@ class Message(models.Model):
         elif event['type'] == 'file-history-snapshot':
             event_type = 'file-history-snapshot'
             event['uuid'] = event['messageId']
+        elif 'message' not in event:
+            # Session metadata (attachment, custom-title, agent-name, mode,
+            # pr-link, queue-operation, ...), which newer clients write
+            # alongside the conversation. Not a message; skip it quietly
+            # rather than raise KeyError on every batch (#13).
+            return EVENT_TYPE_WE_DO_NOT_HANDLE_YET, False
         else:
             message = event['message']
             role = message['role']
@@ -1042,13 +1048,9 @@ class CompactingAction(models.Model):
         if not post_compact_messages.exists():
             return None
 
-        # Find the first post-compact message to use as the new heap's first_message
-        first_post_compact = post_compact_messages.first()
-
-        # Create new heap
+        # Create new heap; its first_message() is derived from the moved messages
         new_heap = ContextHeap.objects.create(
             era=old_heap.era,
-            first_message=first_post_compact,
             type=ContextHeapType.POST_COMPACTING
         )
 
