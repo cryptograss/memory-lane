@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 from django.core.management.base import BaseCommand
 from django.utils.dateparse import parse_datetime
+from django.conf import settings
 from django.utils import timezone
 from conversations.models import (
     Era, ContextHeap, ContextHeapType,
@@ -132,28 +133,40 @@ def extract_timestamp(event):
     return None
 
 
-def tool_result_fields(event):
+def tool_result_fields(event, limit=None):
     """
     content, is_error and tool_use_id of a tool_result event.
 
     They live in the tool_result block, event['message']['content'][0], not
     at the top level of the event; reading the top level left every
     ToolResult in the record empty until this was fixed. The block's content
-    is a string or a list of blocks; text is kept and anything else (images,
-    tool references) is marked by type rather than silently dropped.
+    is a string or a list of blocks; text is kept, a tool reference keeps its
+    tool's name, and anything else (images) is marked by type.
+
+    How much content is kept is settings.TOOL_RESULT_CONTENT_CHARS, default
+    none: see the setting for why.
     """
+    if limit is None:
+        limit = settings.TOOL_RESULT_CONTENT_CHARS
     block = event['message']['content'][0]
     content = block.get('content', '')
     if isinstance(content, list):
         parts = []
         for part in content:
-            if part.get('type') == 'text':
+            if not isinstance(part, dict):
+                parts.append(str(part))
+            elif part.get('type') == 'text':
                 parts.append(part.get('text', ''))
+            elif part.get('type') == 'tool_reference':
+                parts.append(f"[tool_reference: {part.get('tool_name', 'unknown')}]")
             else:
                 parts.append(f"[{part.get('type', 'unknown')} omitted]")
         content = '\n'.join(parts)
+    content = Message.sanitize_content(content if isinstance(content, str) else str(content or ''))
+    if len(content) > limit:
+        content = content[:limit] + (f"\n[{len(content) - limit} more characters not kept]" if limit else '')
     return {
-        'content': content or '',
+        'content': content,
         'is_error': bool(block.get('is_error', False)),
         'tool_use_id': block.get('tool_use_id', ''),
     }
@@ -370,12 +383,20 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
             # Tool result goes back to magent
             if created:
                 message.recipients.add(magent)
-            elif not message.tool_use_id and fields['tool_use_id']:
-                # Imported empty by the old importer. Fill it in so a watcher
-                # replay repairs the record; a populated row is never touched.
-                for name, value in fields.items():
-                    setattr(message, name, value)
-                message.save(update_fields=list(fields))
+            else:
+                # The old importer stored every result empty. Fill in whatever
+                # is still empty, so a watcher replay repairs the record (and a
+                # later one adds content if the limit is raised); anything
+                # already there is never touched.
+                repaired = []
+                if not message.tool_use_id and fields['tool_use_id']:
+                    message.tool_use_id, message.is_error = fields['tool_use_id'], fields['is_error']
+                    repaired += ['tool_use_id', 'is_error']
+                if not message.content and fields['content']:
+                    message.content = fields['content']
+                    repaired.append('content')
+                if repaired:
+                    message.save(update_fields=repaired)
 
         elif event_type == "continuation":
             # sender and recipient are both magent, like a thought.
