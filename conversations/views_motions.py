@@ -14,7 +14,7 @@ from django.views.decorators.http import require_GET
 from .models import Message, Motion, ThinkingEntity
 from .services.motion_view import (
     MACHINERY_SENDERS, is_wrapper, known_names, mentions_in, motion_payload,
-    prose, turn_payload, turns,
+    prose, turn_payload, turns, wiki_title, wikilinks_in,
 )
 
 
@@ -76,6 +76,61 @@ def api_motion_sessions(request, slug):
     return JsonResponse({'motion': motion.slug, 'sessions': [
         {'session_id': str(s['session_id']), 'last_at': s['last_at'].isoformat()} for s in sessions
     ]})
+
+
+@require_GET
+def api_wikilinks(request):
+    """Turns in Motions that link to PickiPedia pages with [[...]], oldest first.
+
+    This is what PickiPedia reads to reach Motions without storing them.
+    ?page=<title> keeps one page's backlinks. ?since=<iso> starts after a
+    moment; pass back `next_since` to page forward. A message's links are
+    never split across pages. The cursor is ingest time (created_at), so a
+    consumer should overlap its cursor by a few minutes and dedupe on
+    (turn, page), and resync fully now and then: motion_assign attaches
+    old messages to a Motion without changing their created_at.
+    Titles are normalised as MediaWiki does.
+    """
+    page = request.GET.get('page')
+    page = wiki_title(page) if page else None
+    since_raw = request.GET.get('since')
+    since = parse_datetime(since_raw) if since_raw else None
+    if since_raw and since is None:
+        return JsonResponse({'error': f'unparseable since: {since_raw!r} (URL-encode the +)'}, status=400)
+    try:
+        limit = min(max(int(request.GET.get('limit', 200)), 1), 1000)
+    except ValueError:
+        limit = 200
+
+    names = known_names()
+    messages = (
+        Message.objects.filter(motion__isnull=False, is_sidechain=False)
+        .exclude(sender_id__in=MACHINERY_SENDERS)
+        .order_by('created_at')
+    )
+    if since:
+        messages = messages.filter(created_at__gt=since)
+
+    links, next_since = [], None
+    for msg in messages.iterator():
+        if len(links) >= limit:
+            break
+        next_since = msg.created_at.isoformat()
+        if msg.sender_id not in names:
+            continue
+        text = prose(msg.content)
+        if not text or is_wrapper(text):
+            continue
+        for title in wikilinks_in(text):
+            if page and title != page:
+                continue
+            links.append({'page': title, 'motion': msg.motion_id, 'turn': str(msg.id),
+                          'sender': msg.sender_id, 'created_at': msg.created_at.isoformat(),
+                          'eth_blockheight': msg.eth_blockheight})
+    else:
+        next_since = None  # read to the end
+
+    return JsonResponse({'links': links, 'next_since': next_since})
 
 
 @require_GET
