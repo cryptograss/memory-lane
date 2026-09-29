@@ -269,6 +269,7 @@ def turn_payload(msg, text, mentionable=()):
         'is_human': bool(getattr(getattr(msg.sender, 'thinkingentity', None),
                                  'is_biological_human', False)),
         'created_at': msg.created_at.isoformat(),
+        'text': text,
         'mentions': mentions_in(text, mentionable),
         'html': render_html(text, mentionable),
     }
