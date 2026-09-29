@@ -17,7 +17,6 @@ per-user Caddy config, so the result is viewable by anyone on the team.
 Everything is overridable by environment for other hosts and ports.
 """
 import os
-import secrets
 
 from .settings import *  # noqa: F401,F403
 
@@ -36,8 +35,3 @@ DATABASES = {
 }
 
 ALLOWED_HOSTS = ['*']
-
-# The ingest endpoint skips auth entirely when INGEST_API_KEY is unset.
-# Even against a throwaway database, never run it open: give it a key
-# nobody has.
-os.environ.setdefault('INGEST_API_KEY', secrets.token_hex(32))

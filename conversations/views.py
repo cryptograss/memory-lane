@@ -1,3 +1,4 @@
+import hmac
 import json
 import logging
 import os
@@ -856,7 +857,9 @@ def ingest(request):
     """
     Ingest endpoint for receiving JSONL lines from watchers.
 
-    Requires Authorization: Bearer <INGEST_API_KEY> header if INGEST_API_KEY is set.
+    Requires Authorization: Bearer <INGEST_API_KEY>. Refuses everything (503)
+    when INGEST_API_KEY is unset: a misconfigured deploy must not become an
+    open write path into the record (#12).
 
     Accepts POST with JSON body:
     {
@@ -883,12 +886,12 @@ def ingest(request):
     from watcher.heap_assignment import assign_heap_to_message
     from constant_sorrow.constants import EVENT_TYPE_WE_DO_NOT_HANDLE_YET
 
-    # Check API key if configured
     expected_key = os.environ.get('INGEST_API_KEY')
-    if expected_key:
-        auth_header = request.headers.get('Authorization', '')
-        if auth_header != f'Bearer {expected_key}':
-            return JsonResponse({'error': 'Unauthorized'}, status=401)
+    if not expected_key:
+        return JsonResponse({'error': 'Ingest is not configured'}, status=503)
+    auth_header = request.headers.get('Authorization', '')
+    if not hmac.compare_digest(auth_header.encode(), f'Bearer {expected_key}'.encode()):
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
 
     try:
         data = json.loads(request.body)
