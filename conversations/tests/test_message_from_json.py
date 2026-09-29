@@ -208,9 +208,6 @@ class MessageFromJsonTests(TestCase):
         self.assertEqual(message.sender.name, 'magent')
         self.assertEqual(list(message.recipients.values_list('name', flat=True)), ['justin'])
 
-    # The importer reads tool_use_id / content / is_error from the top level of
-    # the event, but Claude Code puts them inside message.content[0].
-    @unittest.expectedFailure
     def test_creates_tool_result_from_user_message(self):
         """User message with tool_result creates ToolResult object."""
         json_data = jsonl_record(
@@ -233,6 +230,42 @@ class MessageFromJsonTests(TestCase):
         self.assertEqual(message.tool_use_id, 'toolu_01ABC123')
         self.assertEqual(message.content, 'File contents here')
         self.assertFalse(message.is_error)
+
+    def test_tool_result_list_content_keeps_text_and_marks_the_rest(self):
+        json_data = jsonl_record('user', [{
+            'type': 'tool_result', 'tool_use_id': 'toolu_img', 'is_error': True,
+            'content': [{'type': 'text', 'text': 'screenshot saved'},
+                        {'type': 'image', 'source': {'type': 'base64', 'data': 'AAAA'}}],
+        }])
+
+        message, _ = self.import_record(json_data)
+
+        self.assertEqual(message.content, 'screenshot saved\n[image omitted]')
+        self.assertTrue(message.is_error)
+
+    def tool_result_record(self, content='restored output'):
+        return jsonl_record('user', [{'type': 'tool_result', 'tool_use_id': 'toolu_fill',
+                                      'content': content, 'is_error': False}])
+
+    def test_reimport_fills_a_tool_result_the_old_importer_left_empty(self):
+        record = self.tool_result_record()
+        ToolResult.objects.create(id=record['uuid'], sender=self.magent, content='', tool_use_id='')
+
+        message, created = self.import_record(record)
+
+        self.assertFalse(created)
+        message = ToolResult.objects.get(id=record['uuid'])
+        self.assertEqual(message.content, 'restored output')
+        self.assertEqual(message.tool_use_id, 'toolu_fill')
+
+    def test_reimport_never_overwrites_a_populated_tool_result(self):
+        record = self.tool_result_record(content='different')
+        ToolResult.objects.create(id=record['uuid'], sender=self.magent,
+                                  content='original', tool_use_id='toolu_fill')
+
+        self.import_record(record)
+
+        self.assertEqual(ToolResult.objects.get(id=record['uuid']).content, 'original')
 
     def test_preserves_original_uuid_for_tool_use_only_message(self):
         """Messages with ONLY tool_use (no text) preserve original UUID."""

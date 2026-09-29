@@ -131,6 +131,34 @@ def extract_timestamp(event):
             return int(dt.timestamp() * 1000)
     return None
 
+
+def tool_result_fields(event):
+    """
+    content, is_error and tool_use_id of a tool_result event.
+
+    They live in the tool_result block, event['message']['content'][0], not
+    at the top level of the event; reading the top level left every
+    ToolResult in the record empty until this was fixed. The block's content
+    is a string or a list of blocks; text is kept and anything else (images,
+    tool references) is marked by type rather than silently dropped.
+    """
+    block = event['message']['content'][0]
+    content = block.get('content', '')
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if part.get('type') == 'text':
+                parts.append(part.get('text', ''))
+            else:
+                parts.append(f"[{part.get('type', 'unknown')} omitted]")
+        content = '\n'.join(parts)
+    return {
+        'content': content or '',
+        'is_error': bool(block.get('is_error', False)),
+        'tool_use_id': block.get('tool_use_id', ''),
+    }
+
+
 def import_line_from_claude_code_v2(line, era, filename, username='justin'):
 
         # Get entities
@@ -328,21 +356,26 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
             # For now, use a generic participant - we'll refine this when we link parent/child
             sender = get_or_create_participant('tool-result', 'tool')
 
+            fields = tool_result_fields(event)
             message, created = ToolResult.objects.get_or_create(
                 id=msg_uuid,
                 defaults={
                     'sender': sender,
                     'source_file': filename,
-                    'content': event.get('content', ''),
-                    'is_error': event.get('is_error', False),
-                    'tool_use_id': event.get('tool_use_id', ''),
                     'timestamp': timestamp,
+                    **fields,
                     **common,
                 }
             )
             # Tool result goes back to magent
             if created:
                 message.recipients.add(magent)
+            elif not message.tool_use_id and fields['tool_use_id']:
+                # Imported empty by the old importer. Fill it in so a watcher
+                # replay repairs the record; a populated row is never touched.
+                for name, value in fields.items():
+                    setattr(message, name, value)
+                message.save(update_fields=list(fields))
 
         elif event_type == "continuation":
             # sender and recipient are both magent, like a thought.
