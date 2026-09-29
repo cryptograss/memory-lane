@@ -80,7 +80,7 @@ _WIKILINK = re.compile(r'\[\[([^\]|]+)(?:\|([^\]]+))?\]\]')
 # @name, but not inside an email, a URL path, or another handle.
 _MENTION = re.compile(r'(?<![\w@/.])@([A-Za-z][\w.-]*)')
 _MD_LINK = re.compile(r'\[([^\]]+)\]\((https?://[^)\s]+)\)')
-_URL = re.compile(r'(?<!["\'>=])(https?://[^\s<]+)')
+_URL = re.compile(r'(?<!["\'>=])(https?://(?:(?!&quot;|&#x27;)[^\s<])+)')
 _TRAILING_PUNCT = '.,;:!?)]\'"'
 _HEADING = re.compile(r'^#{1,6}\s+(.+)$')
 _BULLET = re.compile(r'^\s*[-*–]\s+(.*)$')
@@ -174,7 +174,7 @@ def _inline(text, mentionable=()):
 
 def render_html(text, mentionable=()):
     """Escape, then translate the markdown the agent writes into HTML."""
-    text = html.escape(text, quote=False)
+    text = html.escape(text, quote=True)
 
     def inline(s):
         return _inline(s, mentionable)
