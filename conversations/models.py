@@ -360,6 +360,27 @@ class MotionSession(models.Model):
         claim = cls.objects.filter(session_id=session_id).select_related('motion').first()
         return claim.motion if claim else None
 
+    @classmethod
+    def claim_by_history(cls, session_id, message_uuid):
+        """Claim an unclaimed session for the Motion of a message it carries.
+
+        A resumed or forked session starts by copying its predecessor's
+        history under the original uuids. When one of those is already in a
+        Motion, the new session is a continuation of it and belongs there
+        too; the copied lines come first, so the claim lands before the
+        session's own new messages are imported. This is how a turn woken by
+        the poller finds its way back into the Motion. Returns the Motion or
+        None.
+        """
+        if not session_id or not message_uuid:
+            return None
+        motion_id = (Message.objects.filter(id=message_uuid, motion__isnull=False)
+                     .values_list('motion_id', flat=True).first())
+        if motion_id is None:
+            return None
+        claim, _ = cls.objects.get_or_create(session_id=session_id, defaults={'motion_id': motion_id})
+        return claim.motion
+
     def __str__(self):
         return f"{self.session_id} → {self.motion_id}"
 

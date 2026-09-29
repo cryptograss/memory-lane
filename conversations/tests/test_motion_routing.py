@@ -111,6 +111,51 @@ class MotionRoutingTest(TestCase):
         self.assertIsNone(MotionSession.motion_for(None))
         self.assertIsNone(MotionSession.motion_for(uuid.uuid4()))
 
+    def test_forked_session_follows_its_history_into_the_motion(self):
+        # Shape of `claude -p --resume A --fork-session --session-id B`,
+        # checked against a real fork: B's file first repeats A's lines
+        # under their original uuids, then adds its own, whose parents are
+        # attachment records the importer skips.
+        original, fork = uuid.uuid4(), uuid.uuid4()
+        self.motion.claim(original)
+        opener = user_line(original, "justin: are you there?")
+        import_line_from_claude_code_v2(opener, self.era, "a.jsonl")
+
+        copied = json.loads(opener)
+        copied["sessionId"] = str(fork)
+        attachment = json.dumps({"type": "attachment", "uuid": str(uuid.uuid4()), "sessionId": str(fork)})
+        new_turn = user_line(fork, "skyler: @magent one more thing",
+                             parentUuid=json.loads(attachment)["uuid"])
+        for line in (json.dumps(copied), attachment, new_turn):
+            import_line_from_claude_code_v2(line, self.era, "b.jsonl")
+
+        self.assertEqual(MotionSession.motion_for(fork), self.motion)
+        self.assertEqual(Message.objects.get(content="skyler: @magent one more thing").motion, self.motion)
+        self.assertEqual(Message.objects.filter(content="justin: are you there?").count(), 1)
+
+    def test_history_outside_any_motion_claims_nothing(self):
+        session, fork = uuid.uuid4(), uuid.uuid4()
+        line = user_line(session)
+        import_line_from_claude_code_v2(line, self.era, "a.jsonl")
+        copied = json.loads(line)
+        copied["sessionId"] = str(fork)
+        import_line_from_claude_code_v2(json.dumps(copied), self.era, "b.jsonl")
+
+        self.assertFalse(MotionSession.objects.exists())
+
+    def test_an_existing_claim_is_never_overridden_by_history(self):
+        fork = uuid.uuid4()
+        other = Motion.objects.create(slug="elsewhere")
+        other.claim(fork)
+        self.motion.claim(uuid.uuid4())
+        line = user_line(MotionSession.objects.get(motion=self.motion).session_id)
+        import_line_from_claude_code_v2(line, self.era, "a.jsonl")
+        copied = json.loads(line)
+        copied["sessionId"] = str(fork)
+        import_line_from_claude_code_v2(json.dumps(copied), self.era, "b.jsonl")
+
+        self.assertEqual(MotionSession.motion_for(fork), other)
+
     def test_retiring_a_motion_drops_claims_but_keeps_messages(self):
         session = uuid.uuid4()
         self.motion.claim(session)

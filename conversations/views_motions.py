@@ -5,6 +5,7 @@ is a projection: nothing here writes, and nothing a reader does can change
 the conversation.
 """
 
+from django.db.models import Max
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils.dateparse import parse_datetime
@@ -53,6 +54,28 @@ def api_motion_turns(request, slug):
         'motion': motion_payload(motion),
         'turns': payload,
     })
+
+
+@require_GET
+def api_motion_sessions(request, slug):
+    """Runtime sessions in a Motion, most recently active first.
+
+    ?sender=<name> keeps only sessions in which that entity wrote. This is
+    how the poller finds a session to resume when it wakes an agent: the
+    Motion is durable, and whichever process last spoke for the agent is
+    the one to continue. A session id is a local handle, not a credential.
+    """
+    motion = get_object_or_404(Motion, slug=slug)
+    messages = Message.objects.filter(motion=motion, session_id__isnull=False)
+    sender = request.GET.get('sender')
+    if sender:
+        messages = messages.filter(sender_id=sender.lower())
+    sessions = (messages.values('session_id')
+                .annotate(last_at=Max('created_at'))
+                .order_by('-last_at'))
+    return JsonResponse({'motion': motion.slug, 'sessions': [
+        {'session_id': str(s['session_id']), 'last_at': s['last_at'].isoformat()} for s in sessions
+    ]})
 
 
 @require_GET
