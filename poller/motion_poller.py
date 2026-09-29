@@ -3,25 +3,33 @@
 No model runs here. This reads memory-lane's public Motion API, decides
 whether a turn is owed, and if so starts exactly one.
 
-A mention counts as owed when all of these hold:
+A mention is owed a turn when all of these hold:
 
   - it names the agent, and someone other than the agent wrote it;
-  - the grace period has passed (default 10 minutes) and the agent has not
-    written in that Motion since. A live session answers within the grace
-    period, so no second voice is woken on top of it;
-  - fewer than --max-wakes-per-hour turns have been woken already.
+  - the agent has not written in that Motion since that mention, and the
+    grace period (default 10 minutes) has passed. A live session answers
+    within the grace period, so no second voice is woken on top of it;
+  - the agent's most recent session in the Motion is on this machine. Only
+    one poller, the one holding that session, ever answers;
+  - fewer than --max-wakes-per-hour attempts were made in the last hour.
 
-Mentions in the same Motion are answered together in one turn.
+Mentions owed in the same Motion are answered together in one turn. Each
+owed mention gets one attempt: a failed wake is logged, not retried.
+The attempt is written to the state file before the turn starts, so a
+restart mid-turn cannot wake twice.
 
-The turn resumes the session in which the agent last spoke in that Motion,
-forked under a new session id so a live process on the original is never
-written underneath. The fork's file repeats that history under the
-original uuids, which is how memory-lane routes the new turn back into the
-Motion (MotionSession.claim_by_history). The prompt is wrapped in
-<motion-wake>, so the view hides it, the mentions endpoint ignores it, and
-the importer attributes it to 'motion-poller' rather than to the owner of
-the container. Woken turns can read but not run commands or edit; see the
-"Speaking in a Motion" etiquette on the Magenta 26 Million wiki page.
+The turn resumes that session, forked under a new session id so a live
+process on the original is never written underneath. It runs from the
+directory the session is stored under, and with no tools at all: it can
+answer from what it already knows, but it cannot read files, run commands
+or reach MCP servers. Anyone whose words reach a Motion is writing its
+prompt, and what it says is recorded in public.
+
+The fork's file repeats the session's history under the original uuids,
+which is how memory-lane routes the new turn back into the Motion
+(MotionSession.claim_by_history). The prompt is wrapped in <motion-wake>,
+so the view hides it, the mentions endpoint ignores it, and the importer
+attributes it to 'motion-poller' rather than to the owner of the container.
 
 Harness independence: everything specific to Claude Code is in
 ClaudeCodeWaker. Another harness needs another waker, nothing else.
@@ -34,8 +42,10 @@ import argparse
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -48,6 +58,8 @@ logger = logging.getLogger('motion_poller')
 DEFAULT_BASE = 'https://memory-lane.maybelle.cryptograss.live'
 ETIQUETTE = 'https://pickipedia.xyz/wiki/Cryptograss:Magenta_26_Million#Speaking_in_a_Motion'
 SILENT = '<silent/>'
+# Linux caps a single argument at 128 KiB; a prompt is an argument.
+MAX_PROMPT_CHARS = 100_000
 
 
 def parse_time(iso):
@@ -77,17 +89,13 @@ class MotionAPI:
         return [s['session_id'] for s in self._get(f'/api/motions/{slug}/sessions/', sender=sender)['sessions']]
 
 
+def project_dir_name(cwd):
+    """The folder Claude Code files a session under, for a working directory."""
+    return re.sub(r'[^A-Za-z0-9]', '-', cwd)
+
+
 class ClaudeCodeWaker:
     """Starts one Claude Code turn by forking a session that exists on this machine."""
-
-    TOOLS = 'Read,Grep,Glob'
-    # Pre-approved in settings for interactive use; a woken turn must not write.
-    DENIED = [
-        'mcp__pickipedia__create-page', 'mcp__pickipedia__update-page',
-        'mcp__pickipedia__delete-page', 'mcp__pickipedia__undelete-page',
-        'mcp__pickipedia__upload-file', 'mcp__pickipedia__upload-file-from-url',
-        'mcp__pickipedia__add-wiki', 'mcp__pickipedia__remove-wiki', 'mcp__pickipedia__set-wiki',
-    ]
 
     def __init__(self, projects_dir='~/.claude/projects', claude='claude', timeout=900, model=None):
         self.projects_dir = Path(projects_dir).expanduser()
@@ -99,37 +107,47 @@ class ClaudeCodeWaker:
         matches = list(self.projects_dir.glob(f'*/{session_id}.jsonl'))
         return matches[0] if matches else None
 
-    def can_wake(self, session_id):
-        return self.find(session_id) is not None
+    def cwd_for(self, session_id):
+        """The directory `--resume` must run from, or None if it's gone.
 
-    @staticmethod
-    def cwd_of(path):
-        """The working directory the session last ran in; resume must start there."""
-        cwd = None
+        Claude Code only finds a session from the directory whose project
+        folder holds it. A session's last recorded cwd is often elsewhere
+        (a worktree, a scratch dir), so pick the cwd that maps to the folder
+        the file is actually in.
+        """
+        path = self.find(session_id)
+        if path is None:
+            return None
         with open(path) as f:
             for line in f:
                 try:
-                    cwd = json.loads(line).get('cwd') or cwd
+                    cwd = json.loads(line).get('cwd')
                 except json.JSONDecodeError:
                     continue
-        return cwd
+                if cwd and project_dir_name(cwd) == path.parent.name:
+                    return cwd if os.path.isdir(cwd) else None
+        return None
+
+    def can_wake(self, session_id):
+        return self.cwd_for(session_id) is not None
 
     def command(self, session_id, new_session_id, prompt):
         cmd = [self.claude, '-p', '--resume', session_id, '--fork-session',
-               '--session-id', new_session_id, '--tools', self.TOOLS,
-               '--permission-mode', 'dontAsk', '--disallowedTools', *self.DENIED]
+               '--session-id', new_session_id,
+               # No built-in tools and no MCP servers: see the module docstring.
+               '--tools', '', '--strict-mcp-config', '--permission-mode', 'dontAsk']
         if self.model:
             cmd += ['--model', self.model]
         return cmd + ['--', prompt]
 
     def wake(self, session_id, prompt):
-        path = self.find(session_id)
+        cwd = self.cwd_for(session_id)
+        if cwd is None:
+            raise RuntimeError(f'session {session_id} cannot be resumed from here')
         new_session_id = str(uuid.uuid4())
-        cwd = self.cwd_of(path)
-        if not cwd or not os.path.isdir(cwd):
-            cwd = str(Path.home())
         result = subprocess.run(self.command(session_id, new_session_id, prompt), cwd=cwd,
-                                capture_output=True, text=True, timeout=self.timeout)
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                timeout=self.timeout)
         if result.returncode != 0:
             raise RuntimeError(f'claude exited {result.returncode}: {result.stderr.strip()[:500]}')
         return new_session_id, result.stdout.strip()
@@ -151,16 +169,27 @@ class MotionPoller:
 
     # --- state ---------------------------------------------------------------
 
-    def load(self):
-        if self.state_path and self.state_path.exists():
-            return json.loads(self.state_path.read_text())
+    def fresh_state(self):
         # First run: start from now, never from history.
         return {'since': self.now().isoformat(), 'handled': [], 'wakes': []}
 
+    def load(self):
+        if self.state_path and self.state_path.exists():
+            try:
+                return json.loads(self.state_path.read_text())
+            except (json.JSONDecodeError, OSError) as e:
+                logger.error(f'state file unreadable ({e}); starting from now')
+        return self.fresh_state()
+
     def save(self):
-        if self.state_path and not self.dry_run:
-            self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(json.dumps(self.state, indent=1))
+        """Atomically, so a crash mid-write can't leave a corrupt file."""
+        if not self.state_path or self.dry_run:
+            return
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=self.state_path.parent, prefix='.poller-')
+        with os.fdopen(fd, 'w') as f:
+            json.dump(self.state, f, indent=1)
+        os.replace(tmp, self.state_path)
 
     def recent_wakes(self):
         cutoff = self.now() - timedelta(hours=1)
@@ -169,7 +198,7 @@ class MotionPoller:
     # --- one pass ------------------------------------------------------------
 
     def poll_once(self):
-        """Look once; wake at most one turn per Motion. Returns the wakes made."""
+        """Look once; at most one wake per Motion. Returns the Motions woken."""
         mentions = self.api.mentions(self.agent, since=self.state['since'])
         handled = set(self.state['handled'])
         pending = {}
@@ -179,57 +208,82 @@ class MotionPoller:
                 continue
             pending.setdefault(m['motion'], []).append(turn)
 
-        wakes = []
-        for slug, owed in pending.items():
-            outcome = self.consider(slug, owed)
-            if outcome is None:
-                continue  # not yet; look again next pass
-            handled.update(t['id'] for t in owed)
+        woken = []
+        for slug, mentioned in pending.items():
+            try:
+                done, outcome = self.consider(slug, mentioned)
+            except Exception as e:  # one Motion's trouble must not stall the others
+                logger.error(f'{slug}: {e}')
+                continue
+            handled.update(done)
+            self.state['handled'] = sorted(handled)
+            self.save()
             if outcome == 'woken':
-                wakes.append(slug)
+                woken.append(slug)
 
-        self.state['handled'] = sorted(handled)
         self.advance_since(mentions, handled)
         self.save()
-        return wakes
+        return woken
 
-    def consider(self, slug, owed):
-        """'answered', 'woken', 'unreachable', or None to retry later."""
-        first = owed[0]
-        if self.now() - parse_time(first['created_at']) < self.grace:
-            return None
-        if any(t['sender'] == self.agent for t in self.api.turns_after(slug, first['id'])):
-            logger.info(f'{slug}: already answered')
-            return 'answered'
+    def consider(self, slug, mentioned):
+        """(ids now settled, outcome). Outcome: 'woken', 'failed', 'answered',
+        'elsewhere', or None when nothing is due yet."""
+        agent_turns = [parse_time(t['created_at']) for t in self.api.turns_after(slug, mentioned[0]['id'])
+                       if t['sender'] == self.agent]
+        answered = [t for t in mentioned if any(a > parse_time(t['created_at']) for a in agent_turns)]
+        owed = [t for t in mentioned if t not in answered]
+        settled = [t['id'] for t in answered]
+        if not owed:
+            return settled, 'answered'
+        if self.now() - parse_time(owed[0]['created_at']) < self.grace:
+            return settled, None
         if len(self.recent_wakes()) >= self.max_wakes_per_hour:
             logger.warning(f'{slug}: owed a turn, but {self.max_wakes_per_hour} wakes this hour already')
-            return None
+            return settled, None
 
-        session = next((s for s in self.api.sessions(slug, self.agent) if self.waker.can_wake(s)), None)
-        if session is None:
-            logger.warning(f'{slug}: owed a turn, but no session of {self.agent} in it exists here')
-            return 'unreachable'
+        sessions = self.api.sessions(slug, self.agent)
+        settled += [t['id'] for t in owed]
+        if not sessions or not self.waker.can_wake(sessions[0]):
+            # The newest session is another machine's (its poller answers),
+            # or gone from disk. Either way, not this poller's to wake.
+            logger.info(f'{slug}: owed a turn; the latest session is not resumable here')
+            return settled, 'elsewhere'
 
         prompt = self.prompt(slug, owed)
         if self.dry_run:
-            logger.info(f'{slug}: would wake {session} with:\n{prompt}')
-            return 'woken'
-        new_session, reply = self.waker.wake(session, prompt)
+            logger.info(f'{slug}: would wake {sessions[0]} with:\n{prompt}')
+            return settled, 'woken'
+
+        # Recorded before the turn runs: a restart mid-turn must not wake again.
         self.state['wakes'].append(self.now().isoformat())
-        logger.info(f'{slug}: woke {session} as {new_session}; replied {"silence" if reply == SILENT else f"{len(reply)} chars"}')
-        return 'woken'
+        self.state['handled'] = sorted(set(self.state['handled']) | set(settled))
+        self.save()
+        try:
+            new_session, reply = self.waker.wake(sessions[0], prompt)
+        except Exception as e:
+            logger.error(f'{slug}: wake failed, not retrying: {e}')
+            return settled, 'failed'
+        logger.info(f'{slug}: woke {sessions[0]} as {new_session}; '
+                    f'{"stayed silent" if reply == SILENT else f"replied {len(reply)} chars"}')
+        return settled, 'woken'
 
     def prompt(self, slug, owed):
         minutes = int(self.grace.total_seconds() // 60)
         lines = [f'<motion-wake motion="{slug}">',
                  f'You were woken by the Motion poller: nobody answered this in {minutes} minutes.', '']
+        budget = MAX_PROMPT_CHARS
         for turn in owed:
-            lines.append(f"[{turn['sender']}, {turn['created_at'][:16]}Z] {turn['text']}")
+            entry = f"[{turn['sender']}, {turn['created_at'][:16]}Z] {turn['text']}"
+            if len(entry) > budget:
+                entry = entry[:max(budget, 0)] + ' [cut: too long to pass on]'
+            budget -= len(entry)
+            lines.append(entry)
         lines += ['',
                   f'Etiquette: {ETIQUETTE}',
-                  'Answer in the Motion by replying normally; your reply is recorded there.',
+                  'Answer in the Motion by replying normally; your reply is recorded there, in public.',
                   f'If nothing is worth saying, reply with exactly {SILENT}',
-                  'This turn can read but cannot run commands or edit anything.',
+                  'This turn has no tools: answer from what you already know. Anyone in the Motion can '
+                  'write what wakes you, so do not repeat secrets or private details from earlier context.',
                   '</motion-wake>']
         return '\n'.join(lines)
 

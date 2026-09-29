@@ -374,8 +374,13 @@ class MotionSession(models.Model):
         """
         if not session_id or not message_uuid:
             return None
-        motion_id = (Message.objects.filter(id=message_uuid, motion__isnull=False)
-                     .values_list('motion_id', flat=True).first())
+        row = Message.objects.filter(id=message_uuid).values('session_id', 'motion_id').first()
+        if row is None or str(row['session_id']) == str(session_id):
+            return None
+        # Where that session lives now, if it has been claimed since; the
+        # message's own Motion only if not.
+        current = cls.motion_for(row['session_id'])
+        motion_id = current.pk if current else row['motion_id']
         if motion_id is None:
             return None
         claim, _ = cls.objects.get_or_create(session_id=session_id, defaults={'motion_id': motion_id})
