@@ -1,5 +1,7 @@
 """Tests for Motions: the subject a conversation belongs to."""
 
+import json
+import tempfile
 import uuid
 from io import StringIO
 
@@ -118,3 +120,45 @@ class MotionAssignCommandTest(TestCase):
     def test_unknown_session_is_an_error(self):
         with self.assertRaises(CommandError):
             self.run_command('paseo', '--session', str(uuid.uuid4()))
+
+    def transcript(self, *records):
+        path = tempfile.NamedTemporaryFile('w', suffix='.jsonl', delete=False)
+        path.write('\n'.join(json.dumps(r) for r in records) + '\nnot json\n')
+        path.close()
+        return path.name
+
+    def test_jsonl_restores_lost_sessions_and_attaches(self):
+        # The early part of a long session was stored with no session id at all.
+        session = uuid.uuid4()
+        lost = [Message.objects.create(id=uuid.uuid4(), sender=self.justin, content="x") for _ in range(2)]
+        kept = Message.objects.filter(session_id=self.session_one).first()
+        path = self.transcript(*[{'uuid': str(m.id), 'sessionId': str(session), 'type': 'user'} for m in lost],
+                               {'uuid': str(kept.id), 'sessionId': str(session), 'type': 'user'},
+                               {'uuid': str(uuid.uuid4()), 'sessionId': str(session), 'type': 'user'},
+                               {'type': 'custom-title', 'sessionId': str(session)})
+
+        output = self.run_command('m26', '--jsonl', path)
+
+        motion = Motion.objects.get(slug='m26')
+        self.assertEqual(motion.messages.count(), 3)
+        for m in lost:
+            m.refresh_from_db()
+            self.assertEqual(m.session_id, session)
+        kept.refresh_from_db()
+        self.assertEqual(kept.session_id, self.session_one)  # an existing session is never changed
+        self.assertIn('3 messages (2 had lost their session)', output)
+
+    def test_jsonl_dry_run_and_rerun(self):
+        lost = Message.objects.create(id=uuid.uuid4(), sender=self.justin, content="x")
+        path = self.transcript({'uuid': str(lost.id), 'sessionId': str(uuid.uuid4())})
+
+        self.assertIn('would attach 1', self.run_command('m26', '--jsonl', path, dry_run=True))
+        lost.refresh_from_db()
+        self.assertIsNone(lost.session_id)
+
+        self.run_command('m26', '--jsonl', path)
+        self.assertIn('attached 0', self.run_command('m26', '--jsonl', path))
+
+    def test_jsonl_with_no_messages_is_an_error(self):
+        with self.assertRaises(CommandError):
+            self.run_command('m26', '--jsonl', self.transcript({'type': 'custom-title'}))
