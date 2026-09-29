@@ -93,6 +93,8 @@ class ConversationWatcher(FileSystemEventHandler):
         # Undelivered batches are re-queued rather than dropped; this bounds
         # memory if the endpoint stays down for a long time.
         self.max_pending = 5000
+        # Well under the server's DATA_UPLOAD_MAX_MEMORY_SIZE.
+        self.max_post_bytes = 8 * 1024 * 1024
 
         # Extract username from watch directory path
         # Expected format: /project-logs/username/...
@@ -250,10 +252,13 @@ class ConversationWatcher(FileSystemEventHandler):
     def flush_batch(self):
         """Send batched lines to remote endpoint.
 
-        The batch is swapped out under the lock before the POST, so lines
-        appended by the other thread during the request land in a fresh list
-        and go out next time. An undelivered batch goes back to the front of
-        the queue and is retried at the next flush interval.
+        The batch is swapped out under the lock before posting, so lines
+        appended by the other thread meanwhile land in a fresh list and go
+        out next time. It is sent in chunks of at most batch_size lines and
+        max_post_bytes, so a queue that grew while the endpoint was down
+        never becomes one request too big to be accepted. At the first
+        failure, that chunk and everything after it go back to the front of
+        the queue, in order, for the next flush.
         """
         with self.batch_lock:
             batch, self.pending_lines = self.pending_lines, []
@@ -266,38 +271,61 @@ class ConversationWatcher(FileSystemEventHandler):
         if api_key:
             headers['Authorization'] = f'Bearer {api_key}'
 
-        delivered = False
+        start = 0
+        for chunk in self.chunks(batch):
+            if not self.post_chunk(chunk, headers):
+                self.requeue(batch[start:])
+                break
+            start += len(chunk)
+
+        self.last_flush_time = time.time()
+
+    def chunks(self, batch):
+        """Consecutive slices of batch within the line and byte limits.
+
+        A single line over the byte limit goes alone; the server accepts up
+        to DATA_UPLOAD_MAX_MEMORY_SIZE.
+        """
+        chunk, size = [], 0
+        for line in batch:
+            line_size = len(line.encode('utf-8', 'replace'))
+            if chunk and (len(chunk) >= self.batch_size or size + line_size > self.max_post_bytes):
+                yield chunk
+                chunk, size = [], 0
+            chunk.append(line)
+            size += line_size
+        if chunk:
+            yield chunk
+
+    def post_chunk(self, chunk, headers):
+        """POST one chunk. True if the endpoint took it."""
         try:
             response = requests.post(
                 self.remote_endpoint,
                 json={
-                    'lines': batch,
+                    'lines': chunk,
                     'username': self.username,
                     'source': f'hunter-watcher-{self.username}'
                 },
                 headers=headers,
                 timeout=30
             )
-
-            if response.status_code == 200:
-                delivered = True
-                result = response.json()
-                errors = result.get('errors') or []
-                # The endpoint returns at most 10 errors, so this count is a floor.
-                logger.info(f"Remote ingest: sent={len(batch)}, imported={result.get('imported', 0)}, "
-                            f"skipped={result.get('skipped', 0)}, errors={len(errors)}")
-                if errors:
-                    logger.warning(f"Remote ingest errors (first 3 of {len(errors)}): {errors[:3]}")
-            else:
-                logger.error(f"Remote ingest failed: {response.status_code} - {response.text[:200]}")
-
         except requests.RequestException as e:
             logger.error(f"Failed to POST to remote endpoint: {e}")
+            return False
 
-        if not delivered:
-            self.requeue(batch)
+        if response.status_code != 200:
+            logger.error(f"Remote ingest failed: {response.status_code} - {response.text[:200]}")
+            return False
 
-        self.last_flush_time = time.time()
+        result = response.json()
+        errors = result.get('errors') or []
+        # The endpoint returns at most 10 errors, so this count is a floor.
+        logger.info(f"Remote ingest: sent={len(chunk)}, imported={result.get('imported', 0)}, "
+                    f"skipped={result.get('skipped', 0)}, errors={len(errors)}")
+        if errors:
+            logger.warning(f"Remote ingest errors (first 3 of {len(errors)}): {errors[:3]}")
+        return True
 
     def requeue(self, batch):
         """Put an undelivered batch back at the front of the queue.

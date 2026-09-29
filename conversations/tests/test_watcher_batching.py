@@ -135,3 +135,28 @@ class WatcherBatchingTest(TestCase):
                 self.assertLogs('watcher', level='INFO') as logs:
             watcher.flush_batch()
         self.assertTrue(any('sent=2' in line for line in logs.output))
+
+    def test_a_backlog_goes_out_in_chunks_not_one_huge_request(self):
+        watcher = make_watcher(batch_size=10)
+        watcher.pending_lines = [str(i) for i in range(25)]
+        with mock.patch(POST, return_value=ok_response()) as post:
+            watcher.flush_batch()
+        self.assertEqual([len(c.kwargs['json']['lines']) for c in post.call_args_list], [10, 10, 5])
+        self.assertEqual(watcher.pending_lines, [])
+
+    def test_chunks_respect_the_byte_limit(self):
+        watcher = make_watcher(batch_size=10)
+        watcher.max_post_bytes = 10
+        watcher.pending_lines = ['aaaa', 'bbbb', 'cccc', 'x' * 50, 'dd']
+        with mock.patch(POST, return_value=ok_response()) as post:
+            watcher.flush_batch()
+        self.assertEqual([c.kwargs['json']['lines'] for c in post.call_args_list],
+                         [['aaaa', 'bbbb'], ['cccc'], ['x' * 50], ['dd']])
+
+    def test_failure_mid_backlog_requeues_the_rest_in_order(self):
+        watcher = make_watcher(batch_size=2)
+        watcher.pending_lines = ['1', '2', '3', '4', '5']
+        with mock.patch(POST, side_effect=[ok_response(), requests.ConnectionError('down')]) as post:
+            watcher.flush_batch()
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(watcher.pending_lines, ['3', '4', '5'])

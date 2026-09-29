@@ -19,6 +19,9 @@ class WikilinksInTest(TestCase):
         # As on the wiki: [[bill monroe]] is a different page from [[Bill Monroe]].
         self.assertEqual(wiki_title('bill monroe'), 'Bill monroe')
 
+    def test_a_leading_colon_links_rather_than_categorises(self):
+        self.assertEqual(wiki_title(':Category:Jams'), 'Category:Jams')
+
     def test_ordered_deduplicated_and_labels_ignored(self):
         text = 'See [[Bill Monroe|Monroe]], then [[bill_Monroe]] and [[Blue Grass Boys]].'
         self.assertEqual(wikilinks_in(text), ['Bill Monroe', 'Blue Grass Boys'])
@@ -47,18 +50,29 @@ class WikilinksEndpointTest(TestCase):
         Message.objects.create(id=uuid.uuid4(), sender=cls.justin, content='[[Bill Monroe]] before Motions')
 
     def get(self, **params):
-        return self.client.get('/api/wikilinks/', params).json()['links']
+        return self.client.get('/api/wikilinks/', params).json()
 
     def test_backlinks_for_one_page_across_motions(self):
-        links = self.get(page='bill_Monroe')
+        links = self.get(page='bill_Monroe')['links']
         self.assertEqual(sorted(l['motion'] for l in links), ['jams', 'm26'])
         self.assertEqual({l['page'] for l in links}, {'Bill Monroe'})
 
-    def test_all_links_newest_first(self):
-        links = self.get()
-        self.assertEqual([(l['motion'], l['page']) for l in links],
-                         [('jams', 'Bill Monroe'), ('jams', 'Jam:Friday'), ('m26', 'Bill Monroe')])
+    def test_all_links_oldest_first_and_read_to_the_end(self):
+        body = self.get()
+        self.assertEqual([(l['motion'], l['page']) for l in body['links']],
+                         [('m26', 'Bill Monroe'), ('jams', 'Bill Monroe'), ('jams', 'Jam:Friday')])
+        self.assertIsNone(body['next_since'])
 
     def test_since_is_incremental(self):
-        links = self.get(since=self.first.created_at.isoformat())
+        links = self.get(since=self.first.created_at.isoformat())['links']
         self.assertEqual({l['motion'] for l in links}, {'jams'})
+
+    def test_paging_never_splits_a_message_and_loses_nothing(self):
+        first = self.get(limit=1)
+        self.assertEqual([l['page'] for l in first['links']], ['Bill Monroe'])
+        second = self.get(limit=1, since=first['next_since'])
+        self.assertEqual([l['page'] for l in second['links']], ['Bill Monroe', 'Jam:Friday'])
+
+    def test_unparseable_since_is_an_error_not_everything(self):
+        response = self.client.get('/api/wikilinks/?since=2026-09-29T18:00:00 00:00')
+        self.assertEqual(response.status_code, 400)

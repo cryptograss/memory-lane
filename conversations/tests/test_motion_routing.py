@@ -133,6 +133,22 @@ class MotionRoutingTest(TestCase):
         self.assertEqual(Message.objects.get(content="skyler: @magent one more thing").motion, self.motion)
         self.assertEqual(Message.objects.filter(content="justin: are you there?").count(), 1)
 
+    def test_fork_follows_where_its_history_lives_now(self):
+        # The session was moved to another Motion after these messages were
+        # attached; the fork belongs where the session is now.
+        original, fork = uuid.uuid4(), uuid.uuid4()
+        self.motion.claim(original)
+        opener = user_line(original, "justin: first")
+        import_line_from_claude_code_v2(opener, self.era, "a.jsonl")
+        moved = Motion.objects.create(slug="moved-here")
+        moved.claim(original)
+
+        copied = json.loads(opener)
+        copied["sessionId"] = str(fork)
+        import_line_from_claude_code_v2(json.dumps(copied), self.era, "b.jsonl")
+
+        self.assertEqual(MotionSession.motion_for(fork), moved)
+
     def test_history_outside_any_motion_claims_nothing(self):
         session, fork = uuid.uuid4(), uuid.uuid4()
         line = user_line(session)

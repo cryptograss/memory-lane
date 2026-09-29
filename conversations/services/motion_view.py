@@ -111,7 +111,7 @@ def known_names():
 
 def wiki_title(target):
     """A link target as MediaWiki names the page: no fragment, spaces, first letter capital."""
-    title = target.split('#', 1)[0].replace('_', ' ').strip()
+    title = target.split('#', 1)[0].replace('_', ' ').strip().lstrip(':').strip()
     title = re.sub(r'\s+', ' ', title)
     return title[:1].upper() + title[1:]
 

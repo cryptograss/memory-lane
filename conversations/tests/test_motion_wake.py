@@ -34,16 +34,20 @@ class MotionWakeTest(TestCase):
         return import_line_from_claude_code_v2(raw, self.era, 'test.jsonl', 'justin')[0]
 
     def test_wake_prompt_is_the_pollers_not_the_container_owners(self):
-        msg = self.imp(line(self.session, 'user', WAKE))
+        msg = self.imp(line(self.session, 'user', WAKE, entrypoint='sdk-cli'))
         self.assertEqual(msg.sender_id, 'motion-poller')
-        msg = self.imp(line(self.session, 'user', [{'type': 'text', 'text': WAKE}]))
+        msg = self.imp(line(self.session, 'user', [{'type': 'text', 'text': WAKE}], entrypoint='sdk-cli'))
         self.assertEqual(msg.sender_id, 'motion-poller')
+
+    def test_a_person_typing_the_wrapper_is_still_that_person(self):
+        msg = self.imp(line(self.session, 'user', WAKE, entrypoint='cli'))
+        self.assertEqual(msg.sender_id, 'justin')
 
     def test_ordinary_prompt_is_still_the_container_owners(self):
         self.assertEqual(self.imp(line(self.session, 'user', 'justin: hello')).sender_id, 'justin')
 
     def test_view_and_mentions_show_neither_the_wake_nor_a_chosen_silence(self):
-        self.imp(line(self.session, 'user', WAKE))
+        self.imp(line(self.session, 'user', WAKE, entrypoint='sdk-cli'))
         self.imp(line(self.session, 'assistant', [{'type': 'text', 'text': '<silent/>'}]))
         self.imp(line(self.session, 'assistant', [{'type': 'text', 'text': 'Here, Sky.'}]))
 

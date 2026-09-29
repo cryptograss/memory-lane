@@ -890,7 +890,7 @@ def ingest(request):
     if not expected_key:
         return JsonResponse({'error': 'Ingest is not configured'}, status=503)
     auth_header = request.headers.get('Authorization', '')
-    if not hmac.compare_digest(auth_header, f'Bearer {expected_key}'):
+    if not hmac.compare_digest(auth_header.encode(), f'Bearer {expected_key}'.encode()):
         return JsonResponse({'error': 'Unauthorized'}, status=401)
 
     try:

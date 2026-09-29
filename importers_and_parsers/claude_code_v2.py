@@ -134,16 +134,17 @@ def extract_timestamp(event):
 MOTION_WAKE_PREFIX = '<motion-wake'
 
 
-def poller_or(user, content):
+def poller_or(user, content, event):
     """
     The sender of a user-role message: the container's human, unless the
     Motion poller wrote it. A woken turn's prompt arrives as a user message,
     and attributing it to whoever owns the container would put words in
-    their mouth.
+    their mouth. It must also have come in through `claude -p`
+    (entrypoint sdk-cli), so a person typing the wrapper is still a person.
     """
     text = content if isinstance(content, str) else ''.join(
         block.get('text', '') for block in content if isinstance(block, dict))
-    if text.lstrip().startswith(MOTION_WAKE_PREFIX):
+    if text.lstrip().startswith(MOTION_WAKE_PREFIX) and event.get('entrypoint') == 'sdk-cli':
         return get_or_create_participant('motion-poller', 'system')
     return user
 
@@ -385,7 +386,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
 
             #### This block is clearly broken - we need real logic for this.
             if role == 'user':
-                sender = poller_or(user, content)
+                sender = poller_or(user, content, event)
                 recipient = magent
             elif role == 'assistant':
                 sender = magent
@@ -413,7 +414,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
             role = event['message']['role']
             content = event['message']['content']
             if role == "user":
-                sender = poller_or(user, content)
+                sender = poller_or(user, content, event)
                 recipient = magent
             else:
                 assert False # Not sure what this can be?

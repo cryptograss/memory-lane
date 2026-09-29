@@ -80,17 +80,23 @@ def api_motion_sessions(request, slug):
 
 @require_GET
 def api_wikilinks(request):
-    """Turns in Motions that link to PickiPedia pages with [[...]], newest first.
+    """Turns in Motions that link to PickiPedia pages with [[...]], oldest first.
 
-    This is what PickiPedia reads to reach Motions without storing them:
-    ?page=<title> for one page's backlinks, ?since=<iso> for what arrived
-    after a moment (incremental sync), ?limit= as for mentions. Titles are
-    normalised as MediaWiki does, so [[old-time music]] and
-    [[Old-time_music]] are the same page.
+    This is what PickiPedia reads to reach Motions without storing them.
+    ?page=<title> keeps one page's backlinks. ?since=<iso> starts after a
+    moment; pass back `next_since` to page forward. A message's links are
+    never split across pages. The cursor is ingest time (created_at), so a
+    consumer should overlap its cursor by a few minutes and dedupe on
+    (turn, page), and resync fully now and then: motion_assign attaches
+    old messages to a Motion without changing their created_at.
+    Titles are normalised as MediaWiki does.
     """
     page = request.GET.get('page')
     page = wiki_title(page) if page else None
-    since = parse_datetime(request.GET.get('since') or '')
+    since_raw = request.GET.get('since')
+    since = parse_datetime(since_raw) if since_raw else None
+    if since_raw and since is None:
+        return JsonResponse({'error': f'unparseable since: {since_raw!r} (URL-encode the +)'}, status=400)
     try:
         limit = min(max(int(request.GET.get('limit', 200)), 1), 1000)
     except ValueError:
@@ -98,15 +104,18 @@ def api_wikilinks(request):
 
     names = known_names()
     messages = (
-        Message.objects.filter(motion__isnull=False)
+        Message.objects.filter(motion__isnull=False, is_sidechain=False)
         .exclude(sender_id__in=MACHINERY_SENDERS)
-        .order_by('-created_at')
+        .order_by('created_at')
     )
     if since:
         messages = messages.filter(created_at__gt=since)
 
-    links = []
+    links, next_since = [], None
     for msg in messages.iterator():
+        if len(links) >= limit:
+            break
+        next_since = msg.created_at.isoformat()
         if msg.sender_id not in names:
             continue
         text = prose(msg.content)
@@ -118,10 +127,10 @@ def api_wikilinks(request):
             links.append({'page': title, 'motion': msg.motion_id, 'turn': str(msg.id),
                           'sender': msg.sender_id, 'created_at': msg.created_at.isoformat(),
                           'eth_blockheight': msg.eth_blockheight})
-        if len(links) >= limit:
-            break
+    else:
+        next_since = None  # read to the end
 
-    return JsonResponse({'links': links[:limit]})
+    return JsonResponse({'links': links, 'next_since': next_since})
 
 
 @require_GET
