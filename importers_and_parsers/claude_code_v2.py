@@ -163,14 +163,14 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
         session_id = event.get('sessionId')
         common = {
             'session_id': session_id,
-            'cwd': event.get('cwd'),
-            'git_branch': event.get('gitBranch'),
-            'client_version': event.get('version'),
-            'motion': MotionSession.motion_for(session_id),
             # A subagent's transcript shares its parent's sessionId, and its
             # prompts (written by the agent) arrive as user-role lines. Only
             # this flag tells them apart from the human's own words.
             'is_sidechain': bool(event.get('isSidechain')),
+            'cwd': event.get('cwd'),
+            'git_branch': event.get('gitBranch'),
+            'client_version': event.get('version'),
+            'motion': MotionSession.motion_for(session_id),
             'created_at': timezone.now(),
         }
 
