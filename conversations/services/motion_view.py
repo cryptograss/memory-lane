@@ -57,7 +57,7 @@ def turns(motion, after=None):
     from conversations.models import ThinkingEntity
 
     speakers = set(ThinkingEntity.objects.values_list('name', flat=True))
-    messages = motion.messages.select_related('sender').order_by('created_at')
+    messages = motion.messages.filter(is_sidechain=False).select_related('sender').order_by('created_at')
     if after is not None:
         messages = messages.filter(created_at__gt=after.created_at)
 

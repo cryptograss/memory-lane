@@ -79,7 +79,7 @@ def api_mentions(request, name):
 
     names = known_names()
     messages = (
-        Message.objects.filter(motion__isnull=False)
+        Message.objects.filter(motion__isnull=False, is_sidechain=False)
         .exclude(sender_id__in=MACHINERY_SENDERS)
         .select_related('sender')
         .order_by('-created_at')
