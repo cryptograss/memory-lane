@@ -167,6 +167,10 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
             'git_branch': event.get('gitBranch'),
             'client_version': event.get('version'),
             'motion': MotionSession.motion_for(session_id),
+            # A subagent's transcript shares its parent's sessionId, and its
+            # prompts (written by the agent) arrive as user-role lines. Only
+            # this flag tells them apart from the human's own words.
+            'is_sidechain': bool(event.get('isSidechain')),
             'created_at': timezone.now(),
         }
 
@@ -498,6 +502,11 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
         else:
             assert False
             self.stdout.write(self.style.WARNING(f'Unknown event type: {event_type}'))
+
+        if common['is_sidechain'] and not created and not message.is_sidechain:
+            # Imported before isSidechain was read; a replay corrects it.
+            Message.objects.filter(id=message.id).update(is_sidechain=True)
+            message.is_sidechain = True
 
         apparent_parent_id = event['parentUuid']
         if apparent_parent_id is not None:
