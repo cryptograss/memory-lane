@@ -114,7 +114,9 @@ class MemoryService:
         search_vector = SearchVector('content')
         search_query = SearchQuery(query)
 
-        messages = Message.objects.annotate(
+        # Tool output is excluded: it was never stored until #19, and long
+        # output would outrank prose (rank isn't normalised for length).
+        messages = Message.objects.exclude(sender_id='tool-result').annotate(
             rank=SearchRank(search_vector, search_query)
         ).filter(
             rank__gt=0
@@ -226,17 +228,25 @@ class MemoryService:
         return results
 
     @staticmethod
-    def get_recent_messages_by_chars(max_chars=10000):
-        """Get recent messages up to a character limit"""
+    def get_recent_messages_by_chars(max_chars=10000, scan=500):
+        """Recent messages, newest first, up to a character budget.
+
+        Tool output is left out, and a single message too big for what's
+        left of the budget is skipped rather than ending the walk -- one
+        long paste used to make this return nothing at all. At most `scan`
+        messages are looked at.
+        """
         messages = []
         total_chars = 0
 
-        for msg in Message.objects.order_by('-created_at'):
+        for msg in Message.objects.exclude(sender_id='tool-result').order_by('-created_at')[:scan]:
             content_str = str(msg.content)
             if total_chars + len(content_str) > max_chars:
-                break
+                continue
             messages.append(msg)
             total_chars += len(content_str)
+            if total_chars >= max_chars:
+                break
 
         return messages, total_chars
 

@@ -188,3 +188,10 @@ LOGGING = {
         },
     },
 }
+
+# How much of a tool's output the record keeps, in characters. 0 keeps none:
+# only which call it answered and whether it failed. Tool output holds file
+# contents and command output -- a `cat .env` is a tool result -- the
+# scrubber only removes secrets it already knows, and the read endpoints are
+# public. Raise this deliberately.
+TOOL_RESULT_CONTENT_CHARS = int(os.getenv('TOOL_RESULT_CONTENT_CHARS', '0'))
