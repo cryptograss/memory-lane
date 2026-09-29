@@ -171,7 +171,6 @@ def extract_timestamp(event):
             return int(dt.timestamp() * 1000)
     return None
 
-
 def import_line_from_claude_code_v2(line, era, filename, username='justin'):
 
         # Get entities
