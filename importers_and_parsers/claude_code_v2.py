@@ -122,17 +122,6 @@ def handle_summary(event, filename):
         return summary, created
 
 
-def extract_timestamp(event):
-    """Extract and parse timestamp from event, return as Unix timestamp (milliseconds)."""
-    timestamp_str = event.get('timestamp')
-    if timestamp_str:
-        dt = parse_datetime(timestamp_str)
-        if dt:
-            # Convert to Unix timestamp in milliseconds
-            return int(dt.timestamp() * 1000)
-    return None
-
-
 def tool_result_fields(event, limit=None):
     """
     content, is_error and tool_use_id of a tool_result event.
@@ -170,6 +159,17 @@ def tool_result_fields(event, limit=None):
         'is_error': bool(block.get('is_error', False)),
         'tool_use_id': block.get('tool_use_id', ''),
     }
+
+
+def extract_timestamp(event):
+    """Extract and parse timestamp from event, return as Unix timestamp (milliseconds)."""
+    timestamp_str = event.get('timestamp')
+    if timestamp_str:
+        dt = parse_datetime(timestamp_str)
+        if dt:
+            # Convert to Unix timestamp in milliseconds
+            return int(dt.timestamp() * 1000)
+    return None
 
 
 def import_line_from_claude_code_v2(line, era, filename, username='justin'):
