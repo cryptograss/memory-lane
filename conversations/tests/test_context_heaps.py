@@ -48,7 +48,6 @@ class ContextHeapTestCase(TestCase):
         # Create heap with first message
         heap = ContextHeap.objects.create(
             era=self.era,
-            first_message=msg1,
             type=ContextHeapType.FRESH
         )
 
@@ -85,14 +84,12 @@ class ContextHeapTestCase(TestCase):
         compacting = CompactingAction.objects.create(
             context_heap=heap,
             ending_message_id=msg3.id,
-            compact_boundary_message_id=msg3.id,
-            summary='Discussion about memory systems',
             compact_trigger='user_initiated',
             pre_compact_tokens=145000
         )
 
         # Verify heap structure
-        self.assertEqual(heap.first_message, msg1)
+        self.assertEqual(str(heap.first_message().id), str(msg1.id))
         self.assertEqual(heap.type, ContextHeapType.FRESH)
         self.assertEqual(heap.era, self.era)
 
@@ -113,7 +110,7 @@ class ContextHeapTestCase(TestCase):
         # Verify compacting action
         self.assertEqual(heap.compacting_action.compact_trigger, 'user_initiated')
         self.assertEqual(heap.compacting_action.pre_compact_tokens, 145000)
-        self.assertEqual(heap.compacting_action.summary, 'Discussion about memory systems')
+        self.assertEqual(str(heap.compacting_action.ending_message_id), str(msg3.id))
 
         print("✓ Context heap with compacting test passed!")
         print(f"  Heap: {heap}")
@@ -137,7 +134,6 @@ class ContextHeapTestCase(TestCase):
 
         heap = ContextHeap.objects.create(
             era=self.era,
-            first_message=msg1,
             type=ContextHeapType.FRESH
         )
 
@@ -185,7 +181,6 @@ class ContextHeapTestCase(TestCase):
 
         heap_fresh = ContextHeap.objects.create(
             era=self.era,
-            first_message=msg1_pre,
             type=ContextHeapType.FRESH
         )
 
@@ -196,8 +191,6 @@ class ContextHeapTestCase(TestCase):
         CompactingAction.objects.create(
             context_heap=heap_fresh,
             ending_message_id=msg1_pre.id,
-            compact_boundary_message_id=msg1_pre.id,
-            summary='Pre-compact conversation',
             compact_trigger='user_initiated'
         )
 
@@ -214,7 +207,6 @@ class ContextHeapTestCase(TestCase):
 
         heap_post = ContextHeap.objects.create(
             era=self.era,
-            first_message=msg1_post,
             type=ContextHeapType.POST_COMPACTING
         )
 
@@ -227,7 +219,7 @@ class ContextHeapTestCase(TestCase):
 
         # Verify fresh heap has compacting action
         self.assertTrue(hasattr(heap_fresh, 'compacting_action'))
-        self.assertEqual(heap_fresh.compacting_action.summary, 'Pre-compact conversation')
+        self.assertEqual(str(heap_fresh.compacting_action.ending_message_id), str(msg1_pre.id))
 
         # Verify post-compact heap has no compacting (yet)
         self.assertFalse(hasattr(heap_post, 'compacting_action'))

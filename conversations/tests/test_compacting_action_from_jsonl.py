@@ -1,16 +1,43 @@
 """
-Tests for CompactingAction.from_jsonl_claude_code_v2() classmethod.
+Tests for importing Claude Code v2 compact_boundary and summary lines.
+
+compact_boundary lines become CompactingActions; summary lines become Summaries.
 """
 
+import json
+import unittest
 import uuid
 from django.test import TestCase
 from conversations.models import (
-    CompactingAction, ThinkingEntity, Era, ContextHeap, ContextHeapType, Message
+    CompactingAction, ThinkingEntity, Era, ContextHeap, ContextHeapType, Message, Summary
 )
+from importers_and_parsers.claude_code_v2 import import_line_from_claude_code_v2
 
 
-class CompactingActionFromJsonlTests(TestCase):
-    """Test CompactingAction.from_jsonl_claude_code_v2() deduplication and instantiation."""
+def compact_boundary_record(logical_parent_uuid, trigger='manual', pre_tokens=145000):
+    return {
+        'uuid': str(uuid.uuid4()),
+        'parentUuid': None,
+        'logicalParentUuid': str(logical_parent_uuid),
+        'type': 'system',
+        'subtype': 'compact_boundary',
+        'content': 'Conversation compacted',
+        'userType': 'external',
+        'sessionId': str(uuid.uuid4()),
+        'timestamp': '2025-10-15T14:30:00.000Z',
+        'compactMetadata': {'trigger': trigger, 'preTokens': pre_tokens}
+    }
+
+
+def summary_record(leaf_uuid, summary='Discussion about memory systems and database design'):
+    return {
+        'type': 'summary',
+        'summary': summary,
+        'leafUuid': str(leaf_uuid)
+    }
+
+
+class ImportTestCase(TestCase):
 
     def setUp(self):
         """Create test entities and context."""
@@ -19,215 +46,151 @@ class CompactingActionFromJsonlTests(TestCase):
 
         self.era = Era.objects.create(name='Test Era')
 
-        # Create a heap for messages to belong to
-        first_msg = Message.objects.create(
-            id=uuid.uuid4(),
-            message_number=0,
-            content='First message',
-            sender=self.justin
-        )
-        first_msg.recipients.add(self.magent)
+    def import_record(self, record):
+        return import_line_from_claude_code_v2(json.dumps(record), self.era, 'test.jsonl')
 
-        self.heap = ContextHeap.objects.create(
-            era=self.era,
-            first_message=first_msg,
-            type=ContextHeapType.FRESH
-        )
+    def message_in_heap(self):
+        message = Message.objects.create(id=uuid.uuid4(), content='Last message before compact', sender=self.justin)
+        message.recipients.add(self.magent)
+        heap = ContextHeap.objects.create(era=self.era, type=ContextHeapType.FRESH)
+        heap.add_event(message)
+        return message, heap
 
-        first_msg.context_heap = self.heap
-        first_msg.save()
+
+class CompactingActionFromJsonlTests(ImportTestCase):
+    """Test compact_boundary import deduplication and instantiation."""
 
     def test_creates_new_compacting_action(self):
         """Creating a new CompactingAction returns (action, True)."""
-        summary_data = {
-            'type': 'summary',
-            'summary': 'Discussion about memory systems and database design',
-            'leafUuid': str(uuid.uuid4())
-        }
-
-        compact, created = CompactingAction.from_jsonl_claude_code_v2(
-            summary_data,
-            context_heap=self.heap
-        )
+        compact, created = self.import_record(compact_boundary_record(uuid.uuid4()))
 
         self.assertTrue(created)
-        self.assertEqual(compact.summary, 'Discussion about memory systems and database design')
-        self.assertEqual(compact.compact_trigger, 'user_initiated')
-        self.assertEqual(compact.pre_compact_tokens, 0)
-        self.assertEqual(compact.context_heap, self.heap)
-        self.assertIsNotNone(compact.compact_boundary_message_id)
+        self.assertIsInstance(compact, CompactingAction)
+        self.assertEqual(compact.compact_trigger, 'manual')
+        self.assertEqual(compact.pre_compact_tokens, 145000)
 
-    def test_generates_deterministic_id(self):
-        """Same summary data generates same UUID."""
-        summary_data = {
-            'type': 'summary',
-            'summary': 'Test summary',
-            'leafUuid': '00000000-0000-0000-0000-000000000001'
-        }
+    def test_reimport_returns_existing_compacting_action(self):
+        """Importing the same boundary twice returns the same CompactingAction."""
+        record = compact_boundary_record('00000000-0000-0000-0000-000000000001')
 
-        compact1, created1 = CompactingAction.from_jsonl_claude_code_v2(summary_data)
-        compact2, created2 = CompactingAction.from_jsonl_claude_code_v2(summary_data)
+        compact1, created1 = self.import_record(record)
+        compact2, created2 = self.import_record(record)
 
         self.assertTrue(created1)
         self.assertFalse(created2)
         self.assertEqual(compact1.id, compact2.id)
+        self.assertEqual(CompactingAction.objects.count(), 1)
 
-    def test_different_summaries_get_different_ids(self):
-        """Different summary data generates different UUIDs."""
-        summary_data_1 = {
-            'type': 'summary',
-            'summary': 'First summary',
-            'leafUuid': '00000000-0000-0000-0000-000000000001'
-        }
-
-        summary_data_2 = {
-            'type': 'summary',
-            'summary': 'Second summary',
-            'leafUuid': '00000000-0000-0000-0000-000000000002'
-        }
-
-        compact1, _ = CompactingAction.from_jsonl_claude_code_v2(summary_data_1)
-        compact2, _ = CompactingAction.from_jsonl_claude_code_v2(summary_data_2)
+    def test_different_boundaries_get_different_compacting_actions(self):
+        """Boundaries for different ending messages create different CompactingActions."""
+        compact1, _ = self.import_record(compact_boundary_record('00000000-0000-0000-0000-000000000001'))
+        compact2, _ = self.import_record(compact_boundary_record('00000000-0000-0000-0000-000000000002'))
 
         self.assertNotEqual(compact1.id, compact2.id)
 
     def test_allows_orphaned_compacting_action(self):
-        """Can create CompactingAction without context_heap (orphaned)."""
-        summary_data = {
-            'type': 'summary',
-            'summary': 'Orphaned compact',
-            'leafUuid': str(uuid.uuid4())
-        }
+        """A boundary whose ending message isn't imported yet creates an orphaned CompactingAction."""
+        ending_msg_id = uuid.uuid4()
 
-        compact, created = CompactingAction.from_jsonl_claude_code_v2(summary_data)
+        compact, created = self.import_record(compact_boundary_record(ending_msg_id))
 
         self.assertTrue(created)
         self.assertIsNone(compact.context_heap)
-        self.assertEqual(compact.summary, 'Orphaned compact')
+        self.assertIsNone(compact.ending_message)
+        self.assertEqual(compact.looking_for_ending_message, ending_msg_id)
 
-    def test_accepts_extra_fields(self):
-        """Extra fields like ending_message_id are set correctly."""
-        ending_msg_id = uuid.uuid4()
-        summary_data = {
-            'type': 'summary',
-            'summary': 'Test',
-            'leafUuid': str(uuid.uuid4())
-        }
+    def test_links_existing_ending_message_and_heap(self):
+        """A boundary whose ending message exists links to it and its heap."""
+        ending_msg, heap = self.message_in_heap()
 
-        compact, created = CompactingAction.from_jsonl_claude_code_v2(
-            summary_data,
-            context_heap=self.heap,
-            ending_message_id=ending_msg_id
-        )
+        compact, created = self.import_record(compact_boundary_record(ending_msg.id))
 
         self.assertTrue(created)
-        self.assertEqual(compact.ending_message_id, ending_msg_id)
-        self.assertEqual(compact.context_heap, self.heap)
-
-    def test_handles_missing_leaf_uuid(self):
-        """Handles summary data without leafUuid."""
-        summary_data = {
-            'type': 'summary',
-            'summary': 'Summary without leaf UUID'
-        }
-
-        compact, created = CompactingAction.from_jsonl_claude_code_v2(summary_data)
-
-        self.assertTrue(created)
-        self.assertIsNone(compact.compact_boundary_message_id)
+        self.assertEqual(compact.ending_message_id, ending_msg.id)
+        self.assertEqual(compact.context_heap, heap)
+        self.assertIsNone(compact.looking_for_ending_message)
 
     def test_deduplication_preserves_original(self):
-        """Calling with same summary twice returns original, doesn't update."""
-        summary_data = {
-            'type': 'summary',
-            'summary': 'Original summary',
-            'leafUuid': str(uuid.uuid4())
-        }
+        """Re-importing a boundary returns the original and doesn't update it."""
+        ending_msg_id = uuid.uuid4()
 
-        # Create first time
-        compact1, created1 = CompactingAction.from_jsonl_claude_code_v2(
-            summary_data,
-            context_heap=self.heap
-        )
+        compact1, created1 = self.import_record(compact_boundary_record(ending_msg_id, trigger='manual'))
+        compact2, created2 = self.import_record(compact_boundary_record(ending_msg_id, trigger='auto'))
+
         self.assertTrue(created1)
-        self.assertEqual(compact1.context_heap, self.heap)
-
-        # Try to create again with different context_heap (should preserve original)
-        era2 = Era.objects.create(name='Era 2')
-        first_msg2 = Message.objects.create(
-            id=uuid.uuid4(),
-            message_number=0,
-            content='First message',
-            sender=self.justin
-        )
-        first_msg2.recipients.add(self.magent)
-        heap2 = ContextHeap.objects.create(
-            era=era2,
-            first_message=first_msg2,
-            type=ContextHeapType.FRESH
-        )
-
-        compact2, created2 = CompactingAction.from_jsonl_claude_code_v2(
-            summary_data,
-            context_heap=heap2  # Different heap
-        )
-
         self.assertFalse(created2)
         self.assertEqual(compact1.id, compact2.id)
-        self.assertEqual(compact2.context_heap, self.heap)  # Keeps original heap
+        self.assertEqual(CompactingAction.objects.get(id=compact1.id).compact_trigger, 'manual')
 
-    def test_stores_raw_imported_content(self):
-        """Stores raw summary data in RawImportedContent."""
-        from django.contrib.contenttypes.models import ContentType
-        from conversations.models import RawImportedContent
+    # get_or_create_by_id_or_message sets context_heap on the orphan but leaves
+    # it out of save(update_fields=...), so the heap link is never written.
+    @unittest.expectedFailure
+    def test_orphan_gets_heap_when_reimported_after_ending_message(self):
+        """An orphaned CompactingAction linked on re-import is saved with its heap."""
+        ending_msg_id = uuid.uuid4()
+        record = compact_boundary_record(ending_msg_id)
+        compact, _ = self.import_record(record)
 
-        summary_data = {
-            'type': 'summary',
-            'summary': 'Test summary for raw content',
-            'leafUuid': str(uuid.uuid4())
-        }
+        ending_msg = Message.objects.create(id=ending_msg_id, content='Late arrival', sender=self.justin)
+        heap = ContextHeap.objects.create(era=self.era, type=ContextHeapType.FRESH)
+        heap.add_event(ending_msg)
+        self.import_record(record)
 
-        compact, created = CompactingAction.from_jsonl_claude_code_v2(summary_data)
+        compact.refresh_from_db()
+        self.assertEqual(compact.ending_message_id, ending_msg_id)
+        self.assertEqual(compact.context_heap, heap)
+
+
+class SummaryFromJsonlTests(ImportTestCase):
+    """Test summary import deduplication and instantiation."""
+
+    def test_creates_summary_for_unimported_leaf(self):
+        """A summary whose leaf message isn't imported yet is stored looking for it."""
+        leaf_uuid = uuid.uuid4()
+
+        summary, created = self.import_record(summary_record(leaf_uuid))
 
         self.assertTrue(created)
+        self.assertIsInstance(summary, Summary)
+        self.assertEqual(summary.summary_text, 'Discussion about memory systems and database design')
+        self.assertIsNone(summary.leaf_message)
+        self.assertEqual(summary.looking_for_leaf_message, leaf_uuid)
 
-        # Check RawImportedContent was created
-        compact_ct = ContentType.objects.get_for_model(compact)
-        raw_content = RawImportedContent.objects.get(
-            content_type=compact_ct,
-            object_id=compact.id
-        )
+    def test_links_summary_to_existing_leaf(self):
+        """A summary whose leaf message exists links to it."""
+        leaf_msg, _ = self.message_in_heap()
 
-        # Verify raw_data structure matches original summary
-        self.assertEqual(raw_content.raw_data, summary_data)
-        self.assertEqual(raw_content.raw_data['type'], 'summary')
-        self.assertEqual(raw_content.raw_data['summary'], 'Test summary for raw content')
-        self.assertEqual(raw_content.raw_data['leafUuid'], summary_data['leafUuid'])
+        summary, created = self.import_record(summary_record(leaf_msg.id))
 
-    def test_does_not_store_raw_content_for_existing_ca(self):
-        """Does not create duplicate RawImportedContent on dedupe."""
-        from django.contrib.contenttypes.models import ContentType
-        from conversations.models import RawImportedContent
+        self.assertTrue(created)
+        self.assertEqual(summary.leaf_message_id, leaf_msg.id)
+        self.assertIsNone(summary.looking_for_leaf_message)
 
-        summary_data = {
-            'type': 'summary',
-            'summary': 'Dedupe test',
-            'leafUuid': str(uuid.uuid4())
-        }
+    def test_deduplication_preserves_original(self):
+        """Re-importing a summary for the same leaf returns the original, doesn't update."""
+        leaf_uuid = uuid.uuid4()
 
-        # Create first time
-        compact1, created1 = CompactingAction.from_jsonl_claude_code_v2(summary_data)
+        summary1, created1 = self.import_record(summary_record(leaf_uuid, 'Original summary'))
+        summary2, created2 = self.import_record(summary_record(leaf_uuid, 'Regenerated summary'))
+
         self.assertTrue(created1)
-
-        # Try to create again (should dedupe)
-        compact2, created2 = CompactingAction.from_jsonl_claude_code_v2(summary_data)
         self.assertFalse(created2)
+        self.assertEqual(summary1.id, summary2.id)
+        self.assertEqual(Summary.objects.get(id=summary1.id).summary_text, 'Original summary')
 
-        # Should only have ONE RawImportedContent
-        compact_ct = ContentType.objects.get_for_model(compact1)
-        raw_count = RawImportedContent.objects.filter(
-            content_type=compact_ct,
-            object_id=compact1.id
-        ).count()
+    # handle_summary looks up by leaf_message first once the leaf exists, misses
+    # the orphan (stored under looking_for_leaf_message), and creates a second row.
+    @unittest.expectedFailure
+    def test_orphan_is_not_duplicated_when_reimported_after_leaf(self):
+        """Re-importing an orphaned summary after its leaf arrives links the original."""
+        leaf_uuid = uuid.uuid4()
+        record = summary_record(leaf_uuid)
+        summary1, _ = self.import_record(record)
 
-        self.assertEqual(raw_count, 1)
+        Message.objects.create(id=leaf_uuid, content='Late arrival', sender=self.justin)
+        summary2, created2 = self.import_record(record)
+
+        self.assertFalse(created2)
+        self.assertEqual(summary1.id, summary2.id)
+        self.assertEqual(Summary.objects.count(), 1)
+        self.assertEqual(Summary.objects.get().leaf_message_id, leaf_uuid)
