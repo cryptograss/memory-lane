@@ -98,6 +98,12 @@ DATABASES = {
     }
 }
 
+# The watcher posts transcript lines in batches, and one line can hold a
+# base64 screenshot (1 MB+). Django's 2.5 MB default refused such batches
+# with a 400 the watcher then retried forever. The app's only POST
+# endpoints are /api/ingest/ (key required) and the admin.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 32 * 1024 * 1024
+
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators

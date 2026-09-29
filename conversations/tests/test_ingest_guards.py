@@ -57,6 +57,10 @@ class IngestGuardTest(TestCase):
         response = self.post(['{}'], key='nope')
         self.assertEqual(response.status_code, 401)
 
+    def test_non_ascii_key_is_unauthorized_not_a_crash(self):
+        response = self.post(['{}'], key='clé')
+        self.assertEqual(response.status_code, 401)
+
     def test_missing_header_is_unauthorized(self):
         response = self.post(['{}'], key=None)
         self.assertEqual(response.status_code, 401)
