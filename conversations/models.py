@@ -1225,6 +1225,26 @@ class RawImportedContent(models.Model):
         return f"Raw data for {self.content_type} {str(self.object_id)[:8]}"
 
 
+class BlockAnchor(models.Model):
+    """
+    A real Ethereum block and its timestamp, fetched from a node.
+
+    Sparse on purpose: eth_blockheight elsewhere is interpolated between
+    anchors (see conversations/services/eth_blocks.py), so the record never
+    needs a node at ingest time.
+    """
+
+    number = models.BigIntegerField(primary_key=True)
+    timestamp = models.BigIntegerField(db_index=True, help_text='Unix seconds')
+
+    class Meta:
+        db_table = 'block_anchors'
+        ordering = ['number']
+
+    def __str__(self):
+        return f"Block {self.number} @ {self.timestamp}"
+
+
 # ============================================================================
 # Import Tracking Constants
 # ============================================================================
