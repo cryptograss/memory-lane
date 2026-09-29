@@ -14,7 +14,7 @@ from django.views.decorators.http import require_GET
 from .models import Message, Motion, ThinkingEntity
 from .services.motion_view import (
     MACHINERY_SENDERS, is_wrapper, known_names, mentions_in, motion_payload,
-    prose, turn_payload, turns,
+    prose, turn_payload, turns, wiki_title, wikilinks_in,
 )
 
 
@@ -76,6 +76,52 @@ def api_motion_sessions(request, slug):
     return JsonResponse({'motion': motion.slug, 'sessions': [
         {'session_id': str(s['session_id']), 'last_at': s['last_at'].isoformat()} for s in sessions
     ]})
+
+
+@require_GET
+def api_wikilinks(request):
+    """Turns in Motions that link to PickiPedia pages with [[...]], newest first.
+
+    This is what PickiPedia reads to reach Motions without storing them:
+    ?page=<title> for one page's backlinks, ?since=<iso> for what arrived
+    after a moment (incremental sync), ?limit= as for mentions. Titles are
+    normalised as MediaWiki does, so [[old-time music]] and
+    [[Old-time_music]] are the same page.
+    """
+    page = request.GET.get('page')
+    page = wiki_title(page) if page else None
+    since = parse_datetime(request.GET.get('since') or '')
+    try:
+        limit = min(max(int(request.GET.get('limit', 200)), 1), 1000)
+    except ValueError:
+        limit = 200
+
+    names = known_names()
+    messages = (
+        Message.objects.filter(motion__isnull=False)
+        .exclude(sender_id__in=MACHINERY_SENDERS)
+        .order_by('-created_at')
+    )
+    if since:
+        messages = messages.filter(created_at__gt=since)
+
+    links = []
+    for msg in messages.iterator():
+        if msg.sender_id not in names:
+            continue
+        text = prose(msg.content)
+        if not text or is_wrapper(text):
+            continue
+        for title in wikilinks_in(text):
+            if page and title != page:
+                continue
+            links.append({'page': title, 'motion': msg.motion_id, 'turn': str(msg.id),
+                          'sender': msg.sender_id, 'created_at': msg.created_at.isoformat(),
+                          'eth_blockheight': msg.eth_blockheight})
+        if len(links) >= limit:
+            break
+
+    return JsonResponse({'links': links[:limit]})
 
 
 @require_GET

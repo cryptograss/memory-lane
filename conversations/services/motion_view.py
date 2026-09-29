@@ -109,6 +109,29 @@ def known_names():
     return set(ThinkingEntity.objects.values_list('name', flat=True))
 
 
+def wiki_title(target):
+    """A link target as MediaWiki names the page: no fragment, spaces, first letter capital."""
+    title = target.split('#', 1)[0].replace('_', ' ').strip()
+    title = re.sub(r'\s+', ' ', title)
+    return title[:1].upper() + title[1:]
+
+
+def wikilinks_in(text):
+    """Ordered, de-duplicated PickiPedia titles a text links to with [[...]].
+
+    Code is literal, as in the renderer: a [[link]] inside backticks is an
+    example, not a link.
+    """
+    text = _INLINE_CODE.sub('', _FENCE.sub('', text))
+    seen, out = set(), []
+    for match in _WIKILINK.finditer(text):
+        title = wiki_title(match.group(1))
+        if title and title not in seen:
+            seen.add(title)
+            out.append(title)
+    return out
+
+
 def mentions_in(text, mentionable):
     """Ordered, de-duplicated names mentioned in text, restricted to known ones.
 
