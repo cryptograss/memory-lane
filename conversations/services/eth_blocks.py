@@ -14,8 +14,10 @@ node being up, so messages arrive with eth_blockheight null and
    across any interval with no missed slot. Missed slots run about one per
    256 blocks, so elsewhere it is off by a block or two at most.
 
-A timestamp past the newest anchor gets None rather than a guess; the next
-run stamps it once an anchor covers it.
+A timestamp past the newest anchor, or inside a gap a truncated sync left
+between anchors, gets None rather than a guess; a later run stamps it once
+anchors cover it. Nothing before the Merge is stamped: blocks were not on a
+12-second clock then, and public nodes have pruned that history.
 """
 
 import bisect
@@ -31,6 +33,8 @@ DEFAULT_RPC_URL = 'https://ethereum-rpc.publicnode.com'
 ANCHOR_SPACING = 256
 SECONDS_PER_SLOT = 12
 BATCH_SIZE = 100
+MERGE_BLOCK = 15_537_394
+MERGE_TIMESTAMP = 1_663_224_179
 
 
 def rpc_url():
@@ -45,21 +49,37 @@ def _post(url, payload):
 
 
 def fetch_head(url):
-    """(number, timestamp) of the latest block."""
-    result = _post(url, {'jsonrpc': '2.0', 'id': 1, 'method': 'eth_getBlockByNumber',
-                         'params': ['latest', False]})['result']
+    """(number, timestamp) of the latest finalized block. Finalized, so an
+    anchor can never be reorged away underneath the record."""
+    reply = _post(url, {'jsonrpc': '2.0', 'id': 1, 'method': 'eth_getBlockByNumber',
+                        'params': ['finalized', False]})
+    result = reply.get('result') if isinstance(reply, dict) else None
+    if not result:
+        raise RuntimeError(f"No finalized block from node: {str(reply)[:200]}")
     return int(result['number'], 16), int(result['timestamp'], 16)
 
 
 def fetch_blocks(url, numbers):
-    """[(number, timestamp)] for the given block numbers, in one batch request."""
+    """[(number, timestamp)] for whichever of the given blocks the node returned.
+
+    One batch request. Entries that come back as errors or null are skipped
+    and logged, not fatal: a later run asks for them again.
+    """
     payload = [{'jsonrpc': '2.0', 'id': n, 'method': 'eth_getBlockByNumber', 'params': [hex(n), False]}
                for n in numbers]
     replies = _post(url, payload)
-    errors = [r['error'] for r in replies if r.get('error')]
-    if errors:
-        raise RuntimeError(f"RPC errors fetching blocks: {errors[:3]}")
-    return [(int(r['result']['number'], 16), int(r['result']['timestamp'], 16)) for r in replies]
+    if not isinstance(replies, list):
+        raise RuntimeError(f"Node did not answer the batch: {str(replies)[:200]}")
+    blocks, bad = [], []
+    for reply in replies:
+        result = reply.get('result') if isinstance(reply, dict) else None
+        if result:
+            blocks.append((int(result['number'], 16), int(result['timestamp'], 16)))
+        else:
+            bad.append(reply.get('error') if isinstance(reply, dict) else reply)
+    if bad:
+        logger.warning(f"{len(bad)} of {len(numbers)} blocks not returned: {bad[:3]}")
+    return blocks
 
 
 def sync_anchors(since_ts, url=None, max_batches=500):
@@ -73,11 +93,12 @@ def sync_anchors(since_ts, url=None, max_batches=500):
 
     url = url or rpc_url()
     head_number, head_ts = fetch_head(url)
+    since_ts = max(since_ts, MERGE_TIMESTAMP)
 
     # Blocks never outnumber slots, so counting back one block per slot lands
     # at or before the block at since_ts.
     start = head_number - math.ceil(max(head_ts - since_ts, 0) / SECONDS_PER_SLOT)
-    start = max(start - start % ANCHOR_SPACING, 0)
+    start = max(start - start % ANCHOR_SPACING, MERGE_BLOCK - MERGE_BLOCK % ANCHOR_SPACING)
 
     wanted = set(range(start, head_number + 1, ANCHOR_SPACING)) | {head_number}
     have = set(BlockAnchor.objects.filter(number__gte=start).values_list('number', flat=True))
@@ -114,7 +135,12 @@ class BlockClock:
         return self.timestamps[0], self.timestamps[-1]
 
     def block_at(self, ts):
-        """The block at the head at unix time ts, or None if outside the anchors."""
+        """The block at the head at unix time ts, or None if the anchors don't cover it.
+
+        Anchors are never more than ANCHOR_SPACING apart once a sync has
+        finished; a wider gap is a hole a truncated sync left, and
+        interpolating across it would be a guess that is never revisited.
+        """
         if not self.numbers or ts < self.timestamps[0] or ts > self.timestamps[-1]:
             return None
         i = bisect.bisect_right(self.timestamps, ts) - 1
@@ -122,6 +148,8 @@ class BlockClock:
         if ts == t0 or i + 1 == len(self.numbers):
             return n0
         n1, t1 = self.numbers[i + 1], self.timestamps[i + 1]
+        if n1 - n0 > ANCHOR_SPACING:
+            return None
         estimate = n0 + (ts - t0) * (n1 - n0) // (t1 - t0)
         return min(max(estimate, n0), n1 - 1)
 
@@ -145,10 +173,10 @@ def stamp_messages(clock, chunk=5000):
         rows = list(page.values_list('id', 'timestamp')[:chunk])
         if not rows:
             return stamped
-        Message.objects.bulk_update(
-            [Message(id=i, eth_blockheight=clock.block_at(ts // 1000)) for i, ts in rows],
-            ['eth_blockheight'])
-        stamped += len(rows)
+        stamps = [Message(id=i, eth_blockheight=block) for i, ts in rows
+                  if (block := clock.block_at(ts // 1000)) is not None]
+        Message.objects.bulk_update(stamps, ['eth_blockheight'])
+        stamped += len(stamps)
         last_id = rows[-1][0]
 
 

@@ -440,6 +440,10 @@ class Message(models.Model):
             models.Index(fields=['session_id', 'timestamp']),
             models.Index(fields=['sender']),
             models.Index(fields=['motion', 'created_at']),
+            # stamp_blockheights looks for these every few minutes; without
+            # this each look is a full scan.
+            models.Index(fields=['timestamp'], condition=models.Q(eth_blockheight__isnull=True),
+                         name='message_unstamped_ts'),
         ]
         unique_together = [['context_heap', 'message_number']]
 

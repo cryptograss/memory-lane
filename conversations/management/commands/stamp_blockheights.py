@@ -1,8 +1,9 @@
 """Give messages, Motions and notes their Ethereum block heights.
 
 Ingest leaves eth_blockheight null so it never waits on a node. This fills
-it in afterwards: sync anchors from a node up to the head, then interpolate
-everything the anchors now cover. Idempotent; run it on a timer.
+it in afterwards: sync anchors from a node up to the finalized head, then
+interpolate everything the anchors now cover. Idempotent; run it on a timer.
+A failed sync is reported and stamping goes ahead with the anchors on hand.
 """
 
 from django.core.management.base import BaseCommand
@@ -10,6 +11,21 @@ from django.db.models import Min
 
 from conversations.models import Message, Motion, Note
 from conversations.services import eth_blocks
+
+
+def earliest_unstamped():
+    """Unix seconds of the oldest post-Merge thing still waiting for a height, or None."""
+    floor = eth_blocks.MERGE_TIMESTAMP
+    candidates = []
+    ms = (Message.objects.filter(eth_blockheight__isnull=True, timestamp__gte=floor * 1000)
+          .aggregate(t=Min('timestamp'))['t'])
+    if ms is not None:
+        candidates.append(ms // 1000)
+    for model in (Motion, Note):
+        created = model.objects.filter(eth_blockheight__isnull=True).aggregate(t=Min('created_at'))['t']
+        if created is not None:
+            candidates.append(max(int(created.timestamp()), floor))
+    return min(candidates) if candidates else None
 
 
 class Command(BaseCommand):
@@ -24,13 +40,14 @@ class Command(BaseCommand):
                             help='Use only the anchors already stored; make no RPC calls')
 
     def handle(self, *args, **options):
-        if not options['no_sync']:
-            earliest_ms = (Message.objects.filter(eth_blockheight__isnull=True, timestamp__isnull=False)
-                           .aggregate(t=Min('timestamp'))['t'])
-            if earliest_ms is not None:
-                added = eth_blocks.sync_anchors(earliest_ms // 1000, url=options['rpc_url'],
+        since = None if options['no_sync'] else earliest_unstamped()
+        if since is not None:
+            try:
+                added = eth_blocks.sync_anchors(since, url=options['rpc_url'],
                                                 max_batches=options['max_batches'])
                 self.stdout.write(f"anchors added: {added}")
+            except Exception as e:  # a bad node reply must not stop stamping what we can
+                self.stderr.write(f"anchor sync failed, stamping with existing anchors: {e}")
 
         clock = eth_blocks.BlockClock()
         messages = eth_blocks.stamp_messages(clock)
