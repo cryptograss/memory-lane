@@ -47,10 +47,9 @@ class ContextHeapTestCase(TestCase):
         )
         opener.recipients.add(self.magent)
 
-        # Create ContextHeap with opener as first_message
+        # Create ContextHeap for the opener
         heap = ContextHeap.objects.create(
             era=era,
-            first_message=opener,
             type=ContextHeapType.FRESH
         )
 
@@ -87,15 +86,13 @@ class ContextHeapTestCase(TestCase):
         compacting = CompactingAction.objects.create(
             context_heap=heap,
             ending_message_id='00000000-0000-0000-0000-000000000003',
-            compact_boundary_message_id='00000000-0000-0000-0000-000000000003',
-            summary='Discussion about memory systems',
             compact_trigger='manual',
             pre_compact_tokens=145000
         )
 
         # Verify structure
         self.assertEqual(opener.sender.name, 'justin')
-        self.assertIn(self.magent, opener.recipients.all())
+        self.assertIn(self.magent.name, opener.recipients.values_list('name', flat=True))
         self.assertEqual(opener.session_id, session_id)
 
         # Verify message chain
@@ -115,7 +112,7 @@ class ContextHeapTestCase(TestCase):
         # Verify compacting action
         self.assertEqual(heap.compacting_action.compact_trigger, 'manual')
         self.assertEqual(heap.compacting_action.pre_compact_tokens, 145000)
-        self.assertEqual(heap.compacting_action.summary, 'Discussion about memory systems')
+        self.assertEqual(str(heap.compacting_action.ending_message_id), str(msg3.id))
 
         print("✓ Context window with compacting test passed!")
         print(f"  Heap: {heap}")
@@ -140,7 +137,6 @@ class ContextHeapTestCase(TestCase):
         # Create ContextHeap
         heap = ContextHeap.objects.create(
             era=era,
-            first_message=opener,
             type=ContextHeapType.FRESH
         )
 
@@ -182,8 +178,9 @@ class ContextHeapTestCase(TestCase):
 
         # Verify multiple recipients
         self.assertEqual(opener.recipients.count(), 2)
-        self.assertIn(self.magent, opener.recipients.all())
-        self.assertIn(rj, opener.recipients.all())
+        recipient_names = opener.recipients.values_list('name', flat=True)
+        self.assertIn(self.magent.name, recipient_names)
+        self.assertIn(rj.name, recipient_names)
 
         print("✓ Multiple recipients test passed!")
         print(f"  Recipients: {[r.name for r in opener.recipients.all()]}")
