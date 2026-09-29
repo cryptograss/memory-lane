@@ -11,6 +11,7 @@ import time
 import logging
 import json
 import requests
+import threading
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 from watchdog.observers import Observer
@@ -83,6 +84,15 @@ class ConversationWatcher(FileSystemEventHandler):
         self.batch_interval = batch_interval
         self.pending_lines = []  # Buffer for batching
         self.last_flush_time = time.time()
+        # Two threads touch pending_lines: the filesystem-event thread appends
+        # (on_modified -> import_line) and the main loop's timer flushes. The
+        # lock makes swapping the batch out atomic, so a line appended while a
+        # POST is in flight is never wiped by the post-flush clear. That wipe
+        # silently dropped 2 of 12 human prompts in one six-hour window.
+        self.batch_lock = threading.Lock()
+        # Undelivered batches are re-queued rather than dropped; this bounds
+        # memory if the endpoint stays down for a long time.
+        self.max_pending = 5000
 
         # Extract username from watch directory path
         # Expected format: /project-logs/username/...
@@ -198,12 +208,12 @@ class ConversationWatcher(FileSystemEventHandler):
         """
         if self.remote_endpoint:
             # Remote mode: batch lines and POST to endpoint
-            self.pending_lines.append(line)
+            with self.batch_lock:
+                self.pending_lines.append(line)
+                full = len(self.pending_lines) >= self.batch_size
 
             # Flush if batch is full or enough time has passed
-            if len(self.pending_lines) >= self.batch_size:
-                self.flush_batch()
-            elif time.time() - self.last_flush_time > self.batch_interval:
+            if full or time.time() - self.last_flush_time > self.batch_interval:
                 self.flush_batch()
         else:
             # Local mode: import directly to database
@@ -238,8 +248,16 @@ class ConversationWatcher(FileSystemEventHandler):
             logger.info(f"Imported {event.__class__.__name__} {str(event.id)[:8]}")
 
     def flush_batch(self):
-        """Send batched lines to remote endpoint."""
-        if not self.pending_lines:
+        """Send batched lines to remote endpoint.
+
+        The batch is swapped out under the lock before the POST, so lines
+        appended by the other thread during the request land in a fresh list
+        and go out next time. An undelivered batch goes back to the front of
+        the queue and is retried at the next flush interval.
+        """
+        with self.batch_lock:
+            batch, self.pending_lines = self.pending_lines, []
+        if not batch:
             return
 
         # Build headers with optional API key auth
@@ -248,11 +266,12 @@ class ConversationWatcher(FileSystemEventHandler):
         if api_key:
             headers['Authorization'] = f'Bearer {api_key}'
 
+        delivered = False
         try:
             response = requests.post(
                 self.remote_endpoint,
                 json={
-                    'lines': self.pending_lines,
+                    'lines': batch,
                     'username': self.username,
                     'source': f'hunter-watcher-{self.username}'
                 },
@@ -261,34 +280,69 @@ class ConversationWatcher(FileSystemEventHandler):
             )
 
             if response.status_code == 200:
+                delivered = True
                 result = response.json()
-                logger.info(f"Remote ingest: imported={result.get('imported', 0)}, skipped={result.get('skipped', 0)}")
-                if result.get('errors'):
-                    logger.warning(f"Remote ingest errors: {result['errors'][:3]}")
+                errors = result.get('errors') or []
+                # The endpoint returns at most 10 errors, so this count is a floor.
+                logger.info(f"Remote ingest: sent={len(batch)}, imported={result.get('imported', 0)}, "
+                            f"skipped={result.get('skipped', 0)}, errors={len(errors)}")
+                if errors:
+                    logger.warning(f"Remote ingest errors (first 3 of {len(errors)}): {errors[:3]}")
             else:
                 logger.error(f"Remote ingest failed: {response.status_code} - {response.text[:200]}")
 
         except requests.RequestException as e:
             logger.error(f"Failed to POST to remote endpoint: {e}")
 
-        # Clear batch regardless of success (avoid infinite retries)
-        self.pending_lines = []
+        if not delivered:
+            self.requeue(batch)
+
         self.last_flush_time = time.time()
 
+    def requeue(self, batch):
+        """Put an undelivered batch back at the front of the queue.
+
+        Bounded by max_pending: if the endpoint is down long enough to exceed
+        it, the oldest lines are dropped, and loudly. Everything dropped is
+        still in the JSONL on disk and can be replayed.
+        """
+        with self.batch_lock:
+            self.pending_lines = batch + self.pending_lines
+            overflow = len(self.pending_lines) - self.max_pending
+            if overflow > 0:
+                logger.error(f"Pending queue over {self.max_pending}; dropping {overflow} oldest lines")
+                self.pending_lines = self.pending_lines[overflow:]
+            pending = len(self.pending_lines)
+        logger.warning(f"Re-queued {len(batch)} undelivered lines; {pending} pending")
+
     def scan_existing_files(self):
-        """Scan existing files to establish baseline positions."""
-        logger.info("Scanning existing files...")
+        """Scan existing files to establish baseline positions.
+
+        Normally only lines written from now on are ingested. With
+        WATCHER_REPLAY_FROM_START set, every existing line is ingested first.
+        The importer is idempotent by message uuid, so a replay recovers
+        anything a previous watcher dropped and duplicates nothing; the cost
+        is a burst of POSTs whose results are mostly 'skipped'.
+        """
+        replay = os.environ.get('WATCHER_REPLAY_FROM_START', '').lower() in ('1', 'true', 'yes')
+        logger.info("Scanning existing files..." + (" REPLAY: ingesting every existing line" if replay else ""))
 
         file_count = 0
         for filepath in self.watch_dir.rglob('*.jsonl'):
-            # Just seek to end - we only want NEW lines from this point forward
-            with open(filepath, 'r') as f:
-                f.seek(0, 2)  # Seek to end
-                self.file_positions[str(filepath)] = f.tell()
+            if replay:
+                self.file_positions[str(filepath)] = 0
+                self.process_new_lines(filepath)
+            else:
+                # Just seek to end - we only want NEW lines from this point forward
+                with open(filepath, 'r') as f:
+                    f.seek(0, 2)  # Seek to end
+                    self.file_positions[str(filepath)] = f.tell()
 
             logger.debug(f"Tracking {filepath.name} from position {self.file_positions[str(filepath)]}")
             file_count += 1
 
+        if replay:
+            self.flush_batch()
         logger.info(f"Tracking {file_count} JSONL files")
 
 
