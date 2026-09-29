@@ -131,6 +131,23 @@ def extract_timestamp(event):
             return int(dt.timestamp() * 1000)
     return None
 
+MOTION_WAKE_PREFIX = '<motion-wake'
+
+
+def poller_or(user, content):
+    """
+    The sender of a user-role message: the container's human, unless the
+    Motion poller wrote it. A woken turn's prompt arrives as a user message,
+    and attributing it to whoever owns the container would put words in
+    their mouth.
+    """
+    text = content if isinstance(content, str) else ''.join(
+        block.get('text', '') for block in content if isinstance(block, dict))
+    if text.lstrip().startswith(MOTION_WAKE_PREFIX):
+        return get_or_create_participant('motion-poller', 'system')
+    return user
+
+
 def import_line_from_claude_code_v2(line, era, filename, username='justin'):
 
         # Get entities
@@ -161,12 +178,14 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
         # conversation. `motion` is resolved here too, so a message lands in
         # its Motion as it arrives rather than waiting for a later pass.
         session_id = event.get('sessionId')
+        motion = (MotionSession.motion_for(session_id)
+                  or MotionSession.claim_by_history(session_id, event.get('uuid')))
         common = {
             'session_id': session_id,
             'cwd': event.get('cwd'),
             'git_branch': event.get('gitBranch'),
             'client_version': event.get('version'),
-            'motion': MotionSession.motion_for(session_id),
+            'motion': motion,
             'created_at': timezone.now(),
         }
 
@@ -366,7 +385,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
 
             #### This block is clearly broken - we need real logic for this.
             if role == 'user':
-                sender = user
+                sender = poller_or(user, content)
                 recipient = magent
             elif role == 'assistant':
                 sender = magent
@@ -394,7 +413,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
             role = event['message']['role']
             content = event['message']['content']
             if role == "user":
-                sender = user
+                sender = poller_or(user, content)
                 recipient = magent
             else:
                 assert False # Not sure what this can be?
