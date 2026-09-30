@@ -914,8 +914,12 @@ def ingest(request):
     # Get or create era
     era, _ = Era.objects.get_or_create(name=era_name)
 
-    # Optional: Apply secrets scrubbing via external scrubber service
+    # Optional: Apply secrets scrubbing via external scrubber service. Lines
+    # are pattern-redacted in the importer regardless; if the scrubber was
+    # configured but couldn't scrub this batch, its tool results keep their
+    # link and lose their output, rather than going public unscrubbed.
     scrubber_url = os.environ.get('SCRUBBER_URL')
+    scrubbed = not scrubber_url
     if scrubber_url and lines:
         try:
             import requests
@@ -927,12 +931,13 @@ def ingest(request):
             if response.status_code == 200:
                 result = response.json()
                 lines = result['texts']
+                scrubbed = True
                 if result['redacted_count'] > 0:
                     logger.info(f"Scrubber redacted secrets in {result['redacted_count']} lines")
             else:
-                logger.warning(f"Scrubber returned {response.status_code}, proceeding without scrubbing")
+                logger.warning(f"Scrubber returned {response.status_code}; storing this batch without tool output")
         except Exception as e:
-            logger.warning(f"Could not reach scrubber service: {e}, proceeding without scrubbing")
+            logger.warning(f"Could not reach scrubber service: {e}; storing this batch without tool output")
 
     # Process lines
     imported = 0
@@ -945,7 +950,7 @@ def ingest(request):
 
             # Import the line
             event, created = import_line_from_claude_code_v2(
-                line, era, f"ingest-{source}", username
+                line, era, f"ingest-{source}", username, keep_tool_output=scrubbed
             )
 
             if event is EVENT_TYPE_WE_DO_NOT_HANDLE_YET:
