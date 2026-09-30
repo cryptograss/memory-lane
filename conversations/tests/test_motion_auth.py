@@ -58,11 +58,12 @@ class MotionAuthTest(TestCase):
         patcher.enable()
         self.addCleanup(patcher.disable)
 
-    def enroll(self, name='justin', key=None, namespace=motion_auth.NAMESPACE):
+    def enroll(self, name=None, key=None, namespace=motion_auth.NAMESPACE):
         challenge = self.client.get('/api/auth/challenge/').json()['challenge']
-        return self.client.post('/api/auth/enroll/', json.dumps(
-            {'name': name, 'challenge': challenge, 'signature': sign(key or self.justin_key, challenge, namespace)}),
-            content_type='application/json')
+        body = {'challenge': challenge, 'signature': sign(key or self.justin_key, challenge, namespace)}
+        if name:
+            body['name'] = name
+        return self.client.post('/api/auth/enroll/', json.dumps(body), content_type='application/json')
 
     def sign_in(self, client=None):
         client = client or self.client
@@ -93,6 +94,13 @@ class MotionAuthTest(TestCase):
         again = Client().post(path, {'label': 'someone else'})
         self.assertEqual(again.status_code, 410)
         self.assertEqual(Device.objects.count(), 1)
+
+    def test_the_key_says_who_you_are(self):
+        response = self.enroll()
+        self.assertEqual(response.json()['name'], 'justin')
+
+    def test_naming_yourself_still_works(self):
+        self.assertEqual(self.enroll(name='justin').json()['name'], 'justin')
 
     def test_a_key_speaks_only_for_its_own_name(self):
         self.assertEqual(self.enroll(name='skyler').status_code, 403)

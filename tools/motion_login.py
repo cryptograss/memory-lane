@@ -6,16 +6,16 @@ sign, the same mechanism git uses for signed commits) and prints a one-time
 link, plus a QR code if `qrencode` is installed. Open the link on the device
 you want to write from -- a phone works -- and confirm.
 
-Your key must be the one hunter's inventory lists for you.
+Your key must be the one hunter's inventory lists for you; it also tells
+memory-lane who you are, so there is no name to type.
 
-    python3 motion_login.py --name justin
-    python3 motion_login.py --name skyler --key ~/.ssh/id_rsa
+    python3 motion_login.py
+    python3 motion_login.py --key ~/.ssh/id_rsa
 
 Standard library only, so it runs anywhere Python and OpenSSH do.
 """
 
 import argparse
-import getpass
 import json
 import os
 import shutil
@@ -65,8 +65,8 @@ def sign(challenge, key, namespace):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    parser.add_argument('--name', default=os.environ.get('MOTION_NAME') or getpass.getuser(),
-                        help='Your name in the record (default: $MOTION_NAME or your login name)')
+    parser.add_argument('--name', default=os.environ.get('MOTION_NAME'),
+                        help='Only needed if one key is listed for several people; the key names you')
     parser.add_argument('--key', default=default_key(), help='SSH private key (default: ~/.ssh/id_ed25519, …)')
     parser.add_argument('--base', default=os.environ.get('MEMORY_LANE_URL', DEFAULT_BASE))
     args = parser.parse_args()
@@ -81,8 +81,10 @@ def main():
         signature = sign(offer['challenge'], args.key, offer['namespace'])
     except subprocess.CalledProcessError:
         sys.exit('ssh-keygen could not sign with that key.')
-    result = call(f'{base}/api/auth/enroll/', {'name': args.name, 'challenge': offer['challenge'],
-                                                'signature': signature})
+    payload = {'challenge': offer['challenge'], 'signature': signature}
+    if args.name:
+        payload['name'] = args.name
+    result = call(f'{base}/api/auth/enroll/', payload)
 
     url = result['url']
     minutes = result.get('expires_in', 900) // 60
