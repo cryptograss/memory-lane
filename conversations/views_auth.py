@@ -37,14 +37,19 @@ def api_enroll(request):
     """Trade a signed challenge for a one-time login link."""
     try:
         body = json.loads(request.body)
-        name, challenge, signature = body['name'].lower(), body['challenge'], body['signature']
+        challenge, signature = body['challenge'], body['signature']
+        name = (body.get('name') or '').lower()
     except (ValueError, KeyError, AttributeError):
-        return JsonResponse({'error': 'expected name, challenge, signature'}, status=400)
+        return JsonResponse({'error': 'expected challenge and signature'}, status=400)
 
     if not motion_auth.challenge_is_fresh(challenge):
         return JsonResponse({'error': 'challenge expired; fetch a new one'}, status=400)
-    entity = ThinkingEntity.objects.filter(name=name).first()
-    if entity is None or not motion_auth.signature_is_valid(name, challenge, signature):
+    if name:
+        name = name if motion_auth.signature_is_valid(name, challenge, signature) else ''
+    else:
+        name = motion_auth.signer_of(challenge, signature) or ''  # the key says who you are
+    entity = ThinkingEntity.objects.filter(name=name).first() if name else None
+    if entity is None:
         return JsonResponse({'error': 'signature not accepted'}, status=403)
 
     code = motion_auth.issue_login_code(entity)

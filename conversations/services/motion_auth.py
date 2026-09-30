@@ -78,6 +78,33 @@ def signature_is_valid(name, challenge, signature):
         os.unlink(sig_path)
 
 
+def signer_of(challenge, signature):
+    """The name whose listed key made `signature` over `challenge`, or None.
+
+    The key says who you are: allowed_signers maps each key to a person, as
+    hunter's inventory does, so nobody has to type their name.
+    """
+    path = allowed_signers_path()
+    if not path or not os.path.exists(path):
+        return None
+    with tempfile.NamedTemporaryFile('w', suffix='.sig', delete=False) as f:
+        f.write(signature)
+        sig_path = f.name
+    try:
+        found = subprocess.run(
+            ['ssh-keygen', '-Y', 'find-principals', '-f', path, '-n', NAMESPACE, '-s', sig_path],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        os.unlink(sig_path)
+    names = found.stdout.split() if found.returncode == 0 else []
+    # find-principals only matches the key; verify proves it signed this challenge.
+    if len(names) == 1 and signature_is_valid(names[0], challenge, signature):
+        return names[0]
+    return None
+
+
 def issue_login_code(entity):
     from conversations.models import LoginCode
     code = secrets.token_urlsafe(32)
