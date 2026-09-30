@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Sign in · Motions</title>
+<style>
+  :root { --bg: #fbfaf7; --panel: #fff; --ink: #1f1d1a; --muted: #6b6560; --line: #e6e1d8; --accent: #b8106b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         font-size: 16px; line-height: 1.5; color: var(--ink); background: var(--bg); padding: 16px; }
+  .card { width: 100%; max-width: 420px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 24px; }
+  h1 { margin: 0 0 8px; font-size: 20px; color: var(--accent); }
+  p { margin: 0 0 14px; color: var(--muted); }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 14px; }
+  button { width: 100%; font: inherit; padding: 10px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="card">
+{% if name %}
+  <h1>Write as {{ name }} on this device?</h1>
+  <p>Your SSH key vouched for you. This browser will be able to post into Motions as <b>{{ name }}</b> until you sign out. Anyone can read them; only you can write as you.</p>
+  <form method="post">
+    {% csrf_token %}
+    <label for="label">Name this device (optional)</label>
+    <input id="label" name="label" maxlength="100" placeholder="phone, laptop…">
+    <button type="submit">Yes, sign in</button>
+  </form>
+{% else %}
+  <h1>This link has been used or has expired</h1>
+  <p>Login links work once, for 15 minutes. Run <code>magenta.sh login</code> again for a fresh one.</p>
+  <p><a href="/motions/">Read the Motions</a></p>
+{% endif %}
+</div>
+</body>
+</html>

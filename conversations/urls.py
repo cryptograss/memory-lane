@@ -1,10 +1,17 @@
 from django.urls import path
 from . import views
+from . import views_auth
 from . import views_motions
 
 urlpatterns = [
     path('motions/', views_motions.motions_page, name='motions'),
     path('motions/<slug:slug>/', views_motions.motions_page, name='motion'),
+    path('motions/login/<str:code>/', views_auth.login_page, name='motion_login'),
+    path('api/auth/challenge/', views_auth.api_challenge, name='auth_challenge'),
+    path('api/auth/enroll/', views_auth.api_enroll, name='auth_enroll'),
+    path('api/auth/me/', views_auth.api_me, name='auth_me'),
+    path('api/auth/logout/', views_auth.api_logout, name='auth_logout'),
+    path('api/motions/<slug:slug>/say/', views_auth.api_say, name='api_motion_say'),
     path('api/motions/', views_motions.api_motions, name='api_motions'),
     path('api/motions/<slug:slug>/turns/', views_motions.api_motion_turns, name='api_motion_turns'),
     path('api/motions/<slug:slug>/sessions/', views_motions.api_motion_sessions, name='api_motion_sessions'),

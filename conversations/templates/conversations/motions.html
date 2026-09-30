@@ -88,6 +88,14 @@
   @keyframes arrive { from { background: var(--accent-soft); } to { background: transparent; } }
 
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  header .auth { font-size: 13px; color: var(--muted); }
+  header .auth a { color: var(--muted); }
+  #composer { display: none; position: sticky; bottom: 0; background: var(--bg); padding: 10px 16px 14px; border-top: 1px solid var(--line); }
+  body.writer #composer { display: flex; gap: 8px; align-items: flex-end; }
+  #composer textarea { flex: 1; font: inherit; min-height: 44px; max-height: 40vh; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+  #composer button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+  #composer button:disabled { opacity: .5; cursor: default; }
+  #composer .err { color: var(--accent); font-size: 12px; }
   @media (max-width: 720px) {
     .layout { flex-direction: column; }
     nav { width: auto; max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line); }
@@ -99,11 +107,17 @@
   <span class="brand">Motions<small>memory-lane</small></span>
   <span class="me">viewing as <select id="me"><option value="">nobody</option></select></span>
   <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
+  <span class="auth" id="auth"></span>
   <span class="status" id="status">connecting…</span>
 </header>
 <div class="layout">
   <nav id="nav"><div class="label">Motions</div></nav>
-  <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div></main>
+  <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div>
+    <form id="composer" autocomplete="off">
+      <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Ctrl+Enter sends." rows="2"></textarea>
+      <button type="submit" id="send">Send</button>
+    </form>
+  </main>
 </div>
 
 <script>
@@ -116,6 +130,13 @@
   const status = document.getElementById('status');
   const meSelect = document.getElementById('me');
   const onlyMine = document.getElementById('onlyMine');
+  // Signed in only if this browser was enrolled with an SSH key; see
+  // services/motion_auth.py. Reading never needs it.
+  const viewer = "{{ viewer|escapejs }}" || null;
+  const auth = document.getElementById('auth');
+  const composer = document.getElementById('composer');
+  const sayBox = document.getElementById('say');
+  const sendBtn = document.getElementById('send');
 
   // Who is looking. Lives in the browser: the view has no accounts, and a
   // filter is not a permission. Everything here stays readable to anyone.
@@ -128,7 +149,7 @@
   let names = new Set();
   let current = null;       // slug
   let lastId = null;        // last turn id rendered, for ?after=
-  let me = store.get('me', '') || '';
+  let me = viewer || store.get('me', '') || '';
   let lastSeen = store.get('lastSeen', {});   // slug -> iso
   let badges = {};          // slug -> count of my mentions since lastSeen
   let baseTitle = 'Motions';
@@ -277,6 +298,47 @@
     renderMe(); remarkAll(); refreshBadges();
   });
   onlyMine.addEventListener('change', () => document.body.classList.toggle('only-mine', onlyMine.checked));
+
+  function csrf() {
+    const m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  if (viewer) {
+    document.body.classList.add('writer');
+    auth.innerHTML = `writing as <b>${esc(viewer)}</b> · <a href="#" id="signout">sign out</a>`;
+    document.getElementById('signout').addEventListener('click', async e => {
+      e.preventDefault();
+      await fetch('/api/auth/logout/', { method: 'POST', headers: { 'X-CSRFToken': csrf() } });
+      location.reload();
+    });
+  } else {
+    auth.innerHTML = '<span title="To write: run magenta.sh login on a machine with your SSH key">read-only</span>';
+  }
+
+  async function say() {
+    const text = sayBox.value.trim();
+    if (!text || !current) return;
+    sendBtn.disabled = true;
+    const old = composer.querySelector('.err'); if (old) old.remove();
+    try {
+      const r = await fetch('/api/motions/' + encodeURIComponent(current) + '/say/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+        body: JSON.stringify({ text }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+      sayBox.value = '';
+      await poll(false);
+    } catch (e) {
+      composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(e.message)}</span>`);
+    } finally {
+      sendBtn.disabled = false;
+      sayBox.focus();
+    }
+  }
+  composer.addEventListener('submit', e => { e.preventDefault(); say(); });
+  sayBox.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); say(); } });
 
   nav.addEventListener('click', e => {
     const a = e.target.closest('a.motion'); if (!a) return;

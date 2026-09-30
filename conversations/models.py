@@ -1257,6 +1257,43 @@ class RawImportedContent(models.Model):
         return f"Raw data for {self.content_type} {str(self.object_id)[:8]}"
 
 
+class Device(models.Model):
+    """
+    A browser or phone allowed to write into Motions as one person.
+
+    Reading Motions needs nothing. Writing needs a device, and a device is
+    enrolled by proving the person's SSH key (see services/motion_auth.py):
+    the same key hunter already knows them by. Only a hash of the token is
+    stored; the token itself lives in the device's cookie.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.ForeignKey(ThinkingEntity, models.CASCADE, related_name='devices')
+    label = models.CharField(max_length=100, blank=True)
+    token_hash = models.CharField(max_length=64, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'devices'
+
+    def __str__(self):
+        return f"{self.entity_id} on {self.label or 'a device'}"
+
+
+class LoginCode(models.Model):
+    """A one-time link that turns a proven SSH signature into a Device."""
+
+    code_hash = models.CharField(max_length=64, primary_key=True)
+    entity = models.ForeignKey(ThinkingEntity, models.CASCADE, related_name='login_codes')
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'login_codes'
+
+
 class BlockAnchor(models.Model):
     """
     A real Ethereum block and its timestamp, fetched from a node.

@@ -6,6 +6,12 @@
 
 set -e  # Exit on error
 
+# ./magenta.sh login [--name you] -- a link to write into Motions from any
+# device, vouched for by your SSH key. See tools/motion_login.py.
+if [ "${1:-}" = "login" ]; then
+    exec python3 "$(dirname "$0")/tools/motion_login.py" "${@:2}"
+fi
+
 # Check if mosh is installed (optional but recommended)
 USE_MOSH=false
 if command -v mosh &> /dev/null; then

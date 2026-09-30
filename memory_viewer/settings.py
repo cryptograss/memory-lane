@@ -25,7 +25,9 @@ load_dotenv(BASE_DIR / '.env')
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-zqun#rs1hda@a#za&#&9p7qs-5@hvh97nepfddp%mt6#^l078d'
+# The fallback is public (it's in this repo) and only fit for development.
+# Production sets DJANGO_SECRET_KEY: it signs login challenges and cookies.
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY') or 'django-insecure-zqun#rs1hda@a#za&#&9p7qs-5@hvh97nepfddp%mt6#^l078d'
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DJANGO_DEBUG', 'True').lower() in ('true', '1', 'yes')
@@ -195,3 +197,14 @@ LOGGING = {
 # scrubber only removes secrets it already knows, and the read endpoints are
 # public. Raise this deliberately.
 TOOL_RESULT_CONTENT_CHARS = int(os.getenv('TOOL_RESULT_CONTENT_CHARS', '0'))
+
+# Writing into Motions (conversations/services/motion_auth.py): an OpenSSH
+# allowed_signers file listing each person's key, generated at deploy from
+# hunter's inventory. Unset or missing, nobody can enroll a device.
+MOTION_ALLOWED_SIGNERS = os.getenv('MOTION_ALLOWED_SIGNERS', '')
+
+# Behind Caddy, which terminates TLS and always sets X-Forwarded-Proto. The
+# CSRF check compares a POST's Origin with these.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+CSRF_TRUSTED_ORIGINS = [f'https://*{h}' if h.startswith('.') else f'https://{h}'
+                        for h in ALLOWED_HOSTS if '.' in h and not h[0].isdigit()]

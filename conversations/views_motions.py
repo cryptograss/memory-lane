@@ -9,20 +9,27 @@ from django.db.models import Max
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils.dateparse import parse_datetime
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET
 
 from .models import Message, Motion, ThinkingEntity
+from .services import motion_auth
 from .services.motion_view import (
     MACHINERY_SENDERS, is_wrapper, known_names, mentions_in, motion_payload,
     prose, turn_payload, turns, wiki_title, wikilinks_in,
 )
 
 
+@ensure_csrf_cookie
 @require_GET
 def motions_page(request, slug=None):
     if slug is not None and not Motion.objects.filter(slug=slug).exists():
         raise Http404
-    return render(request, 'conversations/motions.html', {'initial_slug': slug or ''})
+    device = motion_auth.device_for(request)
+    return render(request, 'conversations/motions.html', {
+        'initial_slug': slug or '',
+        'viewer': device.entity_id if device else '',
+    })
 
 
 @require_GET
