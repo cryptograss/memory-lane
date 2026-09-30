@@ -1,9 +1,13 @@
 """Pattern redaction catches secrets by shape and leaves the rest of the record alone."""
 
 import json
+import uuid
+from io import StringIO
 
-from django.test import SimpleTestCase
+from django.core.management import call_command
+from django.test import SimpleTestCase, TestCase
 
+from conversations.models import Message, ThinkingEntity
 from conversations.services.redaction import MARK, redact, redact_line
 
 # Built at runtime so no scanner mistakes this file for a leak.
@@ -107,3 +111,23 @@ class RedactLineTest(SimpleTestCase):
         start = time.time()
         redact(blob)
         self.assertLess(time.time() - start, 2.0)
+
+
+class RedactStoredTest(TestCase):
+
+    def test_dry_run_reports_without_printing_the_secret_then_apply_rewrites(self):
+        justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        leaky = Message.objects.create(id=uuid.uuid4(), sender=justin, content=f'here {GH} ok')
+        clean = Message.objects.create(id=uuid.uuid4(), sender=justin, content='nothing to see')
+
+        out = StringIO()
+        call_command('redact_stored', stdout=out)
+        self.assertIn('would redact 1 values in 1 messages', out.getvalue())
+        self.assertNotIn(GH, out.getvalue())
+        leaky.refresh_from_db()
+        self.assertIn(GH, leaky.content)
+
+        call_command('redact_stored', '--apply', stdout=StringIO())
+        leaky.refresh_from_db(); clean.refresh_from_db()
+        self.assertEqual(leaky.content, f'here {MARK} ok')
+        self.assertEqual(clean.content, 'nothing to see')
