@@ -14,6 +14,7 @@ from conversations.models import (
     CompactingAction, MotionSession
 )
 from constant_sorrow.constants import EVENT_TYPE_WE_DO_NOT_HANDLE_YET
+from conversations.services.redaction import redact_line
 
 
 def get_or_create_participant(name, participant_type):
@@ -189,7 +190,15 @@ def poller_or(user, content, event):
     return user
 
 
-def import_line_from_claude_code_v2(line, era, filename, username='justin'):
+def import_line_from_claude_code_v2(line, era, filename, username='justin', keep_tool_output=True):
+        """
+        keep_tool_output=False stores tool results with their link but no
+        output, whatever TOOL_RESULT_CONTENT_CHARS says; ingest passes it
+        when the scrubber could not be reached.
+        """
+        # Every line is pattern-redacted before anything is read from it: the
+        # record is public, and this is the one layer that is never down.
+        line = redact_line(line)
 
         # Get entities
         # Get the user's ThinkingEntity (create if doesn't exist)
@@ -392,7 +401,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin'):
             # For now, use a generic participant - we'll refine this when we link parent/child
             sender = get_or_create_participant('tool-result', 'tool')
 
-            fields = tool_result_fields(event)
+            fields = tool_result_fields(event, limit=None if keep_tool_output else 0)
             message, created = ToolResult.objects.get_or_create(
                 id=msg_uuid,
                 defaults={

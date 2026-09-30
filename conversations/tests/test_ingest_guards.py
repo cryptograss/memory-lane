@@ -2,12 +2,13 @@
 
 import json
 import os
+import uuid
 from unittest import mock
 
 from constant_sorrow.constants import EVENT_TYPE_WE_DO_NOT_HANDLE_YET
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
-from conversations.models import Message
+from conversations.models import Message, ToolResult
 
 KEY = 'k' * 64
 
@@ -72,3 +73,35 @@ class IngestGuardTest(TestCase):
         self.assertEqual(body['errors'], [])
         self.assertEqual(body['skipped'], len(METADATA_LINES))
         self.assertEqual(body['imported'], 0)
+
+
+class IngestRedactionTest(TestCase):
+
+    def post(self, record, env):
+        with mock.patch.dict(os.environ, {'INGEST_API_KEY': KEY, **env}):
+            if 'SCRUBBER_URL' not in env:
+                os.environ.pop('SCRUBBER_URL', None)
+            return self.client.post('/api/ingest/', data=json.dumps({'lines': [json.dumps(record)]}),
+                                    content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {KEY}')
+
+    def record(self, content):
+        return {'type': 'user', 'uuid': str(uuid.uuid4()), 'parentUuid': None, 'sessionId': str(uuid.uuid4()),
+                'timestamp': '2026-09-30T10:00:00.000Z',
+                'message': {'role': 'user', 'content': content}}
+
+    def test_a_secret_is_redacted_before_it_is_stored(self):
+        record = self.record('here: POSTGRES_PASSWORD=hunter22 ok')
+        self.post(record, {})
+        self.assertEqual(Message.objects.get(id=record['uuid']).content, 'here: POSTGRES_PASSWORD=[REDACTED] ok')
+
+    @override_settings(TOOL_RESULT_CONTENT_CHARS=10_000)
+    def test_tool_output_is_kept_only_when_the_scrubber_ran(self):
+        ok = self.record([{'type': 'tool_result', 'tool_use_id': 'toolu_a', 'content': 'listing'}])
+        self.post(ok, {})
+        self.assertEqual(Message.objects.get(id=ok['uuid']).content, 'listing')
+
+        down = self.record([{'type': 'tool_result', 'tool_use_id': 'toolu_b', 'content': 'listing'}])
+        with mock.patch('requests.post', side_effect=ConnectionError('scrubber down')):
+            self.post(down, {'SCRUBBER_URL': 'http://scrubber.test'})
+        stored = ToolResult.objects.get(id=down['uuid'])
+        self.assertEqual((stored.tool_use_id, stored.content), ('toolu_b', ''))
