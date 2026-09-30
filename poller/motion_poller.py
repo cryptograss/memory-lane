@@ -8,7 +8,9 @@ A mention is owed a turn when all of these hold:
   - it names the agent, and someone other than the agent wrote it;
   - the agent has not written in that Motion since that mention, and the
     grace period (default 10 minutes) has passed. A live session answers
-    within the grace period, so no second voice is woken on top of it;
+    within the grace period, so no second voice is woken on top of it. A
+    mention posted from the web composer has no session behind it and
+    wakes at once;
   - the agent's most recent session in the Motion is on this machine. Only
     one poller, the one holding that session, ever answers;
   - fewer than --max-wakes-per-hour attempts were made in the last hour.
@@ -235,7 +237,10 @@ class MotionPoller:
         settled = [t['id'] for t in answered]
         if not owed:
             return settled, 'answered'
-        if self.now() - parse_time(owed[0]['created_at']) < self.grace:
+        # A mention typed into a session gives that session time to answer;
+        # one posted from the web has no session behind it, so none is owed.
+        grace = self.grace if any(t.get('via') != 'web' for t in owed) else timedelta(0)
+        if self.now() - parse_time(owed[0]['created_at']) < grace:
             return settled, None
         if len(self.recent_wakes()) >= self.max_wakes_per_hour:
             logger.warning(f'{slug}: owed a turn, but {self.max_wakes_per_hour} wakes this hour already')

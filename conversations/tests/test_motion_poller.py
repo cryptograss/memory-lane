@@ -112,6 +112,12 @@ class MotionPollerTest(TestCase):
         self.clock[0] = T0 + timedelta(minutes=11)
         self.assertEqual(poller.poll_once(), ['m26'])
 
+    def test_a_mention_from_the_web_wakes_at_once(self):
+        web = dict(turn('a', 'skyler', 0), via='web')
+        api = FakeAPI([mention('m26', web)], sessions={'m26': ['s-local']})
+        poller = self.make(api, minutes_now=0)
+        self.assertEqual(poller.poll_once(), ['m26'])
+
     def test_each_mention_is_answered_once(self):
         api = FakeAPI([mention('m26', turn('a', 'skyler', 0))], sessions={'m26': ['s-local']})
         poller = self.make(api)
