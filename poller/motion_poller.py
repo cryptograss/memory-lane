@@ -273,9 +273,11 @@ class MotionPoller:
         return settled, 'woken'
 
     def prompt(self, slug, owed):
-        minutes = int(self.grace.total_seconds() // 60)
-        lines = [f'<motion-wake motion="{slug}">',
-                 f'You were woken by the Motion poller: nobody answered this in {minutes} minutes.', '']
+        if all(t.get('via') == 'web' for t in owed):
+            why = 'this was posted from the web, where no session is listening.'
+        else:
+            why = f'nobody answered this in {int(self.grace.total_seconds() // 60)} minutes.'
+        lines = [f'<motion-wake motion="{slug}">', f'You were woken by the Motion poller: {why}', '']
         budget = MAX_PROMPT_CHARS
         for turn in owed:
             entry = f"[{turn['sender']}, {turn['created_at'][:16]}Z] {turn['text']}"
