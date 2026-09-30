@@ -6,6 +6,7 @@ Monitors JSONL files for new lines and imports them in real-time.
 """
 
 import os
+import re
 import sys
 import time
 import logging
@@ -59,6 +60,12 @@ def init_django():
         _django_initialized = True
 
 
+# The line's own uuid. Keys inside string values are escaped (\"uuid\"), so
+# this matches JSON object keys only, and in a Claude Code line the first
+# one is the message's.
+UUID_KEY = re.compile(r'"uuid"\s*:\s*"([0-9a-fA-F-]{36})"')
+
+
 class ConversationWatcher(FileSystemEventHandler):
     """Watch JSONL files and import new messages."""
 
@@ -95,6 +102,16 @@ class ConversationWatcher(FileSystemEventHandler):
         self.max_pending = 5000
         # Well under the server's DATA_UPLOAD_MAX_MEMORY_SIZE.
         self.max_post_bytes = 8 * 1024 * 1024
+        # A forked or resumed session's file starts by repeating its whole
+        # history under the original uuids -- for a long Motion, thousands
+        # of lines the record already has, sent ahead of the one new reply.
+        # Uuids already read are skipped, except the first repeat in each
+        # new file, which the importer needs to claim the fork for its
+        # Motion (MotionSession.claim_by_history). Off during a replay.
+        self.seen_uuids = set()
+        self.max_seen = 500_000
+        self.anchored = set()   # files that have already sent their claim line
+        self.dedupe = True
 
         # Extract username from watch directory path
         # Expected format: /project-logs/username/...
@@ -147,6 +164,8 @@ class ConversationWatcher(FileSystemEventHandler):
                         continue
 
                     line_count += 1
+                    if self.already_sent(line, filepath):
+                        continue
                     try:
                         self.import_line(line, filepath.name)
                     except KeyError as e:
@@ -199,6 +218,33 @@ class ConversationWatcher(FileSystemEventHandler):
             logger.warning(f"Unparseable line saved as RawImportedContent {raw.id} from {filename} (error: {error_msg})")
         except Exception as e:
             logger.error(f"Failed to save unparseable line from {filename}: {e}")
+
+    @staticmethod
+    def uuid_of(line):
+        match = UUID_KEY.search(line)
+        return match.group(1) if match else None
+
+    def remember(self, line):
+        uuid = self.uuid_of(line)
+        if uuid:
+            if len(self.seen_uuids) >= self.max_seen:
+                self.seen_uuids.clear()  # crude, rare; a miss only costs a resend
+            self.seen_uuids.add(uuid)
+
+    def already_sent(self, line, filepath):
+        """True for a repeated history line the record already has (see __init__)."""
+        if not self.remote_endpoint or not self.dedupe:
+            return False
+        uuid = self.uuid_of(line)
+        if not uuid:
+            return False
+        if uuid not in self.seen_uuids:
+            self.remember(line)
+            return False
+        if str(filepath) in self.anchored:
+            return True
+        self.anchored.add(str(filepath))
+        return False
 
     def import_line(self, line, filename):
         """
@@ -354,6 +400,7 @@ class ConversationWatcher(FileSystemEventHandler):
         """
         replay = os.environ.get('WATCHER_REPLAY_FROM_START', '').lower() in ('1', 'true', 'yes')
         logger.info("Scanning existing files..." + (" REPLAY: ingesting every existing line" if replay else ""))
+        self.dedupe = not replay
 
         file_count = 0
         for filepath in self.watch_dir.rglob('*.jsonl'):
@@ -361,9 +408,11 @@ class ConversationWatcher(FileSystemEventHandler):
                 self.file_positions[str(filepath)] = 0
                 self.process_new_lines(filepath)
             else:
-                # Just seek to end - we only want NEW lines from this point forward
-                with open(filepath, 'r') as f:
-                    f.seek(0, 2)  # Seek to end
+                # Only lines written from now on are sent; what is already
+                # here is remembered, so a fork that repeats it isn't resent.
+                with open(filepath, 'r', errors='replace') as f:
+                    for line in f:
+                        self.remember(line)
                     self.file_positions[str(filepath)] = f.tell()
 
             logger.debug(f"Tracking {filepath.name} from position {self.file_positions[str(filepath)]}")

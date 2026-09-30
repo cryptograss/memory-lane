@@ -5,6 +5,7 @@ is a projection: nothing here writes, and nothing a reader does can change
 the conversation.
 """
 
+from django.conf import settings
 from django.db.models import Max
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -15,7 +16,7 @@ from django.views.decorators.http import require_GET
 from .models import Message, Motion, ThinkingEntity
 from .services import motion_auth
 from .services.motion_view import (
-    MACHINERY_SENDERS, is_wrapper, known_names, mentions_in, motion_payload,
+    MACHINERY_SENDERS, activity, is_wrapper, known_names, mentions_in, motion_payload,
     prose, turn_payload, turns, wiki_title, wikilinks_in,
 )
 
@@ -28,7 +29,10 @@ def motions_page(request, slug=None):
     device = motion_auth.device_for(request)
     return render(request, 'conversations/motions.html', {
         'initial_slug': slug or '',
-        'viewer': device.entity_id if device else '',
+        # A preview can pretend to be someone, to show the composer; its
+        # database is read-only, so nothing it sends is kept.
+        'viewer': device.entity_id if device else getattr(settings, 'PREVIEW_VIEWER', ''),
+        'preview_label': getattr(settings, 'PREVIEW_LABEL', ''),
     })
 
 
@@ -37,7 +41,9 @@ def api_motions(request):
     """Every Motion, most recently active first."""
     payloads = [motion_payload(m) for m in Motion.objects.all()]
     payloads.sort(key=lambda p: p['last_at'] or '', reverse=True)
-    return JsonResponse({'motions': payloads})
+    people = ThinkingEntity.objects.order_by('name')
+    return JsonResponse({'motions': payloads, 'people': [
+        {'name': p.name, 'is_human': p.is_biological_human} for p in people]})
 
 
 @require_GET
@@ -60,6 +66,7 @@ def api_motion_turns(request, slug):
     return JsonResponse({
         'motion': motion_payload(motion),
         'turns': payload,
+        'activity': activity(motion),
     })
 
 

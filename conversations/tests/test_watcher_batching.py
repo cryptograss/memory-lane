@@ -11,6 +11,7 @@ These tests simulate the other thread by appending from inside the
 mocked POST. No Django, no database, no filesystem watching.
 """
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -160,3 +161,62 @@ class WatcherBatchingTest(TestCase):
             watcher.flush_batch()
         self.assertEqual(post.call_count, 2)
         self.assertEqual(watcher.pending_lines, ['3', '4', '5'])
+
+
+def U(name):
+    """A real-shaped uuid for a short hex test name, e.g. U('a1')."""
+    return f'{name:0>8}-0000-4000-8000-000000000000'
+
+
+def jline(name, session, text='x'):
+    return json.dumps({'type': 'user', 'uuid': U(name), 'sessionId': session, 'message': {'content': text}})
+
+
+class ForkDedupeTest(TestCase):
+    """A fork repeats its session's history; the watcher sends one repeat, not all."""
+
+    def sent_lines(self, watcher, *paths):
+        with mock.patch(POST, return_value=ok_response()) as post:
+            for path in paths:
+                watcher.process_new_lines(path)
+            watcher.flush_batch()
+        return [json.loads(l).get('uuid', '')[:8].lstrip('0') or None for c in post.call_args_list
+                for l in c.kwargs['json']['lines']]
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp()) / 'project-logs' / 'justin'
+        self.dir.mkdir(parents=True)
+        self.watcher = make_watcher(watch_dir=str(self.dir), batch_size=100)
+
+    def test_a_fork_sends_its_claim_line_and_its_new_lines_only(self):
+        original = self.dir / 'a.jsonl'
+        original.write_text('\n'.join(jline(u, 'A') for u in ('a1', 'a2', 'a3')) + '\n')
+        self.assertEqual(self.sent_lines(self.watcher, original), ['a1', 'a2', 'a3'])
+
+        fork = self.dir / 'b.jsonl'
+        fork.write_text('{"type": "mode"}\n' + '\n'.join(jline(u, 'B') for u in ('a1', 'a2', 'a3', 'a4')) + '\n')
+        self.assertEqual(self.sent_lines(self.watcher, fork), [None, 'a1', 'a4'])
+
+    def test_history_on_disk_at_startup_counts_as_sent(self):
+        (self.dir / 'a.jsonl').write_text('\n'.join(jline(u, 'A') for u in ('a1', 'a2')) + '\n')
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('WATCHER_REPLAY_FROM_START', None)
+            self.watcher.scan_existing_files()
+        fork = self.dir / 'b.jsonl'
+        fork.write_text('\n'.join(jline(u, 'B') for u in ('a1', 'a2', 'a9')) + '\n')
+        self.assertEqual(self.sent_lines(self.watcher, fork), ['a1', 'a9'])
+
+    def test_a_replay_sends_everything(self):
+        (self.dir / 'a.jsonl').write_text('\n'.join(jline(u, 'A') for u in ('a1', 'a2')) + '\n')
+        (self.dir / 'b.jsonl').write_text('\n'.join(jline(u, 'B') for u in ('a1', 'a2')) + '\n')
+        with mock.patch(POST, return_value=ok_response()) as post, \
+                mock.patch.dict(os.environ, {'WATCHER_REPLAY_FROM_START': '1'}):
+            self.watcher.scan_existing_files()
+        sent = [json.loads(l)['uuid'][:8].lstrip('0') for c in post.call_args_list for l in c.kwargs['json']['lines']]
+        self.assertEqual(sorted(sent), ['a1', 'a1', 'a2', 'a2'])
+
+    def test_uuid_of_reads_the_lines_own_key_not_an_escaped_one(self):
+        own = '12345678-1234-1234-1234-123456789abc'
+        line = json.dumps({'parentUuid': 'p' * 36, 'message': {'content': '{"uuid": "' + 'e' * 36 + '"}'},
+                           'uuid': own})
+        self.assertEqual(ConversationWatcher.uuid_of(line), own)

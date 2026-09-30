@@ -319,7 +319,7 @@ def main(argv=None):
     parser.add_argument('--agent', default='magent')
     parser.add_argument('--base', default=os.environ.get('MEMORY_LANE_URL', DEFAULT_BASE))
     parser.add_argument('--state', default='~/.local/state/magenta/motion_poller.json')
-    parser.add_argument('--interval', type=int, default=60, help='Seconds between looks')
+    parser.add_argument('--interval', type=int, default=5, help='Seconds between looks (one cheap GET)')
     parser.add_argument('--grace', type=int, default=600, help='Seconds to leave for a live session to answer')
     parser.add_argument('--max-wakes-per-hour', type=int, default=4)
     parser.add_argument('--model', default=None)
