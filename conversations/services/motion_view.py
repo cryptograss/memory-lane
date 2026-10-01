@@ -79,6 +79,10 @@ _ITALIC = re.compile(r'(?<![*\w])\*([^*\n]+)\*(?!\*)')
 _WIKILINK = re.compile(r'\[\[([^\]|]+)(?:\|([^\]]+))?\]\]')
 # @name, but not inside an email, a URL path, or another handle.
 _MENTION = re.compile(r'(?<![\w@/.])@([A-Za-z][\w.-]*)')
+# ![alt](url): our own stored media, or https from hosts we trust to serve
+# images (settings.MOTION_IMAGE_HOSTS); any other host renders as a link,
+# so a viewer's browser never fetches from somewhere nobody chose.
+_IMAGE = re.compile(r'!\[([^\]\n]*)\]\((/motions/media/[0-9a-f]{64}\.(?:png|jpg|gif|webp)|https://[^)\s]+)\)')
 _MD_LINK = re.compile(r'\[([^\]]+)\]\((https?://[^)\s]+)\)')
 _URL = re.compile(r'(https?://(?:(?!&quot;|&#x27;|&lt;|&gt;)[^\s<>"\x01\x02])+)')
 # Placeholders the renderer uses for markup it has already made; never input.
@@ -103,6 +107,38 @@ def _wikilink(match):
     label = (match.group(2) or target).strip()
     href = f"{pickipedia_url()}/wiki/{target.replace(' ', '_')}"
     return f'<a class="wikilink" href="{href}">{label}</a>'
+
+
+def _image(match):
+    alt, url = match.group(1), match.group(2)
+    if url.startswith('/') or _image_host_allowed(url):
+        return f'<a class="img" href="{url}"><img src="{url}" alt="{alt}" loading="lazy"></a>'
+    return f'<a href="{url}">{alt or url}</a>'
+
+
+def _image_host_allowed(url):
+    from urllib.parse import urlsplit
+    host = (urlsplit(url.replace('&amp;', '&')).hostname or '').lower()
+    return host in getattr(settings, 'MOTION_IMAGE_HOSTS', ())
+
+
+def step_images(step_messages):
+    """{step id: [media urls in its result]} for steps whose tool returned images."""
+    from conversations.models import ToolResult
+    from conversations.services.media import urls_in
+
+    by_tool = {(m.tooluse.tool_id, m.session_id): str(m.id) for m in step_messages}
+    if not by_tool:
+        return {}
+    found = {}
+    results = (ToolResult.objects.filter(tool_use_id__in={t for t, _ in by_tool},
+                                         content__icontains='/motions/media/')
+               .values_list('tool_use_id', 'session_id', 'content'))
+    for tool_id, session_id, content in results:
+        step = by_tool.get((tool_id, session_id))
+        if step:
+            found.setdefault(step, []).extend(urls_in(content if isinstance(content, str) else str(content)))
+    return found
 
 
 def known_names():
@@ -195,6 +231,7 @@ def _inline(text, mentionable=()):
         made.append(markup)
         return f'\x02{len(made) - 1}\x02'
 
+    text = _IMAGE.sub(lambda m: stash(_image(m)), text)
     text = _WIKILINK.sub(lambda m: stash(_wikilink(m)), text)
     text = _MD_LINK.sub(lambda m: stash(f'<a href="{m.group(2)}">{m.group(1)}</a>'), text)
     text = _URL.sub(lambda m: stash(_link_url(m)), text)

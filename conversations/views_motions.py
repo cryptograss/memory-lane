@@ -18,7 +18,7 @@ from .models import Message, Motion, ThinkingEntity
 from .services import motion_auth
 from .services.motion_view import (
     MACHINERY_SENDERS, activity, is_wrapper, known_names, mentions_in, motion_payload,
-    prose, step_detail, step_payload, timeline, turn_payload, turns, wiki_title, wikilinks_in,
+    prose, step_detail, step_images, step_payload, timeline, turn_payload, turns, wiki_title, wikilinks_in,
 )
 
 
@@ -67,12 +67,14 @@ def api_motion_turns(request, slug):
     limit = None if after is not None else PAGE
 
     names = known_names()
-    turns_out, steps_out = [], []
+    turns_out, step_msgs = [], []
     for kind, msg, text in timeline(motion, after=after, before=before, limit=limit):
         if kind == 'turn':
             turns_out.append(turn_payload(msg, text, names))
         else:
-            steps_out.append(step_payload(msg))
+            step_msgs.append(msg)
+    images = step_images(step_msgs)
+    steps_out = [{**step_payload(m), 'images': images.get(str(m.id), [])} for m in step_msgs]
     first = min([t['created_at'] for t in turns_out] + [s['created_at'] for s in steps_out], default=None)
     return JsonResponse({
         'motion': motion_payload(motion),
@@ -95,6 +97,22 @@ def _message_or_none(raw):
         return Message.objects.filter(id=raw).first()
     except (ValueError, ValidationError):
         return None
+
+
+@require_GET
+def media_file(request, sha256, ext):
+    """A stored image. Immutable by construction: the name is its hash."""
+    from django.http import HttpResponse
+    from .models import Media
+
+    item = Media.objects.filter(sha256=sha256).first()
+    if item is None or Media.EXTENSIONS.get(item.mime) != ext:
+        raise Http404('no such image')
+    response = HttpResponse(bytes(item.data), content_type=item.mime)
+    response['Cache-Control'] = 'public, max-age=31536000, immutable'
+    response['X-Content-Type-Options'] = 'nosniff'
+    response['Content-Security-Policy'] = "default-src 'none'; sandbox"
+    return response
 
 
 @require_GET

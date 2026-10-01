@@ -93,6 +93,32 @@ def login_page(request, code):
     return response
 
 
+MEDIA_PER_MINUTE = 30
+
+
+@require_POST
+def api_media(request, slug):
+    """Store an image this device's person is putting into a Motion.
+
+    The body is the image itself; what it is comes from its bytes, not the
+    Content-Type. Answers with the markdown to put in a message.
+    """
+    from .services import media
+
+    device = motion_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to write'}, status=401)
+    get_object_or_404(Motion, slug=slug)
+    if len(request.body) > media.MAX_BYTES:
+        return JsonResponse({'error': f'larger than {media.MAX_BYTES // (1024 * 1024)} MB'}, status=413)
+    if not _under_limit(f'media:{device.pk}', MEDIA_PER_MINUTE):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    stored = media.store(request.body, added_by=device.entity)
+    if stored is None:
+        return JsonResponse({'error': 'not a PNG, JPEG, GIF or WebP image'}, status=400)
+    return JsonResponse({'url': stored.url, 'markdown': media.markdown(stored)}, status=201)
+
+
 @require_GET
 def api_me(request):
     device = motion_auth.device_for(request)

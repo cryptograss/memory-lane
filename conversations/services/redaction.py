@@ -113,8 +113,14 @@ def redact_value(value):
             count += n
         return out, count
     if isinstance(value, dict):
+        # Image bytes (base64) are not text: a token shape inside them is a
+        # coincidence, and rewriting it would only break the picture.
+        image_data = value.get('type') in ('base64', 'image') and isinstance(value.get('data'), str)
         out = {}
         for key, item in value.items():
+            if image_data and key == 'data':
+                out[key] = item
+                continue
             item, n = redact_value(item)
             out[key] = item
             count += n

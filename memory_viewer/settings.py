@@ -207,6 +207,10 @@ LOGGING = {
 # public. Raise this deliberately.
 TOOL_RESULT_CONTENT_CHARS = int(os.getenv('TOOL_RESULT_CONTENT_CHARS', '0'))
 
+# Hosts a Motion may embed images from by URL, besides its own stored media.
+MOTION_IMAGE_HOSTS = {'pickipedia.xyz', 'www.pickipedia.xyz', 'raw.githubusercontent.com',
+                      'user-images.githubusercontent.com', 'private-user-images.githubusercontent.com'}
+
 # Writing into Motions (conversations/services/motion_auth.py): an OpenSSH
 # allowed_signers file listing each person's key, generated at deploy from
 # hunter's inventory. Unset or missing, nobody can enroll a device.
