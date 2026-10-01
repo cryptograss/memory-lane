@@ -410,8 +410,8 @@ class MotionPoller:
 
     def __init__(self, api, waker, agent='magent', state_path=None, grace=600,
                  max_wakes_per_hour=4, dry_run=False, now=None, streamer=None, mention_effort='high',
-                 screen=None, consider=True, considers_per_hour=6, consider_usd_per_day=5.0,
-                 consider_budget=1.0, consider_effort='medium', debounce=10, idle_first=3000):
+                 screen=None, consider=True, considers_per_hour=6, consider_usd_per_day=10.0,
+                 consider_budget=3.0, consider_effort='medium', debounce=10, idle_first=3000):
         self.api = api
         self.waker = waker
         self.agent = agent.lower()
@@ -590,8 +590,14 @@ class MotionPoller:
     #     mentions the agent is answered by the mention path.) Or:
     #   - nothing at all has been said for a long while: 1000 looks, about
     #     50 minutes. Each long quiet that ends silent doubles the next wait,
-    #     and a person speaking resets it, so a quiet night costs a few looks.
-    #     Motions nobody has spoken in for two weeks are left to rest.
+    #     and a person speaking resets it. After half a day with nobody
+    #     there, the Motion is left to rest until someone comes back.
+    #
+    # What a consideration costs is mostly reading the agent's context: a
+    # ~200k-token session costs about $1.25 to read cold (cache write, about
+    # $6.25 a million tokens, 2026-10-01) and $0.10-0.20 warm, within an
+    # hour of its last turn. Long-quiet looks are usually cold; the half-day
+    # rest bounds them to about three per quiet stretch.
     #
     # New posts are considered in two stages. A small model screens them
     # (ClaudeCodeScreen); it may only let pass what is plainly not for the
@@ -604,7 +610,7 @@ class MotionPoller:
     # Budgets bound it: full considerations per Motion per hour, and dollars
     # a day across screens and considerations (mentions aren't counted).
 
-    IDLE_REST = timedelta(days=14)
+    IDLE_REST = timedelta(hours=12)
 
     def consider_once(self):
         """One look at every Motion; [(slug, outcome)] for those considered."""
@@ -783,9 +789,10 @@ def main(argv=None):
     parser.add_argument('--mention-effort', default='high', help='Effort for a turn woken by a mention')
     parser.add_argument('--no-consider', action='store_true', help='Answer mentions only; never speak up unasked')
     parser.add_argument('--considers-per-hour', type=int, default=6, help='Full considerations per Motion per hour')
-    parser.add_argument('--consider-usd-per-day', type=float, default=5.0,
+    parser.add_argument('--consider-usd-per-day', type=float, default=10.0,
                         help='Dollars a day for screens and considerations (mentions are not counted)')
-    parser.add_argument('--consider-budget', type=float, default=1.0, help='Dollar cap on one consideration')
+    parser.add_argument('--consider-budget', type=float, default=3.0,
+                        help='Dollar cap on one consideration: enough to read a big session cold (~$1.25)')
     parser.add_argument('--consider-effort', default='medium')
     parser.add_argument('--screen-model', default='haiku', help="The screen's model; 'none' skips the screen")
     parser.add_argument('--debounce', type=int, default=10, help='Seconds of quiet before considering new posts')

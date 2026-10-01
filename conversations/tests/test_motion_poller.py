@@ -541,7 +541,7 @@ class ConsiderLoopTest(TestCase):
         self.assertIn('reason="consider"', prompt)
         self.assertIn('Nobody asked you anything', prompt)
         self.assertIn('► [skyler', prompt)
-        self.assertEqual(self.waker.options, {'effort': 'medium', 'budget': 1.0})
+        self.assertEqual(self.waker.options, {'effort': 'medium', 'budget': 3.0})
 
     def test_speaking_up_is_an_outcome_too(self):
         api = ConsiderAPI()
@@ -602,8 +602,8 @@ class ConsiderLoopTest(TestCase):
         self.at(minutes=60 + 51)
         self.assertEqual(poller.consider_once(), [('m26', 'silent')])  # 50 again, not 100
 
-    def test_a_motion_nobody_has_spoken_in_for_two_weeks_is_left_to_rest(self):
-        api = ConsiderAPI([post('a', -30 * 24 * 60)])
+    def test_after_half_a_day_with_nobody_there_a_motion_is_left_to_rest(self):
+        api = ConsiderAPI([post('a', -13 * 60)])
         poller = self.make(api, FakeScreen())
         self.at(minutes=500)
         self.assertEqual(poller.consider_once(), [])
