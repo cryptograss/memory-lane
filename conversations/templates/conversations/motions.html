@@ -113,6 +113,43 @@
   .people .who.human { color: var(--human); }
   .people .who.agent { color: var(--agent); }
   .people .who.busy::after { content: ' ●'; animation: pulse 1.2s ease-in-out infinite; }
+  /* Who is a person and who is an agent, wherever a name appears. */
+  .ico { width: 13px; height: 13px; fill: currentColor; vertical-align: -1px; margin-right: 4px; flex: none; }
+  .people .who.typing::after { content: ' typing…'; color: var(--muted); animation: pulse 1.2s ease-in-out infinite; }
+  #typing { display: none; padding: 6px 16px 0; font-size: 13px; color: var(--muted); }
+  #typing.on { display: block; }
+
+  /* An agent's tool calls between its words: one line, opened on demand. */
+  .work { margin: 2px 0 6px -10px; padding-left: 13px; }
+  .work .who { display: flex; align-items: baseline; gap: 8px; margin: 10px 0 4px; }
+  .work .who .name { font-weight: 700; color: var(--agent); }
+  .work .who time { font-size: 12px; color: var(--muted); }
+  .work.cont .who { display: none; }
+  .work-head { font: inherit; font-size: 13px; color: var(--muted); background: none; border: 0; padding: 2px 0;
+               cursor: pointer; text-align: left; }
+  .work-head:hover { color: var(--ink); }
+  .work-head .caret { display: inline-block; width: 1em; transition: transform .15s; }
+  .work.open > .work-head .caret { transform: rotate(90deg); }
+  .work .steps { display: none; margin: 4px 0 8px; border-left: 2px solid var(--line); padding-left: 10px; }
+  .work.open .steps { display: block; }
+  .step-head { font: inherit; font-size: 13px; background: none; border: 0; padding: 3px 0; cursor: pointer;
+               text-align: left; color: var(--ink); display: flex; gap: 8px; width: 100%; align-items: baseline; }
+  .step-head code { font-size: 12px; background: var(--code); padding: 0 5px; border-radius: 4px; color: var(--muted); flex: none; }
+  .step-head .sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .step.err .step-head code { color: #b3261e; }
+  .step-detail { display: none; margin: 4px 0 10px; }
+  .step.open .step-detail { display: block; }
+  .step-detail .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 6px 0 2px; }
+  .step-detail pre { margin: 0; background: #1e1d1b; color: #ece8e1; padding: 9px 11px; border-radius: 6px;
+                     font-size: 12.5px; line-height: 1.45; max-height: 360px; overflow: auto; white-space: pre-wrap;
+                     word-break: break-word; }
+  .step-detail pre .del { color: #ff9b8f; }
+  .step-detail pre .add { color: #9be59b; }
+  .step-detail pre .dim { color: #9a948b; }
+  .step-detail .err pre { box-shadow: inset 3px 0 0 #e5534b; }
+  #earlier { display: block; margin: 6px auto 14px; font: inherit; font-size: 13px; color: var(--muted);
+             background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 3px 14px; cursor: pointer; }
+  body.only-mine .work { display: none; }
   #suggest { display: none; position: absolute; bottom: 100%; left: 16px; margin-bottom: 4px; background: var(--panel);
              border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.08); min-width: 180px; z-index: 5; }
   #suggest.on { display: block; }
@@ -157,6 +194,7 @@
   <nav id="nav"><div class="label">Motions</div></nav>
   <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div>
     <div id="footer">
+    <div id="typing"></div>
     <div id="activity"><span class="dot"></span><span id="activityText"></span></div>
     <form id="composer" autocomplete="off">
       <div id="suggest"></div>
@@ -203,6 +241,15 @@
   let people = [];          // everyone who can be named, for @-completion
   let human = {};           // name -> is a person
   let act = null;           // what an agent is doing now, from /turns/
+
+  const ICONS = {
+    human: '<svg class="ico" viewBox="0 0 16 16" aria-label="person"><circle cx="8" cy="4.6" r="3"/><path d="M2.2 15c0-3.4 2.6-5.6 5.8-5.6s5.8 2.2 5.8 5.6z"/></svg>',
+    agent: '<svg class="ico" viewBox="0 0 16 16" aria-label="agent"><circle cx="8" cy="1.8" r="1.2"/><rect x="7.4" y="2" width="1.2" height="2.6"/><rect x="2.5" y="4.4" width="11" height="9.2" rx="2.4"/><rect x="0.6" y="7.6" width="1.4" height="3" rx=".6"/><rect x="14" y="7.6" width="1.4" height="3" rx=".6"/><circle cx="5.9" cy="8.6" r="1.25" fill="#fff"/><circle cx="10.1" cy="8.6" r="1.25" fill="#fff"/><rect x="5.6" y="11.1" width="4.8" height="1" rx=".5" fill="#fff"/></svg>',
+  };
+  function icon(name, isHuman) {
+    const h = isHuman === undefined ? !!human[name] : isHuman;
+    return h ? ICONS.human : ICONS.agent;
+  }
 
   function setStatus(text, cls) { status.textContent = text; status.className = 'status ' + (cls || ''); }
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -251,8 +298,8 @@
       ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
       <div class="meta">${block ? block + ' · ' : ''}${m.message_count} messages in the record</div>
       <div class="people" id="people">${m.participants.map(n =>
-        `<span class="who ${human[n] ? 'human' : 'agent'}" data-who="${esc(n)}">${esc(n)}</span>`).join('')}</div>
-    </div><div id="turns"></div>`;
+        `<span class="who ${human[n] ? 'human' : 'agent'}" data-who="${esc(n)}">${icon(n)}${esc(n)}</span>`).join('')}</div>
+    </div><button id="earlier" type="button" hidden>Load earlier</button><div id="turns"></div>`;
   }
 
   const RUN_MS = 5 * 60 * 1000;  // the same sender within this is one run
@@ -266,9 +313,94 @@
     el.className = 'turn ' + (t.is_human ? 'human' : 'agent') + (cont ? ' cont' : '') + (isNew ? ' new' : '');
     if (cont) el.title = t.sender + ' · ' + stamp(t.created_at);
     el.dataset.mentions = JSON.stringify(t.mentions || []);
-    el.innerHTML = `<div class="who"><span class="name">${esc(t.sender)}</span><time datetime="${t.created_at}">${stamp(t.created_at)}</time></div><div class="body">${t.html}</div>`;
+    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${esc(t.sender)}</span><time datetime="${t.created_at}">${stamp(t.created_at)}</time></div><div class="body">${t.html}</div>`;
     markTurn(el, t.mentions || []);
     return el;
+  }
+
+  // --- tool steps: grouped into one collapsed line per run of work ----------
+  function workEl(s, container) {
+    const last = container.lastElementChild;
+    if (last && last.classList.contains('work') && last.dataset.sender === s.sender) return last;
+    const at = new Date(s.created_at).getTime();
+    const cont = prev && prev.sender === s.sender && at - prev.at < RUN_MS;
+    const el = document.createElement('div');
+    el.className = 'work' + (cont ? ' cont' : '');
+    el.dataset.sender = s.sender;
+    el.innerHTML = `<div class="who"><span class="name">${icon(s.sender, false)}${esc(s.sender)}</span><time datetime="${esc(s.created_at)}">${stamp(s.created_at)}</time></div>`
+      + `<button class="work-head" type="button"><span class="caret">▸</span><span class="what"></span></button><div class="steps"></div>`;
+    container.appendChild(el);
+    return el;
+  }
+  function describeWork(el) {
+    const counts = {};
+    el.querySelectorAll('.step').forEach(s => { counts[s.dataset.verb] = (counts[s.dataset.verb] || 0) + 1; });
+    const n = el.querySelectorAll('.step').length;
+    const parts = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([v, c]) => c > 1 ? `${v} ×${c}` : v);
+    el.querySelector('.what').textContent = `${n} step${n === 1 ? '' : 's'} · ${parts.join(', ')}`;
+  }
+  function addStep(s, container) {
+    const work = workEl(s, container);
+    const row = document.createElement('div');
+    row.className = 'step';
+    row.dataset.id = s.id; row.dataset.verb = s.verb;
+    row.innerHTML = `<button class="step-head" type="button"><code>${esc(s.tool.replace(/^mcp__/, ''))}</code><span class="sum">${esc(s.summary || s.verb)}</span></button><div class="step-detail"></div>`;
+    work.querySelector('.steps').appendChild(row);
+    describeWork(work);
+    prev = { sender: s.sender, at: new Date(s.created_at).getTime() };
+  }
+  function pre(text, cls) { return `<pre${cls ? ` class="${cls}"` : ''}>${esc(text)}</pre>`; }
+  function diff(oldText, newText) {
+    const lines = [];
+    String(oldText || '').split('\n').forEach(l => lines.push(`<span class="del">- ${esc(l)}</span>`));
+    String(newText || '').split('\n').forEach(l => lines.push(`<span class="add">+ ${esc(l)}</span>`));
+    return `<pre>${lines.join('\n')}</pre>`;
+  }
+  function renderDetail(d) {
+    const a = d.input || {};
+    let ask = '';
+    if (d.tool === 'Bash') ask = `<pre><span class="dim">$ </span>${esc(a.command || '')}</pre>`;
+    else if (d.tool === 'Edit') ask = `<div class="label">${esc(a.file_path || '')}</div>` + diff(a.old_string, a.new_string);
+    else if (d.tool === 'Write') ask = `<div class="label">${esc(a.file_path || '')}</div>` + pre(a.content || '');
+    else ask = pre(JSON.stringify(a, null, 2));
+    let out = '';
+    if (d.result) {
+      const text = d.result.text || '(no output kept)';
+      out = `<div class="${d.result.is_error ? 'err' : ''}"><div class="label">${d.result.is_error ? 'error' : 'result'}</div>${pre(text)}</div>`;
+    }
+    const heading = ['Edit', 'Write'].includes(d.tool) ? '' : `<div class="label">${esc(d.verb)}</div>`;
+    return heading + ask + out;
+  }
+  document.addEventListener('click', async e => {
+    const head = e.target.closest('.work-head');
+    if (head) { head.parentElement.classList.toggle('open'); return; }
+    const stepHead = e.target.closest('.step-head');
+    if (!stepHead) return;
+    const step = stepHead.parentElement;
+    step.classList.toggle('open');
+    const box = step.querySelector('.step-detail');
+    if (!step.classList.contains('open') || box.dataset.loaded) return;
+    box.textContent = 'loading…';
+    try {
+      const r = await fetch(`/api/motions/${encodeURIComponent(current)}/steps/${encodeURIComponent(step.dataset.id)}/`);
+      if (!r.ok) throw new Error(r.status);
+      const d = await r.json();
+      box.innerHTML = renderDetail(d);
+      box.dataset.loaded = '1';
+      if (d.result && d.result.is_error) step.classList.add('err');
+    } catch (err) { box.textContent = 'could not load this step'; }
+  });
+
+  // Turns and steps from one response, in the order they happened.
+  function itemsOf(data) {
+    return [...(data.turns || []).map(t => ({ kind: 'turn', v: t })), ...(data.steps || []).map(s => ({ kind: 'step', v: s }))]
+      .sort((a, b) => a.v.created_at < b.v.created_at ? -1 : a.v.created_at > b.v.created_at ? 1 : 0);
+  }
+  function renderItems(items, container, isNew) {
+    for (const it of items) {
+      if (it.kind === 'turn') container.appendChild(turnEl(it.v, isNew));
+      else addStep(it.v, container);
+    }
   }
 
   function remarkAll() {
@@ -320,6 +452,29 @@
     await poll(true);
   }
 
+  let firstId = null;      // the oldest item shown, for ?before=
+  async function loadEarlier() {
+    const button = document.getElementById('earlier');
+    if (!firstId || !button) return;
+    button.disabled = true; button.textContent = 'loading…';
+    try {
+      const r = await fetch('/api/motions/' + encodeURIComponent(current) + '/turns/?before=' + firstId);
+      const data = await r.json();
+      const items = itemsOf(data);
+      const box = document.createElement('div');
+      const saved = prev; prev = null;
+      renderItems(items, box, false);
+      prev = saved;
+      const turnsEl = document.getElementById('turns');
+      const height = main.scrollHeight;
+      turnsEl.prepend(...box.children);
+      main.scrollTop += main.scrollHeight - height;
+      if (items.length) firstId = items[0].v.id;
+      button.hidden = !data.has_earlier;
+    } finally { button.disabled = false; button.textContent = 'Load earlier'; }
+  }
+  document.addEventListener('click', e => { if (e.target.id === 'earlier') loadEarlier(); });
+
   async function poll(full) {
     if (!current) return;
     const url = '/api/motions/' + encodeURIComponent(current) + '/turns/' + (lastId && !full ? '?after=' + lastId : '');
@@ -341,19 +496,25 @@
     }
     act = data.activity || null;
     renderActivity();
+    typingNow = (data.typing || []).filter(n => n !== viewer);
+    renderTyping();
     const turnsEl = document.getElementById('turns');
     if (!turnsEl) return;
-    if (full && data.turns.length === 0) {
-      turnsEl.innerHTML = '<div class="empty">Nothing said here yet.</div>';
+    const items = itemsOf(data);
+    if (full) {
+      firstId = items.length ? items[0].v.id : null;
+      const earlier = document.getElementById('earlier');
+      earlier.hidden = !data.has_earlier;
+      if (!items.length) turnsEl.innerHTML = '<div class="empty">Nothing said here yet.</div>';
     }
-    if (data.turns.length) {
+    if (items.length) {
       const nearBottom = main.scrollHeight - main.scrollTop - main.clientHeight < 120;
       const emptyNote = turnsEl.querySelector('.empty'); if (emptyNote) emptyNote.remove();
-      for (const t of data.turns) turnsEl.appendChild(turnEl(t, !full));
-      lastId = data.turns[data.turns.length - 1].id;
+      renderItems(items, turnsEl, !full);
+      lastId = items[items.length - 1].v.id;
       if (full || nearBottom) main.scrollTop = main.scrollHeight;
       touch(current);
-      if (!full) { await loadMotions(); }
+      if (!full && data.turns.length) { await loadMotions(); }
     }
     await refreshBadges();
   }
@@ -365,13 +526,22 @@
     const s = Math.max(0, Math.floor(Date.now() / 1000 - since));
     return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
   }
+  let typingNow = [];
+  const typingEl = document.getElementById('typing');
+  function renderTyping() {
+    document.querySelectorAll('.people .who').forEach(el => el.classList.toggle('typing', typingNow.includes(el.dataset.who)));
+    typingEl.classList.toggle('on', typingNow.length > 0);
+    typingEl.innerHTML = typingNow.map(n => `${icon(n, true)}<b>${esc(n)}</b>`).join(', ')
+      + (typingNow.length ? (typingNow.length > 1 ? ' are typing…' : ' is typing…') : '');
+  }
+
   function renderActivity() {
     document.querySelectorAll('.people .who').forEach(el => el.classList.toggle('busy', !!act && el.dataset.who === act.agent));
     activityEl.classList.toggle('on', !!act);
     if (!act) return;
     activityText.innerHTML = act.doing === 'waking'
-      ? `waking <b>${esc(act.agent)}</b> · ${elapsed(act.since)}`
-      : `<b>${esc(act.agent)}</b> · ${esc(act.doing)} · ${elapsed(act.since)}`;
+      ? `waking ${icon(act.agent, false)}<b>${esc(act.agent)}</b> · ${elapsed(act.since)}`
+      : `${icon(act.agent, false)}<b>${esc(act.agent)}</b> · ${esc(act.doing)} · ${elapsed(act.since)}`;
   }
   setInterval(renderActivity, 1000);
 
@@ -393,7 +563,7 @@
     if (!choices.length) return closeSuggest();
     chosen = Math.min(chosen, choices.length - 1);
     suggest.innerHTML = choices.map((n, i) =>
-      `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">@${esc(n)}<small>${human[n] ? 'person' : 'agent'}${here.has(n) ? '' : ' · not here yet'}</small></div>`).join('');
+      `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">${icon(n)}@${esc(n)}<small>${human[n] ? 'person' : 'agent'}${here.has(n) ? '' : ' · not here yet'}</small></div>`).join('');
     suggest.classList.add('on');
   }
   function acceptSuggest(i) {
@@ -428,6 +598,23 @@
   nav.addEventListener('click', e => { if (e.target.closest('a.motion')) document.body.classList.remove('menu-open'); });
   if (matchMedia('(max-width: 720px)').matches) sayBox.placeholder = 'Say something · @name · [[Page]]';
 
+  // Tell the Motion this person is typing: at most every 3s while there is
+  // text, and once when it is cleared or sent.
+  let typingSent = 0;
+  function sendTyping(on) {
+    if (!viewer || !current) return;
+    fetch('/api/motions/' + encodeURIComponent(current) + '/typing/', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify({ typing: on }),
+    }).catch(() => {});
+  }
+  sayBox.addEventListener('input', () => {
+    const now = Date.now();
+    if (sayBox.value.trim()) {
+      if (now - typingSent > 3000) { typingSent = now; sendTyping(true); }
+    } else if (typingSent) { typingSent = 0; sendTyping(false); }
+  });
+
   function csrf() {
     const m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
     return m ? decodeURIComponent(m[1]) : '';
@@ -457,7 +644,7 @@
         body: JSON.stringify({ text }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
-      sayBox.value = '';
+      sayBox.value = ''; typingSent = 0; sendTyping(false);
       await poll(false);
     } catch (e) {
       composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(e.message)}</span>`);
