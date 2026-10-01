@@ -439,6 +439,7 @@ class Message(models.Model):
 
     # Metadata
     model_backend = models.CharField(max_length=100, null=True, blank=True)
+    effort = models.CharField(max_length=20, null=True, blank=True)  # e.g. 'high', 'xhigh', 'max'
     stop_reason = models.CharField(max_length=50, null=True, blank=True)
     source_file = models.CharField(max_length=255, null=True, blank=True)
     missing_from_markdown = models.BooleanField(default=False)

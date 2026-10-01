@@ -432,6 +432,7 @@ def step_summary(tool, args):
 def step_payload(msg):
     tool = msg.tooluse.tool_name
     return {
+        **how_payload(msg),
         'id': str(msg.id),
         'sender': msg.sender_id,
         'created_at': msg.created_at.isoformat(),
@@ -457,8 +458,26 @@ def step_detail(msg):
     }
 
 
+def model_label(model):
+    """'claude-opus-5-5' -> 'Opus 5.5'; anything not Claude's naming as it is."""
+    if not model or model.startswith('<'):
+        return ''
+    if not model.startswith('claude-'):
+        return model
+    parts = re.sub(r'-\d{8}$', '', model[len('claude-'):]).split('-')
+    family = next((p for p in parts if not p.isdigit()), '')
+    version = '.'.join(p for p in parts if p.isdigit())
+    return f'{family.capitalize()} {version}'.strip()
+
+
+def how_payload(msg):
+    """Model and effort an agent's message ran on ('' when unknown)."""
+    return {'model': model_label(msg.model_backend), 'effort': msg.effort or ''}
+
+
 def turn_payload(msg, text, mentionable=()):
     return {
+        **how_payload(msg),
         'id': str(msg.id),
         'sender': msg.sender_id,
         'is_human': bool(getattr(getattr(msg.sender, 'thinkingentity', None),
@@ -550,6 +569,7 @@ def activity(motion, now=None):
             break
         streak.append(msg)
     agent = next((m.sender_id for m in streak if m.sender_id in agents), None) or sorted(agents or {'magent'})[0]
+    how = next((how_payload(m) for m in streak if m.sender_id in agents and m.model_backend), {'model': '', 'effort': ''})
     start = streak[-1]
     if len(streak) == len(recent) == RECENT:
         # A long turn runs past the rows read above: find where it began.
@@ -560,7 +580,7 @@ def activity(motion, now=None):
                     .order_by('-created_at').first())
         if boundary is not None:
             start = mine.filter(created_at__gt=boundary.created_at).order_by('created_at').first() or start
-    return {'agent': agent, 'doing': _doing(newest), 'since': _when(start)}
+    return {'agent': agent, 'doing': _doing(newest), 'since': _when(start), **{k: v for k, v in how.items() if v}}
 
 
 def motion_payload(motion):
