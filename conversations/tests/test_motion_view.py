@@ -51,7 +51,7 @@ class RenderHtmlTest(TestCase):
 
     def test_combinations_of_markup_stay_well_formed(self):
         import itertools
-        pieces = ['[[', ']]', '|', '[', '](', ')', 'https://x.test/', '@magent', '**', '*', '`',
+        pieces = ['[[', ']]', '|', '[', '](', ')', 'https://x.test/', '@magent', '**', '*', '`', '![', '/motions/media/' + 'a' * 64 + '.png',
                   '"', "'", '<', '>', '/', '=', 'onclick=alert(1)', ' ', '\n']
         for combo in itertools.product(pieces, repeat=4):
             text = ''.join(combo)
@@ -63,7 +63,7 @@ class RenderHtmlTest(TestCase):
         allowed = {'p': set(), 'br': set(), 'strong': set(), 'em': set(), 'code': set(), 'pre': set(),
                    'ul': set(), 'ol': set(), 'li': set(), 'h4': set(), 'table': set(), 'thead': set(),
                    'tbody': set(), 'tr': set(), 'th': set(), 'td': set(),
-                   'a': {'href', 'class'}, 'span': {'class', 'data-who'}}
+                   'a': {'href', 'class'}, 'span': {'class', 'data-who'}, 'img': {'src', 'alt', 'loading'}}
         case = self
 
         class Check(HTMLParser):
@@ -71,8 +71,9 @@ class RenderHtmlTest(TestCase):
                 case.assertIn(tag, allowed, (source, out))
                 for name, value in attrs:
                     case.assertIn(name, allowed[tag], (source, out))
-                    if name == 'href':
-                        case.assertRegex(value, r'^https?://', (source, out))  # decoded: entities are fine
+                    if name in ('href', 'src'):  # decoded: entities are fine
+                        case.assertRegex(value, r'^(https?://|/motions/media/[0-9a-f]{64}\.(png|jpg|gif|webp)$)',
+                                         (source, out))
         Check().feed(out)
 
     def test_a_url_at_the_start_of_a_line_links(self):

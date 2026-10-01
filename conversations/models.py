@@ -1314,6 +1314,34 @@ class BlockAnchor(models.Model):
         return f"Block {self.number} @ {self.timestamp}"
 
 
+class Media(models.Model):
+    """
+    An image in a Motion, stored once by the hash of its bytes.
+
+    Posted from the composer, pasted into a terminal session, or returned
+    by a tool (a screenshot): messages refer to it by URL,
+    /motions/media/<sha256>.<ext>, so the record's text stays text. Only
+    raster formats, checked by their first bytes, never by what the
+    uploader says they are.
+    """
+
+    sha256 = models.CharField(max_length=64, primary_key=True)
+    mime = models.CharField(max_length=40)
+    data = models.BinaryField()
+    size = models.IntegerField()
+    added_by = models.ForeignKey(ThinkingEntity, models.SET_NULL, null=True, blank=True, related_name='media')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'media'
+
+    EXTENSIONS = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp'}
+
+    @property
+    def url(self):
+        return f'/motions/media/{self.sha256}.{self.EXTENSIONS[self.mime]}'
+
+
 # ============================================================================
 # Import Tracking Constants
 # ============================================================================

@@ -15,6 +15,7 @@ from conversations.models import (
 )
 from constant_sorrow.constants import EVENT_TYPE_WE_DO_NOT_HANDLE_YET
 from conversations.services.redaction import redact_line
+from conversations.services.media import lift_images
 
 
 def get_or_create_participant(name, participant_type):
@@ -211,6 +212,11 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
             name='magent',
             defaults={'is_biological_human': False}
         )
+
+        # Images become stored media and markdown before anything reads the
+        # line: a pasted picture or a screenshot is part of the conversation,
+        # and base64 in the record's text is not.
+        line = lift_images(line, user)
 
         event_type, event = Message.detect_event_type_claude_code_v2(line)
 

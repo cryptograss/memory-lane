@@ -150,6 +150,17 @@
   #earlier { display: block; margin: 6px auto 14px; font: inherit; font-size: 13px; color: var(--muted);
              background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 3px 14px; cursor: pointer; }
   body.only-mine .work { display: none; }
+  /* Images: in turns, as thumbnails on a run of work, inside a step. */
+  .turn .body a.img { display: inline-block; margin: 4px 0; }
+  .turn .body img { display: block; max-width: 100%; max-height: 420px; border-radius: 6px; border: 1px solid var(--line); }
+  .work .thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 4px; }
+  .work .thumbs img, .step-detail .shots img { height: 84px; max-width: 160px; object-fit: cover; border-radius: 4px;
+                                                border: 1px solid var(--line); cursor: zoom-in; }
+  .step-detail .shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  #attach { font: inherit; font-size: 18px; line-height: 1; padding: 8px 10px; background: none; color: var(--muted);
+            border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  #attach:hover { color: var(--ink); }
+  #composer.dropping textarea { outline: 2px dashed var(--accent); }
   #suggest { display: none; position: absolute; bottom: 100%; left: 16px; margin-bottom: 4px; background: var(--panel);
              border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.08); min-width: 180px; z-index: 5; }
   #suggest.on { display: block; }
@@ -198,6 +209,8 @@
     <div id="activity"><span class="dot"></span><span id="activityText"></span></div>
     <form id="composer" autocomplete="off">
       <div id="suggest"></div>
+      <button type="button" id="attach" title="Add an image (or paste or drop one)" aria-label="Add an image">＋</button>
+      <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
       <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Ctrl+Enter sends." rows="2"></textarea>
       <button type="submit" id="send">Send</button>
     </form>
@@ -346,6 +359,14 @@
     row.dataset.id = s.id; row.dataset.verb = s.verb;
     row.innerHTML = `<button class="step-head" type="button"><code>${esc(s.tool.replace(/^mcp__/, ''))}</code><span class="sum">${esc(s.summary || s.verb)}</span></button><div class="step-detail"></div>`;
     work.querySelector('.steps').appendChild(row);
+    if (s.images && s.images.length) {
+      let thumbs = work.querySelector('.thumbs');
+      if (!thumbs) {
+        thumbs = document.createElement('div'); thumbs.className = 'thumbs';
+        work.insertBefore(thumbs, work.querySelector('.steps'));
+      }
+      for (const url of s.images) thumbs.insertAdjacentHTML('beforeend', `<a href="${esc(url)}" target="_blank" rel="noopener"><img src="${esc(url)}" alt="from ${esc(s.tool)}" loading="lazy"></a>`);
+    }
     describeWork(work);
     prev = { sender: s.sender, at: new Date(s.created_at).getTime() };
   }
@@ -365,8 +386,11 @@
     else ask = pre(JSON.stringify(a, null, 2));
     let out = '';
     if (d.result) {
-      const text = d.result.text || '(no output kept)';
-      out = `<div class="${d.result.is_error ? 'err' : ''}"><div class="label">${d.result.is_error ? 'error' : 'result'}</div>${pre(text)}</div>`;
+      const shots = (d.result.text || '').match(/\/motions\/media\/[0-9a-f]{64}\.(?:png|jpg|gif|webp)/g) || [];
+      const text = (d.result.text || '').replace(/!\[[^\]]*\]\(\/motions\/media\/[^)]+\)\n?/g, '').trim() || (shots.length ? '' : '(no output kept)');
+      out = `<div class="${d.result.is_error ? 'err' : ''}"><div class="label">${d.result.is_error ? 'error' : 'result'}</div>${text ? pre(text) : ''}`
+        + (shots.length ? `<div class="shots">${shots.map(u => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="" loading="lazy"></a>`).join('')}</div>` : '')
+        + `</div>`;
     }
     const heading = ['Edit', 'Write'].includes(d.tool) ? '' : `<div class="label">${esc(d.verb)}</div>`;
     return heading + ask + out;
@@ -613,6 +637,49 @@
     if (sayBox.value.trim()) {
       if (now - typingSent > 3000) { typingSent = now; sendTyping(true); }
     } else if (typingSent) { typingSent = 0; sendTyping(false); }
+  });
+
+  // Images into the composer: paste, drop, or the + button. Each is stored
+  // first, then its markdown goes in at the caret.
+  function showError(message) {
+    const old = composer.querySelector('.err'); if (old) old.remove();
+    composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(message)}</span>`);
+  }
+  const fileInput = document.getElementById('file');
+  async function upload(file) {
+    const marker = `![uploading ${file.name || 'image'}…]()`;
+    insertAtCaret(marker + '\n');
+    try {
+      const r = await fetch('/api/motions/' + encodeURIComponent(current) + '/media/', {
+        method: 'POST', headers: { 'X-CSRFToken': csrf(), 'Content-Type': 'application/octet-stream' }, body: file,
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || r.status);
+      sayBox.value = sayBox.value.replace(marker, body.markdown);
+    } catch (e) {
+      sayBox.value = sayBox.value.replace(marker + '\n', '');
+      showError('image: ' + e.message);
+    }
+    sayBox.dispatchEvent(new Event('input'));
+  }
+  function insertAtCaret(text) {
+    const at = sayBox.selectionStart ?? sayBox.value.length;
+    sayBox.value = sayBox.value.slice(0, at) + text + sayBox.value.slice(sayBox.selectionEnd ?? at);
+    sayBox.selectionStart = sayBox.selectionEnd = at + text.length;
+  }
+  function imagesIn(list) { return [...(list || [])].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type)); }
+  document.getElementById('attach').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => { imagesIn(fileInput.files).forEach(upload); fileInput.value = ''; });
+  sayBox.addEventListener('paste', e => {
+    const files = imagesIn([...(e.clipboardData?.items || [])].map(i => i.getAsFile()).filter(Boolean));
+    if (files.length) { e.preventDefault(); files.forEach(upload); }
+  });
+  composer.addEventListener('dragover', e => { e.preventDefault(); composer.classList.add('dropping'); });
+  composer.addEventListener('dragleave', () => composer.classList.remove('dropping'));
+  composer.addEventListener('drop', e => {
+    composer.classList.remove('dropping');
+    const files = imagesIn(e.dataTransfer?.files);
+    if (files.length) { e.preventDefault(); files.forEach(upload); }
   });
 
   function csrf() {
