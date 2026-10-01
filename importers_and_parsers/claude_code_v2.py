@@ -236,6 +236,10 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
             # prompts (written by the agent) arrive as user-role lines. Only
             # this flag tells them apart from the human's own words.
             'is_sidechain': bool(event.get('isSidechain')),
+            # end_turn on an assistant line is the only mark that a turn is
+            # over; the Motion view's activity indicator reads it.
+            'stop_reason': (event.get('message') or {}).get('stop_reason')
+                           if isinstance(event.get('message'), dict) else None,
             'cwd': event.get('cwd'),
             'git_branch': event.get('gitBranch'),
             'client_version': event.get('version'),

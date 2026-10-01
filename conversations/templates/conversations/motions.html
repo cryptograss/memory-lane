@@ -89,13 +89,31 @@
 
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
   header .auth { font-size: 13px; color: var(--muted); }
+  header .preview { font-size: 12px; font-weight: 600; color: #7a4b00; background: #ffe9b0; border-radius: 4px; padding: 1px 8px; }
   header .auth a { color: var(--muted); }
-  #composer { display: none; position: sticky; bottom: 0; background: var(--bg); padding: 10px 16px 14px; border-top: 1px solid var(--line); }
+  #footer { position: sticky; bottom: 0; background: var(--bg); }
+  #composer { display: none; position: relative; padding: 10px 16px 14px; border-top: 1px solid var(--line); }
   body.writer #composer { display: flex; gap: 8px; align-items: flex-end; }
   #composer textarea { flex: 1; font: inherit; min-height: 44px; max-height: 40vh; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
   #composer button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
   #composer button:disabled { opacity: .5; cursor: default; }
   #composer .err { color: var(--accent); font-size: 12px; }
+  #activity { display: none; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--muted); }
+  #activity.on { display: flex; }
+  #activity .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--agent); animation: pulse 1.2s ease-in-out infinite; }
+  #activity b { color: var(--agent); }
+  @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+  .people { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .people .who { font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--code); }
+  .people .who.human { color: var(--human); }
+  .people .who.agent { color: var(--agent); }
+  .people .who.busy::after { content: ' ●'; animation: pulse 1.2s ease-in-out infinite; }
+  #suggest { display: none; position: absolute; bottom: 100%; left: 16px; margin-bottom: 4px; background: var(--panel);
+             border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.08); min-width: 180px; z-index: 5; }
+  #suggest.on { display: block; }
+  #suggest div { padding: 5px 10px; cursor: pointer; font-size: 14px; }
+  #suggest div.sel, #suggest div:hover { background: var(--accent-soft); }
+  #suggest small { color: var(--muted); margin-left: 6px; }
   @media (max-width: 720px) {
     .layout { flex-direction: column; }
     nav { width: auto; max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line); }
@@ -105,6 +123,7 @@
 <body>
 <header>
   <span class="brand">Motions<small>memory-lane</small></span>
+  {% if preview_label %}<span class="preview" title="A branch's code, not production; see the label for which record">{{ preview_label }}</span>{% endif %}
   <span class="me">viewing as <select id="me"><option value="">nobody</option></select></span>
   <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
   <span class="auth" id="auth"></span>
@@ -113,10 +132,14 @@
 <div class="layout">
   <nav id="nav"><div class="label">Motions</div></nav>
   <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div>
+    <div id="footer">
+    <div id="activity"><span class="dot"></span><span id="activityText"></span></div>
     <form id="composer" autocomplete="off">
+      <div id="suggest"></div>
       <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Ctrl+Enter sends." rows="2"></textarea>
       <button type="submit" id="send">Send</button>
     </form>
+    </div>
   </main>
 </div>
 
@@ -153,6 +176,9 @@
   let lastSeen = store.get('lastSeen', {});   // slug -> iso
   let badges = {};          // slug -> count of my mentions since lastSeen
   let baseTitle = 'Motions';
+  let people = [];          // everyone who can be named, for @-completion
+  let human = {};           // name -> is a person
+  let act = null;           // what an agent is doing now, from /turns/
 
   function setStatus(text, cls) { status.textContent = text; status.className = 'status ' + (cls || ''); }
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -199,7 +225,9 @@
     return `<div class="motion-head">
       <h1>${esc(m.title)}</h1>
       ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
-      <div class="meta">${esc(m.participants.join(', '))}${block ? ' · ' + block : ''} · ${m.message_count} messages in the record</div>
+      <div class="meta">${block ? block + ' · ' : ''}${m.message_count} messages in the record</div>
+      <div class="people" id="people">${m.participants.map(n =>
+        `<span class="who ${human[n] ? 'human' : 'agent'}" data-who="${esc(n)}">${esc(n)}</span>`).join('')}</div>
     </div><div id="turns"></div>`;
   }
 
@@ -219,7 +247,10 @@
   async function loadMotions() {
     const r = await fetch('/api/motions/');
     if (!r.ok) throw new Error('motions ' + r.status);
-    motions = (await r.json()).motions;
+    const body = await r.json();
+    motions = body.motions;
+    people = body.people || [];
+    people.forEach(p => { human[p.name] = p.is_human; });
     motions.forEach(m => m.participants.forEach(p => names.add(p)));
     renderMe();
     renderNav();
@@ -276,6 +307,8 @@
       baseTitle = data.motion.title + ' · Motions';
       setTitle();
     }
+    act = data.activity || null;
+    renderActivity();
     const turnsEl = document.getElementById('turns');
     if (!turnsEl) return;
     if (full && data.turns.length === 0) {
@@ -292,6 +325,64 @@
     }
     await refreshBadges();
   }
+
+  // --- what an agent is doing: read from the record, ticking locally ----------
+  const activityEl = document.getElementById('activity');
+  const activityText = document.getElementById('activityText');
+  function elapsed(since) {
+    const s = Math.max(0, Math.floor(Date.now() / 1000 - since));
+    return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
+  }
+  function renderActivity() {
+    document.querySelectorAll('.people .who').forEach(el => el.classList.toggle('busy', !!act && el.dataset.who === act.agent));
+    activityEl.classList.toggle('on', !!act);
+    if (!act) return;
+    activityText.innerHTML = act.doing === 'waking'
+      ? `waking <b>${esc(act.agent)}</b> · ${elapsed(act.since)}`
+      : `<b>${esc(act.agent)}</b> · ${esc(act.doing)} · ${elapsed(act.since)}`;
+  }
+  setInterval(renderActivity, 1000);
+
+  // --- @-completion: people in this Motion first, then everyone else -------
+  const suggest = document.getElementById('suggest');
+  let choices = [], chosen = 0;
+  function mentionAtCaret() {
+    const upto = sayBox.value.slice(0, sayBox.selectionStart);
+    const m = upto.match(/(^|[^\w@\/.])@([A-Za-z][\w.-]*)?$/);
+    return m ? { start: upto.length - (m[2] || '').length, prefix: (m[2] || '').toLowerCase() } : null;
+  }
+  function closeSuggest() { suggest.classList.remove('on'); choices = []; }
+  function showSuggest() {
+    const at = mentionAtCaret();
+    if (!at) return closeSuggest();
+    const here = new Set((motions.find(m => m.slug === current) || {}).participants || []);
+    choices = people.map(p => p.name).filter(n => n.startsWith(at.prefix))
+      .sort((a, b) => (here.has(b) - here.has(a)) || a.localeCompare(b)).slice(0, 8);
+    if (!choices.length) return closeSuggest();
+    chosen = Math.min(chosen, choices.length - 1);
+    suggest.innerHTML = choices.map((n, i) =>
+      `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">@${esc(n)}<small>${human[n] ? 'person' : 'agent'}${here.has(n) ? '' : ' · not here yet'}</small></div>`).join('');
+    suggest.classList.add('on');
+  }
+  function acceptSuggest(i) {
+    const at = mentionAtCaret(); if (!at || !choices[i]) return;
+    const before = sayBox.value.slice(0, at.start), after = sayBox.value.slice(sayBox.selectionStart);
+    sayBox.value = before + choices[i] + ' ' + after;
+    const caret = (before + choices[i] + ' ').length;
+    sayBox.setSelectionRange(caret, caret);
+    closeSuggest(); sayBox.focus();
+  }
+  sayBox.addEventListener('input', () => { chosen = 0; showSuggest(); });
+  sayBox.addEventListener('keydown', e => {
+    if (!suggest.classList.contains('on')) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); chosen = (chosen + (e.key === 'ArrowDown' ? 1 : choices.length - 1)) % choices.length; showSuggest();
+    } else if ((e.key === 'Enter' && !e.ctrlKey && !e.metaKey) || e.key === 'Tab') {
+      e.preventDefault(); e.stopImmediatePropagation(); acceptSuggest(chosen);
+    } else if (e.key === 'Escape') { closeSuggest(); }
+  });
+  suggest.addEventListener('mousedown', e => { const d = e.target.closest('[data-i]'); if (d) { e.preventDefault(); acceptSuggest(+d.dataset.i); } });
+  sayBox.addEventListener('blur', () => setTimeout(closeSuggest, 150));
 
   meSelect.addEventListener('change', () => {
     me = meSelect.value; store.set('me', me);

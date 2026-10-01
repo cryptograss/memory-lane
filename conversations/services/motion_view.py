@@ -301,6 +301,78 @@ def turn_payload(msg, text, mentionable=()):
     }
 
 
+# --- activity: what an agent is doing right now ------------------------------
+
+TURN_ENDS = {'end_turn', 'refusal', 'stop_sequence', 'max_tokens'}
+ACTIVITY_WINDOW = 600  # seconds; a streak older than this is a session that died
+_TOOL_WORDS = {
+    'Bash': 'running a command', 'Read': 'reading', 'Grep': 'searching', 'Glob': 'searching',
+    'Edit': 'editing', 'Write': 'writing a file', 'NotebookEdit': 'editing',
+    'WebFetch': 'reading the web', 'WebSearch': 'searching the web',
+    'Agent': 'working with helpers', 'Task': 'working with helpers',
+}
+
+
+def _doing(msg):
+    """A few words for what a machinery message says the agent is doing."""
+    if hasattr(msg, 'tooluse'):
+        name = msg.tooluse.tool_name
+        if name.startswith('mcp__'):
+            return 'using ' + name.split('__')[-1].replace('-', ' ').replace('_', ' ')
+        return _TOOL_WORDS.get(name, f'using {name}')
+    return 'thinking'
+
+
+def _when(msg):
+    return msg.timestamp / 1000 if msg.timestamp else msg.created_at.timestamp()
+
+
+def activity(motion, now=None):
+    """What an agent in this Motion is doing now, or None if nothing is underway.
+
+    Read straight from the record, so no process has to report in: every
+    thought, tool call and prompt streams into the Motion as it happens, and
+    an assistant line whose stop_reason is end_turn closes the turn. So an
+    agent is working from the first line after its last finished turn until
+    the next one, and the newest line says what it's doing. A web post that
+    names an agent and has nothing after it means the agent is being woken.
+    """
+    from conversations.models import ThinkingEntity
+    import time
+
+    now = now or time.time()
+    agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
+    recent = list(motion.messages.select_related('sender', 'tooluse', 'thought', 'toolresult')
+                  .order_by('-created_at')[:60])
+    if not recent or now - _when(recent[0]) > ACTIVITY_WINDOW:
+        return None
+
+    newest = recent[0]
+    if newest.sender_id in agents and newest.stop_reason in TURN_ENDS:
+        return None
+    # Rows imported before stop_reason was kept: a plain reply that has sat
+    # for half a minute with nothing after it is taken as the end of a turn.
+    if (newest.sender_id in agents and newest.stop_reason is None and now - _when(newest) > 30
+            and not hasattr(newest, 'tooluse') and not hasattr(newest, 'thought')):
+        return None
+
+    if newest.source_file == 'motion-web':
+        named = [n for n in mentions_in(prose(newest.content), agents)]
+        if not named:
+            return None
+        return {'agent': named[0], 'doing': 'waking', 'since': _when(newest)}
+
+    streak = []
+    for msg in recent:
+        if msg.sender_id in agents and msg.stop_reason in TURN_ENDS:
+            break
+        if msg.source_file == 'motion-web':
+            break
+        streak.append(msg)
+    agent = next((m.sender_id for m in streak if m.sender_id in agents), None) or sorted(agents or {'magent'})[0]
+    return {'agent': agent, 'doing': _doing(newest), 'since': _when(streak[-1])}
+
+
 def motion_payload(motion):
     from django.db.models import Max
     last = motion.messages.aggregate(last=Max('created_at'))['last']
