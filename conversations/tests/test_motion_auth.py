@@ -96,6 +96,11 @@ class MotionAuthTest(TestCase):
         self.assertEqual(again.status_code, 410)
         self.assertEqual(Device.objects.count(), 1)
 
+    def test_a_preview_marks_the_devices_it_enrolls(self):
+        with override_settings(DEVICE_LABEL_PREFIX='preview · '):
+            self.sign_in()
+        self.assertEqual(Device.objects.get().label, 'preview · phone')
+
     def test_the_key_says_who_you_are(self):
         response = self.enroll()
         self.assertEqual(response.json()['name'], 'justin')

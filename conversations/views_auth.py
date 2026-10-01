@@ -83,7 +83,8 @@ def login_page(request, code):
         return render(request, 'conversations/motion_login.html',
                       {'name': login.entity_id if login else None}, status=200 if login else 410)
 
-    device, token = motion_auth.redeem_login_code(code, label=request.POST.get('label', ''))
+    label = getattr(settings, 'DEVICE_LABEL_PREFIX', '') + request.POST.get('label', '')
+    device, token = motion_auth.redeem_login_code(code, label=label)
     if device is None:
         return render(request, 'conversations/motion_login.html', {'name': None}, status=410)
     response = HttpResponseRedirect('/motions/')
