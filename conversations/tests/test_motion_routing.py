@@ -133,6 +133,21 @@ class MotionRoutingTest(TestCase):
         self.assertEqual(Message.objects.get(content="skyler: @magent one more thing").motion, self.motion)
         self.assertEqual(Message.objects.filter(content="justin: are you there?").count(), 1)
 
+    def test_a_fork_whose_history_was_not_resent_is_claimed_by_its_first_lines_parent(self):
+        # What the watcher's dedupe leaves: none of the copied lines, only
+        # the fork's own, the first of which continues the copied history.
+        original, fork = uuid.uuid4(), uuid.uuid4()
+        self.motion.claim(original)
+        last = user_line(original, "justin: @magent are you there?")
+        import_line_from_claude_code_v2(last, self.era, "a.jsonl")
+        prompt = user_line(fork, "<motion-wake>...</motion-wake>", parentUuid=json.loads(last)["uuid"])
+        attachment = json.dumps({"type": "attachment", "uuid": str(uuid.uuid4()), "sessionId": str(fork)})
+        reply = user_line(fork, "magent: here", parentUuid=json.loads(attachment)["uuid"])
+        for line in (prompt, attachment, reply):
+            import_line_from_claude_code_v2(line, self.era, "b.jsonl")
+        self.assertEqual(MotionSession.motion_for(fork), self.motion)
+        self.assertEqual(Message.objects.get(content="magent: here").motion, self.motion)
+
     def test_fork_follows_where_its_history_lives_now(self):
         # The session was moved to another Motion after these messages were
         # attached; the fork belongs where the session is now.

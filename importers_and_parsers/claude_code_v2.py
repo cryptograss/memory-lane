@@ -228,8 +228,12 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
         # conversation. `motion` is resolved here too, so a message lands in
         # its Motion as it arrives rather than waiting for a later pass.
         session_id = event.get('sessionId')
+        # A fork's own first line (the poller's prompt) follows on from the
+        # last line of the history it copied, so its parent claims it too --
+        # even when the watcher sent none of the copied lines themselves.
         motion = (MotionSession.motion_for(session_id)
-                  or MotionSession.claim_by_history(session_id, event.get('uuid')))
+                  or MotionSession.claim_by_history(session_id, event.get('uuid'))
+                  or MotionSession.claim_by_history(session_id, event.get('parentUuid')))
         common = {
             'session_id': session_id,
             # A subagent's transcript shares its parent's sessionId, and its
