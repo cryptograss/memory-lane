@@ -234,12 +234,39 @@ class MotionPollerTest(TestCase):
 
 class ClaudeCodeWakerTest(TestCase):
 
-    def test_forks_under_a_new_id_with_no_tools_at_all(self):
-        cmd = ClaudeCodeWaker(claude='claude').command('s-old', 's-new', '<motion-wake>')
+    def command(self, **kwargs):
+        from unittest import mock
+        with mock.patch('poller.motion_poller.mcp_config_for_wakes', return_value='/tmp/wake-mcp.json'):
+            return ClaudeCodeWaker(claude='claude').command('s-old', 's-new', '<motion-wake>', **kwargs)
+
+    def test_forks_under_a_new_id_able_to_look_but_not_touch(self):
+        cmd = self.command()
         self.assertEqual(cmd[:7], ['claude', '-p', '--resume', 's-old', '--fork-session', '--session-id', 's-new'])
-        self.assertEqual(cmd[cmd.index('--tools') + 1], '')
+        self.assertEqual(cmd[cmd.index('--tools') + 1], 'Read,Grep,Glob')  # no shell, no edits
+        self.assertEqual(cmd[cmd.index('--permission-mode') + 1], 'dontAsk')  # unlisted means refused
         self.assertIn('--strict-mcp-config', cmd)
+        self.assertEqual(cmd[cmd.index('--mcp-config') + 1], '/tmp/wake-mcp.json')
+        allowed = cmd[cmd.index('--allowedTools') + 1:cmd.index('--disallowedTools')]
+        self.assertIn('mcp__pickipedia__get-page', allowed)
+        self.assertFalse([a for a in allowed if 'update' in a or 'create' in a or 'delete' in a or 'upload' in a])
+        self.assertIn('Read(~/.bashrc)', cmd)
         self.assertEqual(cmd[-2:], ['--', '<motion-wake>'])
+
+    def test_a_wake_can_be_granted_one_more_ability(self):
+        cmd = self.command(grant=['mcp__talk__reply'])
+        allowed = cmd[cmd.index('--allowedTools') + 1:cmd.index('--disallowedTools')]
+        self.assertIn('mcp__talk__reply', allowed)
+
+    def test_only_listed_servers_reach_a_woken_turn(self):
+        import json
+        from poller.motion_poller import mcp_config_for_wakes
+        home = Path(tempfile.mkdtemp())
+        (home / 'claude.json').write_text(json.dumps({'mcpServers': {
+            'pickipedia': {'command': 'node'}, 'playwright': {'command': 'docker'},
+            'jenkins': {'type': 'http', 'url': 'https://x'}}}))
+        out = mcp_config_for_wakes(home / 'claude.json', home / 'wake.json')
+        self.assertEqual(set(json.loads(Path(out).read_text())['mcpServers']), {'pickipedia'})
+        self.assertEqual(oct(Path(out).stat().st_mode & 0o777), '0o600')
 
     def test_resumes_from_the_directory_the_session_is_filed_under(self):
         # The session's last cwd is elsewhere (a worktree); resume must run
