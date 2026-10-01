@@ -124,6 +124,22 @@ def handle_summary(event, filename):
         return summary, created
 
 
+def model_and_usage(event):
+    """model_backend, effort and token counts of an assistant line (None elsewhere)."""
+    message = event.get('message') if isinstance(event.get('message'), dict) else {}
+    model = message.get('model')
+    usage = message.get('usage') if isinstance(message.get('usage'), dict) else {}
+    effort = event.get('perTurnEffort') or event.get('effort')
+    return {
+        'model_backend': model if isinstance(model, str) and not model.startswith('<') else None,
+        'effort': effort if isinstance(effort, str) else None,
+        'input_tokens': usage.get('input_tokens'),
+        'output_tokens': usage.get('output_tokens'),
+        'cache_creation_input_tokens': usage.get('cache_creation_input_tokens'),
+        'cache_read_input_tokens': usage.get('cache_read_input_tokens'),
+    }
+
+
 def tool_result_fields(event, limit=None):
     """
     content, is_error and tool_use_id of a tool_result event.
@@ -250,6 +266,9 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
             # over; the Motion view's activity indicator reads it.
             'stop_reason': (event.get('message') or {}).get('stop_reason')
                            if isinstance(event.get('message'), dict) else None,
+            # Which model and effort produced an agent's line, and what it
+            # cost: shown beside the agent's turns, counted for budgets.
+            **model_and_usage(event),
             'cwd': event.get('cwd'),
             'git_branch': event.get('gitBranch'),
             'client_version': event.get('version'),

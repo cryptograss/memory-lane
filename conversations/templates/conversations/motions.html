@@ -73,6 +73,7 @@
   .turn.human .who .name { color: var(--human); }
   .turn.agent .who .name { color: var(--agent); }
   .turn .who time { font-size: 12px; color: var(--muted); }
+  .turn .who .how, .work .who .how { font-size: 11px; color: var(--muted); background: var(--code); border-radius: 8px; padding: 0 7px; }
   .turn .body > :first-child { margin-top: 0; }
   .turn .body > :last-child { margin-bottom: 0; }
   .turn .body p { margin: 0 0 .7em; }
@@ -218,7 +219,7 @@
       <div id="suggest"></div>
       <button type="button" id="attach" title="Add an image (or paste or drop one)" aria-label="Add an image">＋</button>
       <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
-      <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Ctrl+Enter sends." rows="2"></textarea>
+      <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
       <button type="submit" id="send">Send</button>
     </form>
     </div>
@@ -269,6 +270,12 @@
   function icon(name, isHuman) {
     const h = isHuman === undefined ? !!human[name] : isHuman;
     return h ? ICONS.human : ICONS.agent;
+  }
+
+  // Which model, at what effort, an agent's turn ran on.
+  function how(item) {
+    const bits = [item.model, item.effort].filter(Boolean);
+    return bits.length ? `<span class="how" title="model · effort">${esc(bits.join(' · '))}</span>` : '';
   }
 
   function setStatus(text, cls) { status.textContent = text; status.className = 'status ' + (cls || ''); }
@@ -333,7 +340,7 @@
     el.className = 'turn ' + (t.is_human ? 'human' : 'agent') + (cont ? ' cont' : '') + (isNew ? ' new' : '');
     if (cont) el.title = t.sender + ' · ' + stamp(t.created_at);
     el.dataset.mentions = JSON.stringify(t.mentions || []);
-    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${esc(t.sender)}</span><time datetime="${t.created_at}">${stamp(t.created_at)}</time></div><div class="body">${t.html}</div>`;
+    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${esc(t.sender)}</span><time datetime="${t.created_at}">${stamp(t.created_at)}</time>${how(t)}</div><div class="body">${t.html}</div>`;
     markTurn(el, t.mentions || []);
     return el;
   }
@@ -347,7 +354,7 @@
     const el = document.createElement('div');
     el.className = 'work' + (cont ? ' cont' : '');
     el.dataset.sender = s.sender;
-    el.innerHTML = `<div class="who"><span class="name">${icon(s.sender, false)}${esc(s.sender)}</span><time datetime="${esc(s.created_at)}">${stamp(s.created_at)}</time></div>`
+    el.innerHTML = `<div class="who"><span class="name">${icon(s.sender, false)}${esc(s.sender)}</span><time datetime="${esc(s.created_at)}">${stamp(s.created_at)}</time>${how(s)}</div>`
       + `<button class="work-head" type="button"><span class="caret">▸</span><span class="what"></span></button><div class="steps"></div>`;
     container.appendChild(el);
     return el;
@@ -599,7 +606,8 @@
     if (!act) return;
     activityText.innerHTML = act.doing === 'waking'
       ? `waking ${icon(act.agent, false)}<b>${esc(act.agent)}</b> · ${elapsed(act.since)}`
-      : `${icon(act.agent, false)}<b>${esc(act.agent)}</b> · ${esc(act.doing)} · ${elapsed(act.since)}`;
+      : `${icon(act.agent, false)}<b>${esc(act.agent)}</b> · ${esc(act.doing)} · ${elapsed(act.since)}`
+        + ([act.model, act.effort].filter(Boolean).length ? ` · ${esc([act.model, act.effort].filter(Boolean).join(' · '))}` : '');
   }
   setInterval(renderActivity, 1000);
 
@@ -755,7 +763,17 @@
     }
   }
   composer.addEventListener('submit', e => { e.preventDefault(); say(); });
-  sayBox.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); say(); } });
+  // Enter sends; Ctrl+Enter (or Shift+Enter) makes a new line. On a touch
+  // screen there is no Ctrl, so Enter makes the new line and Send sends.
+  const touchScreen = matchMedia('(pointer: coarse)').matches;
+  sayBox.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;  // mid-composition (IME)
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault(); insertAtCaret('\n'); sayBox.dispatchEvent(new Event('input')); return;
+    }
+    if (e.shiftKey || e.altKey || touchScreen) return;  // the textarea's own new line
+    e.preventDefault(); say();
+  });
 
   nav.addEventListener('click', e => {
     const a = e.target.closest('a.motion'); if (!a) return;
