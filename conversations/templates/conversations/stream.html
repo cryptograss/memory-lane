@@ -283,7 +283,7 @@
                 typeLabel = '💭 thinking';
             } else if (msg.message_type === 'ToolUse') {
                 typeClass = 'tool-use';
-                typeLabel = '🔧 ' + (msg.tool_name || 'tool');
+                typeLabel = '🔧 ' + escapeHtml(msg.tool_name || 'tool');
             } else if (msg.message_type === 'ToolResult') {
                 typeClass = 'tool-result';
                 typeLabel = '📋 result' + (msg.is_error ? ' ❌' : '');
@@ -298,13 +298,14 @@
             // Only show text messages fully; collapse all tool uses/results
             const isToolMessage = msg.message_type === 'ToolUse' || msg.message_type === 'ToolResult';
 
-            const shortId = msg.id.substring(0, 8);
+            const shortId = escapeHtml(String(msg.id).substring(0, 8));
+            const sender = escapeHtml(msg.sender);
 
             if (isToolMessage) {
                 div.innerHTML = `
                     <div class="message-header">
                         <span>
-                            <span class="sender ${msg.sender}">${msg.sender}</span>
+                            <span class="sender ${sender}">${sender}</span>
                             <span class="message-type">${typeLabel}</span>
                             <span class="message-id">${shortId}</span>
                         </span>
@@ -317,7 +318,7 @@
                 div.innerHTML = `
                     <div class="message-header">
                         <span>
-                            <span class="sender ${msg.sender}">${msg.sender}</span>
+                            <span class="sender ${sender}">${sender}</span>
                             <span class="message-type">${typeLabel}</span>
                             <span class="message-id">${shortId}</span>
                         </span>
@@ -332,10 +333,17 @@
             return div;
         }
 
+        // Escapes for both element content and quoted attribute values.  The
+        // old textContent->innerHTML trick left " and ' alone, so a value
+        // placed inside title="..." or class="..." could break out of it.
         function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+            if (text === null || text === undefined) return '';
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         function expandMessage(btn) {
