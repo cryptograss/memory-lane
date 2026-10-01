@@ -58,6 +58,19 @@ def quiet_reason(text):
     return {'reason': (match.group(2) or '').strip(), 'by': match.group(1) or ''}
 
 
+def thought_text(content):
+    """What a thinking block says, if the harness kept any of it ('' if not).
+
+    Claude Code often stores thinking with its text emptied, but sometimes
+    keeps a short note -- the dimmed lines a terminal shows between tool
+    calls. Those are part of how the agent got where it did.
+    """
+    if not isinstance(content, list):
+        return ''
+    parts = [b.get('thinking', '') for b in content if isinstance(b, dict) and b.get('type') == 'thinking']
+    return '\n'.join(p for p in parts if p).strip()
+
+
 def is_wrapper(text):
     return text.startswith(_WRAPPER_PREFIXES)
 
@@ -353,7 +366,8 @@ def timeline(motion, after=None, before=None, limit=None):
     """Readable turns and the agent's tool steps, oldest first.
 
     Yields ('turn', message, text), ('quiet', message, reason) for an
-    agent's choice not to speak, and ('step', message, None). A step is
+    agent's choice not to speak, ('thought', message, text) for thinking the
+    harness kept, and ('step', message, None). A step is
     one tool call; its result is fetched on demand (step_detail), so the
     thread stays light. `limit` keeps the newest that many items -- a first
     load, or a page further back with `before`.
@@ -361,7 +375,7 @@ def timeline(motion, after=None, before=None, limit=None):
     from conversations.models import ThinkingEntity
 
     speakers = set(ThinkingEntity.objects.values_list('name', flat=True))
-    rows = motion.messages.filter(is_sidechain=False).select_related('sender', 'tooluse')
+    rows = motion.messages.filter(is_sidechain=False).select_related('sender', 'tooluse', 'thought')
     if after is not None:
         rows = rows.filter(created_at__gt=after.created_at)
     if before is not None:
@@ -372,6 +386,9 @@ def timeline(motion, after=None, before=None, limit=None):
             return None
         if hasattr(msg, 'tooluse'):
             return ('step', msg, None)
+        if hasattr(msg, 'thought'):
+            thinking = thought_text(msg.content)
+            return ('thought', msg, thinking) if thinking else None
         text = prose(msg.content)
         if not text:
             return None

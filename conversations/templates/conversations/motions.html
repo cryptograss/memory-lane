@@ -167,6 +167,11 @@
   .quiet .dot.screened:hover, .quiet .dot.screened.on { background: transparent; border-color: var(--agent); }
   .quiet .why { flex-basis: 100%; font-size: 13px; color: var(--muted); font-style: italic; }
   body.only-mine .quiet { display: none; }
+  /* Thinking the harness kept: dim, as a terminal shows it between tool calls. */
+  .thought { margin: 2px 0 4px -10px; padding: 0 13px; font-size: 13.5px; font-style: italic; color: var(--muted);
+             white-space: pre-wrap; }
+  .thought::before { content: '∴ '; font-style: normal; }
+  body.only-mine .thought { display: none; }
   /* Images: in turns, as thumbnails on a run of work, inside a step. */
   .turn .body a.img { display: inline-block; margin: 4px 0; }
   .turn .body img { display: block; max-width: 100%; max-height: 420px; border-radius: 6px; border: 1px solid var(--line); }
@@ -439,6 +444,15 @@
     } catch (err) { box.textContent = 'could not load this step'; }
   });
 
+  function addThought(t, container) {
+    const el = document.createElement('div');
+    el.className = 'thought';
+    el.title = `${t.sender} thinking · ${stamp(t.created_at)}`;
+    el.textContent = t.text;
+    container.appendChild(el);
+    prev = { sender: t.sender, at: new Date(t.created_at).getTime() };
+  }
+
   function addQuiet(q, container) {
     let row = container.lastElementChild;
     if (!row || !row.classList.contains('quiet')) {
@@ -469,13 +483,15 @@
   // Turns, steps and dots from one response, in the order they happened.
   function itemsOf(data) {
     return [...(data.turns || []).map(t => ({ kind: 'turn', v: t })), ...(data.steps || []).map(s => ({ kind: 'step', v: s })),
-            ...(data.quiet || []).map(q => ({ kind: 'quiet', v: q }))]
+            ...(data.quiet || []).map(q => ({ kind: 'quiet', v: q })),
+            ...(data.thoughts || []).map(t => ({ kind: 'thought', v: t }))]
       .sort((a, b) => a.v.created_at < b.v.created_at ? -1 : a.v.created_at > b.v.created_at ? 1 : 0);
   }
   function renderItems(items, container, isNew) {
     for (const it of items) {
       if (it.kind === 'turn') container.appendChild(turnEl(it.v, isNew));
       else if (it.kind === 'quiet') addQuiet(it.v, container);
+      else if (it.kind === 'thought') addThought(it.v, container);
       else addStep(it.v, container);
     }
   }

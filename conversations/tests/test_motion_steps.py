@@ -45,6 +45,15 @@ class StepsTest(TestCase):
         self.assertEqual([t['sender'] for t in body['turns']], ['justin'])  # the poller reads turns as answers
         self.assertEqual([q['reason'] for q in body['quiet']], ['', 'they are sorting out the gig'])
 
+    def test_thinking_the_harness_kept_shows_and_empty_thinking_doesnt(self):
+        from conversations.models import Thought
+        self.add(self.magent, [{'type': 'thinking', 'thinking': 'That resonates. Planning the work.',
+                                'signature': 'x'}], model=Thought, signature='x')
+        self.add(self.magent, [{'type': 'thinking', 'thinking': '', 'signature': 'y'}], model=Thought, signature='y')
+        body = self.get()
+        self.assertEqual([t['text'] for t in body['thoughts']], ['That resonates. Planning the work.'])
+        self.assertEqual(body['turns'], [])  # a thought is never an answer
+
     def test_a_step_opens_to_its_input_and_result(self):
         step = self.add(self.magent, {'command': 'false'}, model=ToolUse, tool_name='Bash', tool_id='t9')
         self.add(self.tool, 'exit 1', model=ToolResult, tool_use_id='t9', is_error=True)
