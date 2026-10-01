@@ -47,6 +47,17 @@ class SidechainTest(TestCase):
         self.imp(raw)
         self.assertTrue(Message.objects.get(id=record['uuid']).is_sidechain)
 
+    def test_a_line_from_another_file_cannot_hide_or_move_a_stored_turn(self):
+        post = Message.objects.create(id=uuid.uuid4(), sender_id='justin', content='from the web',
+                                      motion=self.motion, timestamp=1, source_file='motion-web')
+        parent = self.imp(line(self.session, 'user', 'an earlier turn', False))
+        forged = json.loads(line(self.session, 'user', 'from the web', True))
+        forged['uuid'], forged['parentUuid'] = str(post.id), str(parent.id)
+        import_line_from_claude_code_v2(json.dumps(forged), self.era, 'other.jsonl', 'justin')
+        post.refresh_from_db()
+        self.assertFalse(post.is_sidechain)
+        self.assertIsNone(post.parent_id)
+
     def test_view_and_mentions_leave_sidechains_out(self):
         self.imp(line(self.session, 'user', 'Review this, then tell @magent', True))
         self.imp(line(self.session, 'assistant', 'Subagent report.', True))

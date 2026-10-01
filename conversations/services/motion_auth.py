@@ -47,6 +47,22 @@ def new_challenge():
     return signing.dumps({'nonce': secrets.token_hex(16)}, salt=NAMESPACE)
 
 
+def signed_message(challenge, origin):
+    """What a client signs: the challenge, bound to the origin it was talking to.
+
+    Signing the bare challenge let any server a client was pointed at (a
+    tampered preview, say) fetch a challenge from production, have the
+    client sign it, and relay the signature: a device in someone else's
+    name. Bound to the origin, a relayed signature names the wrong server.
+    tools/motion_login.py builds the same string.
+    """
+    return f'{NAMESPACE} login\n{origin.lower().rstrip("/")}\n{challenge}'
+
+
+def origin_of(request):
+    return f'{request.scheme}://{request.get_host()}'
+
+
 def challenge_is_fresh(challenge):
     try:
         signing.loads(challenge, salt=NAMESPACE, max_age=CHALLENGE_MAX_AGE)
@@ -59,8 +75,8 @@ def allowed_signers_path():
     return getattr(settings, 'MOTION_ALLOWED_SIGNERS', '') or os.environ.get('MOTION_ALLOWED_SIGNERS', '')
 
 
-def signature_is_valid(name, challenge, signature):
-    """True if `signature` over `challenge` was made by `name`'s listed key."""
+def signature_is_valid(name, message, signature):
+    """True if `signature` over `message` was made by `name`'s listed key."""
     path = allowed_signers_path()
     if not path or not os.path.exists(path):
         return False
@@ -70,7 +86,7 @@ def signature_is_valid(name, challenge, signature):
     try:
         result = subprocess.run(
             ['ssh-keygen', '-Y', 'verify', '-f', path, '-I', name, '-n', NAMESPACE, '-s', sig_path],
-            input=challenge, capture_output=True, text=True, timeout=10)
+            input=message, capture_output=True, text=True, timeout=10)
         return result.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
@@ -78,8 +94,8 @@ def signature_is_valid(name, challenge, signature):
         os.unlink(sig_path)
 
 
-def signer_of(challenge, signature):
-    """The name whose listed key made `signature` over `challenge`, or None.
+def signer_of(message, signature):
+    """The name whose listed key made `signature` over `message`, or None.
 
     The key says who you are: allowed_signers maps each key to a person, as
     hunter's inventory does, so nobody has to type their name.
@@ -99,8 +115,8 @@ def signer_of(challenge, signature):
     finally:
         os.unlink(sig_path)
     names = found.stdout.split() if found.returncode == 0 else []
-    # find-principals only matches the key; verify proves it signed this challenge.
-    if len(names) == 1 and signature_is_valid(names[0], challenge, signature):
+    # find-principals only matches the key; verify proves it signed this message.
+    if len(names) == 1 and signature_is_valid(names[0], message, signature):
         return names[0]
     return None
 
