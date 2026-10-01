@@ -197,6 +197,15 @@ class ForkDedupeTest(TestCase):
         fork.write_text('{"type": "mode"}\n' + '\n'.join(jline(u, 'B') for u in ('a1', 'a2', 'a3', 'a4')) + '\n')
         self.assertEqual(self.sent_lines(self.watcher, fork), [None, 'a1', 'a4'])
 
+    def test_the_claim_line_is_a_turn_not_a_compaction_boundary(self):
+        original = self.dir / 'a.jsonl'
+        boundary = json.dumps({'type': 'system', 'subtype': 'compact_boundary', 'uuid': U('a0'), 'sessionId': 'A'})
+        original.write_text(boundary + '\n' + '\n'.join(jline(u, 'A') for u in ('a1', 'a2')) + '\n')
+        self.sent_lines(self.watcher, original)
+        fork = self.dir / 'b.jsonl'
+        fork.write_text(boundary.replace('"A"', '"B"') + '\n' + '\n'.join(jline(u, 'B') for u in ('a1', 'a2', 'a3')) + '\n')
+        self.assertEqual(self.sent_lines(self.watcher, fork), ['a1', 'a3'])
+
     def test_history_on_disk_at_startup_counts_as_sent(self):
         (self.dir / 'a.jsonl').write_text('\n'.join(jline(u, 'A') for u in ('a1', 'a2')) + '\n')
         with mock.patch.dict(os.environ, {}, clear=False):

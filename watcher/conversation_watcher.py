@@ -243,8 +243,20 @@ class ConversationWatcher(FileSystemEventHandler):
             return False
         if str(filepath) in self.anchored:
             return True
+        # The one repeat sent is the claim line, so it must be one the
+        # importer stores: a user or assistant line, not (say) a compaction
+        # boundary, which would claim nothing.
+        if not self.is_turn(line):
+            return True
         self.anchored.add(str(filepath))
         return False
+
+    @staticmethod
+    def is_turn(line):
+        try:
+            return json.loads(line).get('type') in ('user', 'assistant')
+        except (ValueError, AttributeError):
+            return False
 
     def import_line(self, line, filename):
         """
