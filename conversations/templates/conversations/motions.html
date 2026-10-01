@@ -123,7 +123,7 @@
 <body>
 <header>
   <span class="brand">Motions<small>memory-lane</small></span>
-  {% if preview_label %}<span class="preview" title="A branch's code against the live record, read-only">{{ preview_label }}</span>{% endif %}
+  {% if preview_label %}<span class="preview" title="A branch's code, not production; see the label for which record">{{ preview_label }}</span>{% endif %}
   <span class="me">viewing as <select id="me"><option value="">nobody</option></select></span>
   <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
   <span class="auth" id="auth"></span>
