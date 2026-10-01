@@ -437,3 +437,221 @@ class RealProcessTest(TestCase):
         with self.assertRaises(RuntimeError):
             self.waker('sleep 30', timeout=1).wake('s-old', 'prompt')
         self.assertLess(time.time() - start, 10)
+
+
+class ConsiderAPI:
+    """One Motion, m26, as the pulse and the turns endpoint would show it."""
+
+    def __init__(self, turns=(), typing=(), activity=None, human_at=None):
+        self.turns = list(turns)
+        self.typing, self.activity = list(typing), activity
+        self.human_at = human_at
+        self.quiets = []
+
+    def add(self, t):
+        self.turns.append(t)
+
+    def pulse(self):
+        said = self.turns
+        web = [t for t in said if t.get('via') == 'web']
+        humans = [t for t in said if t.get('is_human')]
+        brief = lambda t: t and {'id': t['id'], 'created_at': t['created_at'], 'sender': t['sender']}
+        last_human = brief(humans[-1]) if humans else None
+        if self.human_at:
+            last_human = {'id': 'h', 'created_at': self.human_at, 'sender': 'justin'}
+        return [{'slug': 'm26', 'newest': brief(said[-1]) if said else None,
+                 'last_web_post': brief(web[-1]) if web else None, 'last_human': last_human,
+                 'typing': self.typing, 'activity': self.activity}]
+
+    def recent(self, slug, limit=40):
+        return {'motion': {'title': 'M26', 'description': 'testing'}, 'turns': self.turns[-limit:]}
+
+    def quiet(self, slug, reason, by='screen'):
+        self.quiets.append((slug, reason, by))
+        return True
+
+    def sessions(self, slug, sender):
+        return ['s-local']
+
+    def mentions(self, agent, since=None):
+        return []
+
+    def turns_after(self, slug, message_id):
+        return []
+
+
+def post(id, minute, text='what time do we load the bus?', via='web', sender='skyler', mentions=()):
+    return {'id': id, 'sender': sender, 'is_human': True, 'via': via, 'mentions': list(mentions),
+            'created_at': (T0 + timedelta(minutes=minute)).isoformat(), 'text': text}
+
+
+class FakeScreen:
+    def __init__(self, verdict='pass', reason='might be for magent'):
+        self.verdict, self.reason, self.prompts = verdict, reason, []
+
+    def __call__(self, prompt):
+        self.prompts.append(prompt)
+        return self.verdict, self.reason, 0.004
+
+
+class ConsiderLoopTest(TestCase):
+
+    def make(self, api, screen=None, waker=None, **kwargs):
+        self.clock = [T0]
+        self.waker = waker or FakeWaker(reply='<silent>they have it handled</silent>')
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        poller = MotionPoller(api, self.waker, state_path=state, now=lambda: self.clock[0],
+                              screen=screen, **kwargs)
+        poller.consider_once()  # first sight: nothing before now is owed a thought
+        return poller
+
+    def at(self, minutes=0, seconds=0):
+        self.clock[0] = T0 + timedelta(minutes=minutes, seconds=seconds)
+
+    def test_nothing_said_before_the_runner_looked_is_owed_a_thought(self):
+        api = ConsiderAPI([post('a', -5)])
+        poller = self.make(api, FakeScreen())
+        self.at(seconds=30)
+        self.assertEqual(poller.consider_once(), [])
+
+    def test_new_posts_wait_for_a_pause_and_for_nobody_typing(self):
+        api = ConsiderAPI()
+        screen = FakeScreen('dismiss', 'two people sorting out the bus')
+        poller = self.make(api, screen)
+        api.add(post('a', 1))
+        self.at(minutes=1, seconds=5)
+        self.assertEqual(poller.consider_once(), [])  # still within the pause
+        api.typing = ['skyler']
+        self.at(minutes=1, seconds=30)
+        self.assertEqual(poller.consider_once(), [])  # someone's typing
+        api.typing = []
+        self.assertEqual(poller.consider_once(), [('m26', 'screened')])
+        self.assertEqual(api.quiets, [('m26', 'two people sorting out the bus', 'screen')])
+        self.assertEqual(self.waker.woken, [])  # the agent itself was never woken
+        self.assertIn('► [skyler', screen.prompts[0])
+        self.assertEqual(poller.consider_once(), [])  # considered once, not again
+
+    def test_what_the_screen_passes_wakes_the_agent_to_consider(self):
+        api = ConsiderAPI()
+        poller = self.make(api, FakeScreen('pass'))
+        api.add(post('a', 1, text='does anyone remember who played fiddle at Wickenburg?'))
+        self.at(minutes=2)
+        self.assertEqual(poller.consider_once(), [('m26', 'silent')])
+        session, prompt = self.waker.woken[0]
+        self.assertIn('reason="consider"', prompt)
+        self.assertIn('Nobody asked you anything', prompt)
+        self.assertIn('► [skyler', prompt)
+        self.assertEqual(self.waker.options, {'effort': 'medium', 'budget': 1.0})
+
+    def test_speaking_up_is_an_outcome_too(self):
+        api = ConsiderAPI()
+        poller = self.make(api, FakeScreen('pass'), waker=FakeWaker(reply='It was Kuba, I think.'))
+        api.add(post('a', 1))
+        self.at(minutes=2)
+        self.assertEqual(poller.consider_once(), [('m26', 'spoke')])
+
+    def test_a_mention_is_left_to_the_mention_path(self):
+        api = ConsiderAPI()
+        screen = FakeScreen()
+        poller = self.make(api, screen)
+        api.add(post('a', 1, text='@magent look', mentions=['magent']))
+        self.at(minutes=2)
+        self.assertEqual(poller.consider_once(), [])
+        self.assertEqual(screen.prompts, [])
+
+    def test_posts_typed_into_a_terminal_have_a_session_listening(self):
+        api = ConsiderAPI()
+        poller = self.make(api, FakeScreen())
+        api.add(post('a', 1, via='session'))
+        self.at(minutes=2)
+        self.assertEqual(poller.consider_once(), [])
+
+    def test_nothing_while_the_agent_is_already_at_work_there(self):
+        api = ConsiderAPI(activity={'agent': 'magent', 'doing': 'thinking'})
+        poller = self.make(api, FakeScreen())
+        api.add(post('a', 1))
+        self.at(minutes=2)
+        self.assertEqual(poller.consider_once(), [])
+
+    def test_a_long_quiet_is_considered_by_the_agent_itself_then_waits_twice_as_long(self):
+        api = ConsiderAPI([post('a', -10)], human_at=(T0 - timedelta(minutes=10)).isoformat())
+        screen = FakeScreen()
+        poller = self.make(api, screen)
+        self.at(minutes=49)
+        self.assertEqual(poller.consider_once(), [])
+        self.at(minutes=51)
+        self.assertEqual(poller.consider_once(), [('m26', 'silent')])
+        self.assertIn('reason="quiet"', self.waker.woken[0][1])
+        self.assertEqual(screen.prompts, [])  # wondering is the agent's own business
+        self.at(minutes=51 + 99)
+        self.assertEqual(poller.consider_once(), [])
+        self.at(minutes=51 + 101)
+        self.assertEqual(poller.consider_once(), [('m26', 'silent')])  # after 100, not 50
+
+    def test_a_person_speaking_resets_the_wait(self):
+        api = ConsiderAPI([post('a', -10)], human_at=(T0 - timedelta(minutes=10)).isoformat())
+        poller = self.make(api, FakeScreen('dismiss'))
+        self.at(minutes=51)
+        poller.consider_once()  # first long quiet: silent, next wait 100 min
+        api.add(post('b', 60))
+        api.human_at = None
+        self.at(minutes=61)
+        poller.consider_once()  # the post: screened; the quiet counts from the post, at 60
+        self.at(minutes=60 + 49)
+        self.assertEqual(poller.consider_once(), [])
+        self.at(minutes=60 + 51)
+        self.assertEqual(poller.consider_once(), [('m26', 'silent')])  # 50 again, not 100
+
+    def test_a_motion_nobody_has_spoken_in_for_two_weeks_is_left_to_rest(self):
+        api = ConsiderAPI([post('a', -30 * 24 * 60)])
+        poller = self.make(api, FakeScreen())
+        self.at(minutes=500)
+        self.assertEqual(poller.consider_once(), [])
+
+    def test_budgets_bound_it(self):
+        api = ConsiderAPI()
+        poller = self.make(api, FakeScreen('pass'), considers_per_hour=1)
+        api.add(post('a', 1))
+        self.at(minutes=2)
+        self.assertEqual(poller.consider_once(), [('m26', 'silent')])
+        api.add(post('b', 3))
+        self.at(minutes=4)
+        self.assertEqual(poller.consider_once(), [('m26', 'over budget')])
+
+        api = ConsiderAPI()
+        poller = self.make(api, FakeScreen('pass'), consider_usd_per_day=0.001)
+        api.add(post('a', 1))
+        self.at(minutes=2)
+        self.assertEqual(poller.consider_once(), [('m26', 'silent')])  # the screen spent $0.004
+        api.add(post('b', 3))
+        self.at(minutes=4)
+        self.assertEqual(poller.consider_once(), [('m26', 'over budget')])
+
+    def test_turned_off_it_never_looks(self):
+        api = ConsiderAPI()
+        poller = self.make(api, FakeScreen(), consider=False)
+        api.add(post('a', 1))
+        self.at(minutes=2)
+        self.assertEqual(poller.consider_once(), [])
+
+
+class ScreenTest(TestCase):
+
+    def run_screen(self, stdout):
+        from unittest import mock
+        from poller.motion_poller import ClaudeCodeScreen
+        screen = ClaudeCodeScreen()
+        with mock.patch('subprocess.run', return_value=mock.Mock(stdout=stdout)) as run:
+            verdict = screen('prompt')
+        return verdict, run.call_args[0][0]
+
+    def test_a_verdict_and_its_reason_and_cost(self):
+        verdict, cmd = self.run_screen(json.dumps({'result': 'DISMISS. Routine bus logistics.', 'total_cost_usd': 0.004}))
+        self.assertEqual(verdict, ('dismiss', 'Routine bus logistics.', 0.004))
+        self.assertIn('--no-session-persistence', cmd)
+        self.assertEqual(cmd[cmd.index('--tools') + 1], '')
+        self.assertEqual(cmd[cmd.index('--model') + 1], 'haiku')
+
+    def test_in_doubt_or_in_trouble_the_agent_looks(self):
+        self.assertEqual(self.run_screen(json.dumps({'result': 'Hmm, maybe?'}))[0][0], 'pass')
+        self.assertEqual(self.run_screen('not json')[0][0], 'pass')

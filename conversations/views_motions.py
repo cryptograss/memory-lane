@@ -65,6 +65,8 @@ def api_motion_turns(request, slug):
     # A first load, or a page back, is the newest PAGE items; a poll is
     # everything since.
     limit = None if after is not None else PAGE
+    if request.GET.get('limit', '').isdigit():  # e.g. the runner wanting recent context only
+        limit = max(1, min(int(request.GET['limit']), PAGE))
 
     names = known_names()
     turns_out, step_msgs, quiet_out = [], [], []
@@ -73,7 +75,7 @@ def api_motion_turns(request, slug):
             turns_out.append(turn_payload(msg, text, names))
         elif kind == 'quiet':
             quiet_out.append({'id': str(msg.id), 'sender': msg.sender_id,
-                              'created_at': msg.created_at.isoformat(), 'reason': text})
+                              'created_at': msg.created_at.isoformat(), **text})
         else:
             step_msgs.append(msg)
     images = step_images(step_msgs)
@@ -120,6 +122,36 @@ def media_file(request, sha256, ext):
     response['X-Content-Type-Options'] = 'nosniff'
     response['Content-Security-Policy'] = "default-src 'none'; sandbox"
     return response
+
+
+@require_GET
+def api_pulse(request):
+    """Every Motion at a glance, for a runner looking every few seconds.
+
+    Per Motion: its newest message, newest web post and newest word from a
+    person; who is typing; what an agent is doing. All of it is readable
+    elsewhere already -- this only saves asking Motion by Motion.
+    """
+    from django.utils import timezone
+
+    def brief(message):
+        return message and {'id': str(message['id']), 'created_at': message['created_at'].isoformat(),
+                            'sender': message['sender_id']}
+
+    humans = set(ThinkingEntity.objects.filter(is_biological_human=True).values_list('name', flat=True))
+    motions = []
+    for motion in Motion.objects.all():
+        said = motion.messages.filter(is_sidechain=False).exclude(sender_id__in=MACHINERY_SENDERS)
+        fields = ('id', 'created_at', 'sender_id')
+        motions.append({
+            'slug': motion.slug,
+            'newest': brief(said.order_by('-created_at').values(*fields).first()),
+            'last_web_post': brief(said.filter(source_file='motion-web').order_by('-created_at').values(*fields).first()),
+            'last_human': brief(said.filter(sender_id__in=humans).order_by('-created_at').values(*fields).first()),
+            'typing': typing_in(motion.slug),
+            'activity': activity(motion),
+        })
+    return JsonResponse({'now': timezone.now().isoformat(), 'motions': motions})
 
 
 @require_GET

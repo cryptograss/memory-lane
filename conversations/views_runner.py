@@ -150,3 +150,42 @@ def api_stream(request, slug):
             finished = True
 
     return JsonResponse({'imported': imported, 'skipped': skipped, 'errors': errors[:10], 'finished': finished})
+
+
+@csrf_exempt  # authenticated by the runner's key
+@require_POST
+def api_quiet(request, slug):
+    """Record that the runner's screen let a moment pass for its agent.
+
+    Body: {"reason": "a few words", "by": "screen"}. Shown as a dot, like the
+    agent's own silences, but marked as the screen's: the record never
+    passes a reflex off as the agent's considered judgment. No session: a
+    screen is not a turn anyone could resume.
+    """
+    import re
+    import time
+    from .services.redaction import redact
+
+    if not getattr(settings, 'MOTION_RUNNER_KEYS', {}):
+        return JsonResponse({'error': 'no runners are configured'}, status=503)
+    agent = runner_agent(request)
+    if agent is None:
+        return JsonResponse({'error': 'unauthorized'}, status=401)
+    motion = get_object_or_404(Motion, slug=slug)
+    try:
+        body = json.loads(request.body)
+        reason = str(body.get('reason', ''))
+        by = str(body.get('by', 'screen'))
+    except (ValueError, AttributeError):
+        return JsonResponse({'error': 'expected {"reason": ..., "by": "screen"}'}, status=400)
+    if not re.fullmatch(r'\w{1,20}', by):
+        return JsonResponse({'error': 'by: a single word'}, status=400)
+    reason = redact(re.sub(r'[<>]', '', reason).strip()[:300])[0]
+    from .models import ThinkingEntity
+    sender = ThinkingEntity.objects.filter(name=agent).first()
+    if sender is None:
+        return JsonResponse({'error': f'no entity {agent}'}, status=400)
+    message = Message.objects.create(
+        id=uuid.uuid4(), sender=sender, motion=motion, content=f'<silent by="{by}">{reason}</silent>',
+        timestamp=int(time.time() * 1000), source_file=f'ingest-{SOURCE}', stop_reason='end_turn')
+    return JsonResponse({'id': str(message.id)}, status=201)

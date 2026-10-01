@@ -162,6 +162,9 @@
   .quiet .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); border: 1px solid #d6cfc2;
                 cursor: pointer; padding: 0; }
   .quiet .dot:hover, .quiet .dot.on { background: var(--agent); border-color: var(--agent); }
+  /* The runner's quick screen let this pass; the agent itself never looked. */
+  .quiet .dot.screened { background: transparent; border-style: dashed; }
+  .quiet .dot.screened:hover, .quiet .dot.screened.on { background: transparent; border-color: var(--agent); }
   .quiet .why { flex-basis: 100%; font-size: 13px; color: var(--muted); font-style: italic; }
   body.only-mine .quiet { display: none; }
   /* Images: in turns, as thumbnails on a run of work, inside a step. */
@@ -443,8 +446,10 @@
       container.appendChild(row);
     }
     const dot = document.createElement('button');
-    dot.type = 'button'; dot.className = 'dot';
-    dot.title = `${q.sender} chose not to speak · ${stamp(q.created_at)}`;
+    dot.type = 'button'; dot.className = 'dot' + (q.by === 'screen' ? ' screened' : '');
+    dot.title = q.by === 'screen'
+      ? `screened for ${q.sender}: let pass without waking it · ${stamp(q.created_at)}`
+      : `${q.sender} chose not to speak · ${stamp(q.created_at)}`;
     dot.dataset.why = q.reason || '(no reason given)';
     row.appendChild(dot);
   }
