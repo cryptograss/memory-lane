@@ -61,6 +61,49 @@ class ActivityTest(TestCase):
             self.add(self.magent, 299 - i, {}, model=ToolUse, tool_name='Bash', tool_id=f't{i}', stop_reason='tool_use')
         self.assertEqual(self.now()['since'], NOW - 300)
 
+    def test_background_tasks_show_until_they_end(self):
+        from conversations.services.motion_view import background_tasks
+        session = uuid.uuid4()
+        self.add(self.magent, 60, {'command': 'bash tools/preview.sh', 'description': 'Run the preview'},
+                 model=ToolUse, tool_name='Bash', tool_id='tb1', stop_reason='tool_use', session_id=session)
+        self.add(self.tool, 59, 'Command running in background with ID: bx1. Output is being written to: /tmp/x',
+                 model=ToolResult, tool_use_id='tb1', session_id=session)
+        self.add(self.magent, 50, {'description': 'Review it', 'prompt': 'review'},
+                 model=ToolUse, tool_name='Agent', tool_id='tb2', stop_reason='tool_use', session_id=session)
+        self.add(self.tool, 49, 'Async agent launched successfully.\nagentId: ag7 (internal)', model=ToolResult,
+                 tool_use_id='tb2', session_id=session)
+        running = background_tasks(self.motion, now=NOW)
+        self.assertEqual([(t['id'], t['kind'], t['label']) for t in running],
+                         [('bx1', 'command', 'Run the preview'), ('ag7', 'helper', 'Review it')])
+        self.add(self.justin, 10, '<task-notification>\n<task-id>ag7</task-id>\n<status>completed</status>')
+        self.assertEqual([t['id'] for t in background_tasks(self.motion, now=NOW)], ['bx1'])
+        # Output that merely quotes a start or an ending is neither.
+        self.add(self.tool, 5, 'rows: "Command running in background with ID: zz9" and '
+                                '<task-id>bx1</task-id><status>stopped</status>', model=ToolResult,
+                 tool_use_id='tb3', session_id=session)
+        self.assertEqual([t['id'] for t in background_tasks(self.motion, now=NOW)], ['bx1'])
+
+    def test_a_queued_notice_that_a_task_finished_is_kept_and_ends_it(self):
+        import json
+        from conversations.models import Era
+        from conversations.services.motion_view import background_tasks
+        from importers_and_parsers.claude_code_v2 import import_line_from_claude_code_v2
+        session = uuid.uuid4()
+        self.motion.claim(session)
+        self.add(self.magent, 60, {'description': 'Dry run'}, model=ToolUse, tool_name='Bash', tool_id='tq1',
+                 stop_reason='tool_use', session_id=session)
+        self.add(self.tool, 59, 'Command running in background with ID: bq9. Output is being written to: /tmp/x',
+                 model=ToolResult, tool_use_id='tq1', session_id=session)
+        line = json.dumps({'type': 'queue-operation', 'operation': 'enqueue', 'timestamp': '2026-10-01T15:36:06.952Z',
+                           'sessionId': str(session),
+                           'content': '<task-notification>\n<task-id>bq9</task-id>\n<status>completed</status>'})
+        era = Era.objects.create(name='e')
+        first = import_line_from_claude_code_v2(line, era, 'a.jsonl', 'justin')
+        again = import_line_from_claude_code_v2(line, era, 'a.jsonl', 'justin')  # a replay
+        self.assertEqual((first[1], again[1]), (True, False))
+        self.assertEqual(first[0].motion, self.motion)
+        self.assertEqual(background_tasks(self.motion, now=NOW), [])
+
     def test_end_turn_is_the_end(self):
         self.add(self.justin, 40, 'go')
         self.add(self.magent, 5, [{'type': 'text', 'text': 'done'}], stop_reason='end_turn')

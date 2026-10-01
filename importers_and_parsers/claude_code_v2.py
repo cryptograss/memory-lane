@@ -124,6 +124,39 @@ def handle_summary(event, filename):
         return summary, created
 
 
+def task_notification(line):
+    """Store a background task's notice -- it finished, failed, was stopped --
+    as a system message in its session's Motion; (message, created) or None.
+
+    Claude Code queues these as queue-operation lines, which carry no uuid,
+    so the id is derived from what the line says: a replay finds the same
+    row. The Motion's list of running tasks reads them.
+    """
+    if '"queue-operation"' not in line or 'task-notification' not in line:
+        return None
+    try:
+        event = json.loads(line)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    content = event.get('content')
+    if (event.get('type') != 'queue-operation' or event.get('operation') != 'enqueue'
+            or not isinstance(content, str) or '<task-notification>' not in content):
+        return None
+    session_id = event.get('sessionId')
+    msg_uuid = uuid_lib.uuid5(uuid_lib.NAMESPACE_URL, f"task-notification:{session_id}:{event.get('timestamp')}:{content}")
+    timestamp = None
+    if event.get('timestamp'):
+        timestamp = int(datetime.fromisoformat(event['timestamp'].replace('Z', '+00:00')).timestamp() * 1000)
+    return Message.objects.get_or_create(id=msg_uuid, defaults={
+        'sender': get_or_create_participant('system', 'system'),
+        'content': content,
+        'timestamp': timestamp,
+        'session_id': session_id,
+        'motion': MotionSession.motion_for(session_id),
+        'source_file': 'task-notification',
+    })
+
+
 def model_and_usage(event):
     """model_backend, effort and token counts of an assistant line (None elsewhere)."""
     message = event.get('message') if isinstance(event.get('message'), dict) else {}
@@ -233,6 +266,10 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
         # line: a pasted picture or a screenshot is part of the conversation,
         # and base64 in the record's text is not.
         line = lift_images(line, user)
+
+        notice = task_notification(line)
+        if notice is not None:
+            return notice
 
         event_type, event = Message.detect_event_type_claude_code_v2(line)
 

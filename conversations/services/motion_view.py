@@ -585,6 +585,64 @@ def activity(motion, now=None):
     return {'agent': agent, 'doing': _doing(newest), 'since': _when(start), **{k: v for k, v in how.items() if v}}
 
 
+# --- background tasks an agent is supervising ------------------------------
+
+_TASK_STARTED = re.compile(r'Command running in background with ID: (\w+)|Async agent launched successfully.*?agentId: (\w+)', re.S)
+_TASK_ENDED = re.compile(r'<task-id>(\w+)</task-id>.*?<status>(\w+)</status>', re.S)
+TASK_ENDINGS = {'completed', 'failed', 'stopped', 'killed', 'error', 'cancelled'}
+TASK_HORIZON = 24 * 3600  # a task older than this with no word is presumed gone
+
+
+def background_tasks(motion, now=None):
+    """Commands and helpers an agent started in the background here and that
+    haven't ended, read from the record: the tool result that started each
+    one, and the <task-notification> that says it ended.
+    """
+    import json
+    import time
+    from datetime import datetime, timezone as tz
+    from conversations.models import ToolResult, ToolUse
+
+    now = now or time.time()
+    since = datetime.fromtimestamp(now - TASK_HORIZON, tz.utc)
+    rows = (motion.messages.filter(is_sidechain=False, created_at__gte=since)
+            .filter(models_q(content__icontains='in background with ID')
+                    | models_q(content__icontains='Async agent launched')
+                    | models_q(content__icontains='<task-id>'))
+            .order_by('created_at'))
+    started, ended = {}, set()
+    for msg in rows:
+        text = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
+        # Only a tool result that *is* a start message starts a task, and only
+        # a notification ends one: output that merely quotes them (a log, a
+        # query of this very table) is neither.
+        if not hasattr(msg, 'toolresult'):
+            for match in _TASK_ENDED.finditer(text):
+                if match.group(2).lower() in TASK_ENDINGS:
+                    ended.add(match.group(1))
+            continue
+        match = _TASK_STARTED.match(text.lstrip())
+        if not match:
+            continue
+        task_id = match.group(1) or match.group(2)
+        ended.discard(task_id)  # a helper resumed after it last finished
+        use = (ToolUse.objects.filter(tool_id=msg.toolresult.tool_use_id, session_id=msg.session_id)
+               .only('content', 'tool_name').first())
+        args = use.content if use is not None and isinstance(use.content, dict) else {}
+        started[task_id] = {
+            'id': task_id,
+            'kind': 'helper' if match.group(2) else 'command',
+            'label': (args.get('description') or args.get('command') or args.get('prompt') or task_id)[:120],
+            'since': _when(msg),
+        }
+    return [task for task_id, task in started.items() if task_id not in ended]
+
+
+def models_q(**kwargs):
+    from django.db.models import Q
+    return Q(**kwargs)
+
+
 def motion_payload(motion):
     from django.db.models import Max
     last = motion.messages.aggregate(last=Max('created_at'))['last']
