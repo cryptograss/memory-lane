@@ -298,6 +298,110 @@ def render_html(text, mentionable=()):
     return out
 
 
+def timeline(motion, after=None, before=None, limit=None):
+    """Readable turns and the agent's tool steps, oldest first.
+
+    Yields ('turn', message, text) and ('step', message, None). A step is
+    one tool call; its result is fetched on demand (step_detail), so the
+    thread stays light. `limit` keeps the newest that many items -- a first
+    load, or a page further back with `before`.
+    """
+    from conversations.models import ThinkingEntity
+
+    speakers = set(ThinkingEntity.objects.values_list('name', flat=True))
+    rows = motion.messages.filter(is_sidechain=False).select_related('sender', 'tooluse')
+    if after is not None:
+        rows = rows.filter(created_at__gt=after.created_at)
+    if before is not None:
+        rows = rows.filter(created_at__lt=before.created_at)
+
+    def item(msg):
+        if msg.sender_id in MACHINERY_SENDERS or msg.sender_id not in speakers:
+            return None
+        if hasattr(msg, 'tooluse'):
+            return ('step', msg, None)
+        text = prose(msg.content)
+        if not text or is_wrapper(text):
+            return None
+        return ('turn', msg, text)
+
+    if limit is None:
+        for msg in rows.order_by('created_at'):
+            found = item(msg)
+            if found:
+                yield found
+        return
+
+    # Newest first, in chunks, until there are enough.
+    found, last = [], None
+    while len(found) < limit:
+        chunk = rows.order_by('-created_at')
+        if last is not None:
+            chunk = chunk.filter(created_at__lt=last)
+        chunk = list(chunk[:500])
+        if not chunk:
+            break
+        last = chunk[-1].created_at
+        for msg in chunk:
+            got = item(msg)
+            if got:
+                found.append(got)
+                if len(found) == limit:
+                    break
+    yield from reversed(found)
+
+
+_STEP_WORDS = {
+    'Bash': 'ran', 'Read': 'read', 'Edit': 'edited', 'Write': 'wrote', 'Grep': 'searched', 'Glob': 'searched',
+    'WebFetch': 'fetched', 'WebSearch': 'searched the web', 'Agent': 'asked a helper', 'Task': 'asked a helper',
+    'ToolSearch': 'looked up tools', 'Skill': 'read a skill', 'TodoWrite': 'planned', 'NotebookEdit': 'edited',
+    'TaskCreate': 'tracked', 'TaskUpdate': 'tracked', 'TaskList': 'tracked', 'SendMessage': 'messaged a helper',
+    'SendUserFile': 'sent a file', 'AskUserQuestion': 'asked',
+}
+
+
+def step_summary(tool, args):
+    """A line saying what one tool call was for."""
+    if not isinstance(args, dict):
+        return ''
+    for key in ('description', 'file_path', 'path', 'pattern', 'url', 'query', 'subject', 'prompt', 'command'):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().splitlines()[0][:160]
+    for value in args.values():
+        if isinstance(value, str) and value.strip():
+            return value.strip().splitlines()[0][:160]
+    return ''
+
+
+def step_payload(msg):
+    tool = msg.tooluse.tool_name
+    return {
+        'id': str(msg.id),
+        'sender': msg.sender_id,
+        'created_at': msg.created_at.isoformat(),
+        'tool': tool,
+        'verb': _STEP_WORDS.get(tool, 'used ' + (tool.split('__')[1] if tool.startswith('mcp__') else tool)),
+        'summary': step_summary(tool, msg.content),
+    }
+
+
+def step_detail(msg):
+    """One tool call in full: what was asked and what came back."""
+    from conversations.models import ToolResult
+
+    result = (ToolResult.objects.filter(tool_use_id=msg.tooluse.tool_id, session_id=msg.session_id)
+              .order_by('created_at').first())
+    return {
+        **step_payload(msg),
+        'input': msg.content if isinstance(msg.content, dict) else {'value': msg.content},
+        'result': None if result is None else {
+            'text': result.content if isinstance(result.content, str) else prose(result.content),
+            'is_error': result.is_error,
+        },
+    }
+
+
 def turn_payload(msg, text, mentionable=()):
     return {
         'id': str(msg.id),

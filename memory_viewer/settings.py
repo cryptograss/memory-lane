@@ -86,6 +86,15 @@ WSGI_APPLICATION = 'memory_viewer.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# Shared by every gunicorn worker in the container (unlike the default
+# per-process memory cache): who is typing, sign-in rate limits.
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
+        'LOCATION': os.getenv('MEMORY_LANE_CACHE_DIR', '/tmp/memory-lane-cache'),
+    }
+}
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',

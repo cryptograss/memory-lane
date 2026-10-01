@@ -11,13 +11,14 @@ from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import ensure_csrf_cookie
-from django.views.decorators.http import require_GET
+from django.core.exceptions import ValidationError
+from django.views.decorators.http import require_GET, require_POST
 
 from .models import Message, Motion, ThinkingEntity
 from .services import motion_auth
 from .services.motion_view import (
     MACHINERY_SENDERS, activity, is_wrapper, known_names, mentions_in, motion_payload,
-    prose, turn_payload, turns, wiki_title, wikilinks_in,
+    prose, step_detail, step_payload, timeline, turn_payload, turns, wiki_title, wikilinks_in,
 )
 
 
@@ -56,18 +57,94 @@ def api_motion_turns(request, slug):
     """
     motion = get_object_or_404(Motion, slug=slug)
 
-    after = None
-    after_id = request.GET.get('after')
-    if after_id:
-        after = Message.objects.filter(id=after_id).first()
+    after = before = None
+    if request.GET.get('after'):
+        after = _message_or_none(request.GET['after'])
+    if request.GET.get('before'):
+        before = _message_or_none(request.GET['before'])
+    # A first load, or a page back, is the newest PAGE items; a poll is
+    # everything since.
+    limit = None if after is not None else PAGE
 
     names = known_names()
-    payload = [turn_payload(msg, text, names) for msg, text in turns(motion, after=after)]
+    turns_out, steps_out = [], []
+    for kind, msg, text in timeline(motion, after=after, before=before, limit=limit):
+        if kind == 'turn':
+            turns_out.append(turn_payload(msg, text, names))
+        else:
+            steps_out.append(step_payload(msg))
+    first = min([t['created_at'] for t in turns_out] + [s['created_at'] for s in steps_out], default=None)
     return JsonResponse({
         'motion': motion_payload(motion),
-        'turns': payload,
+        # Prose only: the poller reads an agent turn here as an answer, so a
+        # tool call must never appear in this list.
+        'turns': turns_out,
+        'steps': steps_out,
+        'has_earlier': bool(limit) and first is not None and motion.messages.filter(
+            is_sidechain=False, created_at__lt=first).exists(),
         'activity': activity(motion),
+        'typing': typing_in(motion.slug),
     })
+
+
+PAGE = 400
+
+
+def _message_or_none(raw):
+    try:
+        return Message.objects.filter(id=raw).first()
+    except (ValueError, ValidationError):
+        return None
+
+
+@require_GET
+def api_motion_step(request, slug, step_id):
+    """One tool call in full, for a step someone opened."""
+    msg = _message_or_none(step_id)
+    if msg is None or msg.motion_id != slug or not hasattr(msg, 'tooluse'):
+        raise Http404('no such step in this Motion')
+    return JsonResponse(step_detail(msg))
+
+
+# --- who is typing ---------------------------------------------------------
+# Ephemeral, so not in the record: a shared cache entry per Motion holding
+# name -> when they last typed. Every gunicorn worker shares the cache.
+TYPING_FOR = 8  # seconds a keystroke counts as "typing"
+
+
+def _typing_key(slug):
+    return f'typing:{slug}'
+
+
+def typing_in(slug):
+    from django.core.cache import cache
+    import time
+    now = time.time()
+    return sorted(name for name, at in (cache.get(_typing_key(slug)) or {}).items() if now - at < TYPING_FOR)
+
+
+@require_POST
+def api_typing(request, slug):
+    """Say this device's person is (or stopped) typing in a Motion."""
+    from django.core.cache import cache
+    import json
+    import time
+    device = motion_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to write'}, status=401)
+    get_object_or_404(Motion, slug=slug)
+    try:
+        typing = bool(json.loads(request.body or b'{}').get('typing', True))
+    except (ValueError, AttributeError):
+        return JsonResponse({'error': 'expected {"typing": true|false}'}, status=400)
+    now = time.time()
+    state = {n: at for n, at in (cache.get(_typing_key(slug)) or {}).items() if now - at < TYPING_FOR}
+    if typing:
+        state[device.entity_id] = now
+    else:
+        state.pop(device.entity_id, None)
+    cache.set(_typing_key(slug), state, TYPING_FOR * 2)
+    return JsonResponse({'typing': sorted(state)})
 
 
 @require_GET
