@@ -80,7 +80,9 @@ _WIKILINK = re.compile(r'\[\[([^\]|]+)(?:\|([^\]]+))?\]\]')
 # @name, but not inside an email, a URL path, or another handle.
 _MENTION = re.compile(r'(?<![\w@/.])@([A-Za-z][\w.-]*)')
 _MD_LINK = re.compile(r'\[([^\]]+)\]\((https?://[^)\s]+)\)')
-_URL = re.compile(r'(?<!["\'>=])(https?://(?:(?!&quot;|&#x27;)[^\s<])+)')
+_URL = re.compile(r'(https?://(?:(?!&quot;|&#x27;|&lt;|&gt;)[^\s<>"\x01\x02])+)')
+# Placeholders the renderer uses for markup it has already made; never input.
+_PLACEHOLDER_CHARS = re.compile(r'[\x00\x01\x02]')
 _TRAILING_PUNCT = '.,;:!?)]\'"'
 _HEADING = re.compile(r'^#{1,6}\s+(.+)$')
 _BULLET = re.compile(r'^\s*[-*–]\s+(.*)$')
@@ -152,7 +154,7 @@ def mentions_in(text, mentionable):
     return out
 
 
-def _mention(mentionable):
+def _mention(mentionable, stash=lambda markup: markup):
     lowered = {n.lower() for n in mentionable}
 
     def repl(match):
@@ -162,7 +164,7 @@ def _mention(mentionable):
             raw, trailing = raw[:-1], '.'
         if raw.lower() not in lowered:
             return match.group(0)
-        return f'<span class="mention" data-who="{raw.lower()}">@{raw}</span>{trailing}'
+        return stash(f'<span class="mention" data-who="{raw.lower()}">@{raw}</span>') + trailing
     return repl
 
 
@@ -183,13 +185,24 @@ def _inline(text, mentionable=()):
         return f'\x01{len(codes) - 1}\x01'
 
     text = _INLINE_CODE.sub(keep, text)
+
+    # Each linker's output is lifted out too, so no later pass ever reads
+    # markup: a URL inside an href, say, must not be linked again -- that
+    # would let text break out of the attribute.
+    made = []
+
+    def stash(markup):
+        made.append(markup)
+        return f'\x02{len(made) - 1}\x02'
+
+    text = _WIKILINK.sub(lambda m: stash(_wikilink(m)), text)
+    text = _MD_LINK.sub(lambda m: stash(f'<a href="{m.group(2)}">{m.group(1)}</a>'), text)
+    text = _URL.sub(lambda m: stash(_link_url(m)), text)
+    if mentionable:
+        text = _MENTION.sub(_mention(mentionable, stash), text)
     text = _BOLD.sub(r'<strong>\1</strong>', text)
     text = _ITALIC.sub(r'<em>\1</em>', text)
-    text = _WIKILINK.sub(_wikilink, text)
-    text = _MD_LINK.sub(r'<a href="\2">\1</a>', text)
-    text = _URL.sub(_link_url, text)
-    if mentionable:
-        text = _MENTION.sub(_mention(mentionable), text)
+    text = re.sub(r'\x02(\d+)\x02', lambda m: made[int(m.group(1))], text)
     for i, code in enumerate(codes):
         text = text.replace(f'\x01{i}\x01', f'<code>{code}</code>')
     return text
@@ -197,7 +210,7 @@ def _inline(text, mentionable=()):
 
 def render_html(text, mentionable=()):
     """Escape, then translate the markdown the agent writes into HTML."""
-    text = html.escape(text, quote=True)
+    text = html.escape(_PLACEHOLDER_CHARS.sub('', text), quote=True)
 
     def inline(s):
         return _inline(s, mentionable)
@@ -310,7 +323,10 @@ _TOOL_WORDS = {
     'Edit': 'editing', 'Write': 'writing a file', 'NotebookEdit': 'editing',
     'WebFetch': 'reading the web', 'WebSearch': 'searching the web',
     'Agent': 'working with helpers', 'Task': 'working with helpers',
+    'ToolSearch': 'finding a tool', 'Skill': 'reading up', 'TodoWrite': 'planning',
 }
+_MCP_WORDS = {'playwright': 'using the browser', 'pickipedia': 'on PickiPedia',
+              'magenta-memory-v2': 'remembering', 'magenta-memory': 'remembering'}
 
 
 def _doing(msg):
@@ -318,7 +334,8 @@ def _doing(msg):
     if hasattr(msg, 'tooluse'):
         name = msg.tooluse.tool_name
         if name.startswith('mcp__'):
-            return 'using ' + name.split('__')[-1].replace('-', ' ').replace('_', ' ')
+            server = name.split('__')[1]
+            return _MCP_WORDS.get(server, f'using {server}')
         return _TOOL_WORDS.get(name, f'using {name}')
     return 'thinking'
 
@@ -342,7 +359,10 @@ def activity(motion, now=None):
 
     now = now or time.time()
     agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
-    recent = list(motion.messages.select_related('sender', 'tooluse', 'thought', 'toolresult')
+    # Helpers' lines (sidechains) are the agent's own call still running, so
+    # they neither describe nor end its turn.
+    recent = list(motion.messages.filter(is_sidechain=False)
+                  .select_related('sender', 'tooluse', 'thought', 'toolresult')
                   .order_by('-created_at')[:60])
     if not recent or now - _when(recent[0]) > ACTIVITY_WINDOW:
         return None

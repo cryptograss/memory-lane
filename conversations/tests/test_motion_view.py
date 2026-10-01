@@ -30,6 +30,54 @@ class RenderHtmlTest(TestCase):
                 self.assertNotIn('"onmouseover', out)
                 self.assertNotIn("'onmouseover", out)
 
+    def test_no_pass_can_reach_into_markup_another_made(self):
+        # Each linker ran over the HTML the previous ones produced, so a URL
+        # inside a wikilink's href, or a mention inside a URL, rewrote the
+        # tag and let text out of the attribute.
+        attacks = [
+            '[[https://x.test/a/onmouseover=alert(1)//|label]]',
+            '[[https://x.test/" autofocus onfocus=alert(1)]]',
+            '[[https://x.test/x/onclick=alert(1)/]] tail',
+            'https://x.test/?who=@magent&x=1',
+            '[a @magent b](https://x.test/@magent?q=[[Page]])',
+            '[[Page|https://x.test/y]] and [y](https://x.test/[[z]])',
+            '**https://x.test/** *@magent* `code` [[A|**b**]]',
+            'line one\nhttps://x.test/second-line',
+            'x\x02 0\x02 y \x01 0\x01 \x00 0\x00 https://x.test/',
+        ]
+        for attack in attacks:
+            with self.subTest(attack=attack):
+                self.assertSafe(render_html(attack, mentionable={'magent'}))
+
+    def test_combinations_of_markup_stay_well_formed(self):
+        import itertools
+        pieces = ['[[', ']]', '|', '[', '](', ')', 'https://x.test/', '@magent', '**', '*', '`',
+                  '"', "'", '<', '>', '/', '=', 'onclick=alert(1)', ' ', '\n']
+        for combo in itertools.product(pieces, repeat=4):
+            text = ''.join(combo)
+            self.assertSafe(render_html(text, mentionable={'magent'}), text)
+
+    def assertSafe(self, out, source=''):
+        """Only the tags and attributes the renderer makes; hrefs only http(s)."""
+        from html.parser import HTMLParser
+        allowed = {'p': set(), 'br': set(), 'strong': set(), 'em': set(), 'code': set(), 'pre': set(),
+                   'ul': set(), 'ol': set(), 'li': set(), 'h4': set(), 'table': set(), 'thead': set(),
+                   'tbody': set(), 'tr': set(), 'th': set(), 'td': set(),
+                   'a': {'href', 'class'}, 'span': {'class', 'data-who'}}
+        case = self
+
+        class Check(HTMLParser):
+            def handle_starttag(self, tag, attrs):
+                case.assertIn(tag, allowed, (source, out))
+                for name, value in attrs:
+                    case.assertIn(name, allowed[tag], (source, out))
+                    if name == 'href':
+                        case.assertRegex(value, r'^https?://', (source, out))  # decoded: entities are fine
+        Check().feed(out)
+
+    def test_a_url_at_the_start_of_a_line_links(self):
+        self.assertIn('<a href="https://x.test/b">', render_html('a\nhttps://x.test/b'))
+
     def test_a_quoted_url_links_without_the_quote(self):
         out = render_html('see "https://pickipedia.xyz/wiki/Tony_Rice" there')
         self.assertIn('href="https://pickipedia.xyz/wiki/Tony_Rice"', out)
