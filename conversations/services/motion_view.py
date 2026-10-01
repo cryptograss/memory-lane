@@ -539,8 +539,10 @@ def activity(motion, now=None):
     now = now or time.time()
     agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
     # Helpers' lines (sidechains) are the agent's own call still running, so
-    # they neither describe nor end its turn.
-    recent = list(motion.messages.filter(is_sidechain=False)
+    # they neither describe nor end its turn. System lines are the harness's
+    # bookkeeping -- Claude Code writes one just after a turn ends -- and
+    # say nothing about whether anyone is working.
+    recent = list(motion.messages.filter(is_sidechain=False).exclude(sender_id='system')
                   .select_related('sender', 'tooluse', 'thought', 'toolresult')
                   .order_by('-created_at')[:RECENT])
     if not recent or now - _when(recent[0]) > ACTIVITY_WINDOW:

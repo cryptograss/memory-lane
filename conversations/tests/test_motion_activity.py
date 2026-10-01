@@ -66,6 +66,13 @@ class ActivityTest(TestCase):
         self.add(self.magent, 5, [{'type': 'text', 'text': 'done'}], stop_reason='end_turn')
         self.assertIsNone(self.now())
 
+    def test_the_harness_bookkeeping_after_a_turn_is_not_activity(self):
+        system, _ = ConversationParticipant.objects.get_or_create(name='system', defaults={'participant_type': 'system'})
+        self.add(self.justin, 40, 'go')
+        self.add(self.magent, 5, [{'type': 'text', 'text': 'done'}], stop_reason='end_turn')
+        self.add(system, 4, '')  # Claude Code's turn-duration line
+        self.assertIsNone(self.now())
+
     def test_a_web_post_naming_an_agent_is_waking_it(self):
         self.add(self.justin, 3, '@magent can you see?', source_file='motion-web')
         self.assertEqual(self.now(), {'agent': 'magent', 'doing': 'waking', 'since': NOW - 3})
