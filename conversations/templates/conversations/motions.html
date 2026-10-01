@@ -150,6 +150,13 @@
   #earlier { display: block; margin: 6px auto 14px; font: inherit; font-size: 13px; color: var(--muted);
              background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 3px 14px; cursor: pointer; }
   body.only-mine .work { display: none; }
+  /* An agent's choices not to speak: small dots, side by side. */
+  .quiet { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 4px -10px; padding: 4px 13px; }
+  .quiet .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); border: 1px solid #d6cfc2;
+                cursor: pointer; padding: 0; }
+  .quiet .dot:hover, .quiet .dot.on { background: var(--agent); border-color: var(--agent); }
+  .quiet .why { flex-basis: 100%; font-size: 13px; color: var(--muted); font-style: italic; }
+  body.only-mine .quiet { display: none; }
   /* Images: in turns, as thumbnails on a run of work, inside a step. */
   .turn .body a.img { display: inline-block; margin: 4px 0; }
   .turn .body img { display: block; max-width: 100%; max-height: 420px; border-radius: 6px; border: 1px solid var(--line); }
@@ -415,14 +422,41 @@
     } catch (err) { box.textContent = 'could not load this step'; }
   });
 
-  // Turns and steps from one response, in the order they happened.
+  function addQuiet(q, container) {
+    let row = container.lastElementChild;
+    if (!row || !row.classList.contains('quiet')) {
+      row = document.createElement('div'); row.className = 'quiet';
+      container.appendChild(row);
+    }
+    const dot = document.createElement('button');
+    dot.type = 'button'; dot.className = 'dot';
+    dot.title = `${q.sender} chose not to speak · ${stamp(q.created_at)}`;
+    dot.dataset.why = q.reason || '(no reason given)';
+    row.appendChild(dot);
+  }
+  document.addEventListener('click', e => {
+    const dot = e.target.closest('.quiet .dot');
+    if (!dot) return;
+    const row = dot.parentElement;
+    const wasOn = dot.classList.contains('on');
+    row.querySelectorAll('.dot').forEach(d => d.classList.remove('on'));
+    let why = row.querySelector('.why');
+    if (wasOn) { if (why) why.remove(); return; }
+    dot.classList.add('on');
+    if (!why) { why = document.createElement('div'); why.className = 'why'; row.appendChild(why); }
+    why.textContent = dot.title + ': ' + dot.dataset.why;
+  });
+
+  // Turns, steps and dots from one response, in the order they happened.
   function itemsOf(data) {
-    return [...(data.turns || []).map(t => ({ kind: 'turn', v: t })), ...(data.steps || []).map(s => ({ kind: 'step', v: s }))]
+    return [...(data.turns || []).map(t => ({ kind: 'turn', v: t })), ...(data.steps || []).map(s => ({ kind: 'step', v: s })),
+            ...(data.quiet || []).map(q => ({ kind: 'quiet', v: q }))]
       .sort((a, b) => a.v.created_at < b.v.created_at ? -1 : a.v.created_at > b.v.created_at ? 1 : 0);
   }
   function renderItems(items, container, isNew) {
     for (const it of items) {
       if (it.kind === 'turn') container.appendChild(turnEl(it.v, isNew));
+      else if (it.kind === 'quiet') addQuiet(it.v, container);
       else addStep(it.v, container);
     }
   }
