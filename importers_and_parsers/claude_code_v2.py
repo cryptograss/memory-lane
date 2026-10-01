@@ -124,6 +124,24 @@ def handle_summary(event, filename):
         return summary, created
 
 
+# Rows the runner streamed in (views_runner). The same turn's transcript
+# lines carry the same uuids: they find these rows, may correct them as
+# their own file's replay would, and fill in what only a transcript has.
+RUNNER_SOURCE_FILE = 'ingest-motion-runner'
+ENRICHABLE = ('model_backend', 'effort', 'input_tokens', 'output_tokens', 'cache_creation_input_tokens',
+              'cache_read_input_tokens', 'cwd', 'git_branch', 'client_version', 'stop_reason')
+
+
+def enrich(message, fields):
+    """Fill the fields a stored row lacks from a later line about it."""
+    updates = {k: v for k, v in fields.items()
+               if k in ENRICHABLE and v is not None and getattr(message, k, None) is None}
+    if updates:
+        type(message).objects.filter(pk=message.pk).update(**updates)
+        for k, v in updates.items():
+            setattr(message, k, v)
+
+
 def task_notification(line):
     """Store a background task's notice -- it finished, failed, was stopped --
     as a system message in its session's Motion; (message, created) or None.
@@ -658,7 +676,9 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
         # A line already stored is only ever corrected by a replay of the file
         # it came from. Otherwise any line reusing a known uuid -- a web
         # post's is public -- could hide a turn or move it in the thread.
-        own_line = created or message.source_file == filename
+        own_line = created or message.source_file in (filename, RUNNER_SOURCE_FILE)
+        if own_line and not created:
+            enrich(message, common)
 
         if own_line and common['is_sidechain'] and not created and not message.is_sidechain:
             # Imported before isSidechain was read; a replay corrects it.

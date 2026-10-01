@@ -46,10 +46,12 @@ import argparse
 import json
 import logging
 import os
+import queue
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -143,6 +145,81 @@ def mcp_config_for_wakes(claude_json='~/.claude.json', out='~/.local/state/magen
     return str(path)
 
 
+def end_process_group(proc):
+    """Kill a process and everything it started."""
+    import signal
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        proc.kill()
+
+
+# Events worth posting to the Motion: what was said and done, and the end.
+STREAMED = ('assistant', 'user', 'result')
+
+
+class StreamPoster:
+    """Posts a running turn's events to its Motion as they come out of it.
+
+    The turn was launched for one Motion, so its events go straight there
+    (conversations/views_runner.py), claimed outright and live. A thread of
+    its own, so reading the agent's output never waits on the network:
+    events queue here and leave in batches. If memory-lane can't be reached
+    they're dropped after a few tries -- the transcript still brings the
+    conversation in, just later.
+    """
+
+    def __init__(self, base, key, slug, session_id, http=requests, retries=3, pause=1.0):
+        self.url = f"{base.rstrip('/')}/api/motions/{slug}/stream/"
+        self.headers = {'Authorization': f'Bearer {key}'}
+        self.slug, self.session_id = slug, session_id
+        self.http, self.retries, self.pause = http, retries, pause
+        self.queue = queue.Queue()
+        self.sent = self.failed = 0
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+
+    def put(self, event):
+        if isinstance(event, dict) and event.get('type') in STREAMED:
+            self.queue.put(event)
+
+    def close(self, wait=60):
+        """Send what's queued, then stop."""
+        self.queue.put(None)
+        self.thread.join(wait)
+
+    def run(self):
+        done = False
+        while not done:
+            batch = [self.queue.get()]
+            while len(batch) < 50:
+                try:
+                    batch.append(self.queue.get_nowait())
+                except queue.Empty:
+                    break
+            done = None in batch
+            events = [e for e in batch if e is not None]
+            if events:
+                self.send(events)
+
+    def send(self, events):
+        body = {'harness': 'claude-code', 'session_id': self.session_id, 'events': events}
+        for attempt in range(self.retries):
+            try:
+                response = self.http.post(self.url, json=body, headers=self.headers, timeout=30)
+                if response.status_code == 200:
+                    self.sent += len(events)
+                    return True
+                logger.warning(f'{self.slug}: stream post answered {response.status_code}')
+                if response.status_code in (400, 401, 403, 404, 413, 503):
+                    break  # asking again won't change the answer
+            except requests.RequestException as e:
+                logger.warning(f'{self.slug}: stream post failed: {e}')
+            time.sleep(self.pause * 2 ** attempt)
+        self.failed += len(events)
+        return False
+
+
 class ClaudeCodeWaker:
     """Starts one Claude Code turn by forking a session that exists on this machine."""
 
@@ -180,9 +257,12 @@ class ClaudeCodeWaker:
     def can_wake(self, session_id):
         return self.cwd_for(session_id) is not None
 
-    def command(self, session_id, new_session_id, prompt, grant=()):
+    def command(self, session_id, new_session_id, prompt, grant=(), budget=None, effort=None):
         cmd = [self.claude, '-p', '--resume', session_id, '--fork-session',
                '--session-id', new_session_id,
+               # Every event on stdout as it happens: what the runner posts to
+               # the Motion, and the turn's exact end (the result event).
+               '--output-format', 'stream-json', '--verbose',
                # Reading tools only, MCP servers only from our list, and
                # anything not allowed below refused without asking.
                '--tools', READ_TOOLS, '--strict-mcp-config', '--permission-mode', 'dontAsk',
@@ -192,25 +272,60 @@ class ClaudeCodeWaker:
             cmd += ['--mcp-config', mcp]
         if self.model:
             cmd += ['--model', self.model]
+        if budget:
+            cmd += ['--max-budget-usd', f'{budget:.2f}']
+        if effort:
+            cmd += ['--effort', effort]
         return cmd + ['--', prompt]
 
-    def wake(self, session_id, prompt):
+    def wake(self, session_id, prompt, new_session_id=None, on_event=None, grant=(), budget=None, effort=None):
+        """Run one turn; (new session id, its reply). `on_event` sees every
+        stream event as it comes out. self.last_result keeps the run's
+        result event: its cost, its duration, how it ended."""
         cwd = self.cwd_for(session_id)
         if cwd is None:
             raise RuntimeError(f'session {session_id} cannot be resumed from here')
-        new_session_id = str(uuid.uuid4())
-        result = subprocess.run(self.command(session_id, new_session_id, prompt), cwd=cwd,
-                                stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                                timeout=self.timeout)
-        if result.returncode != 0:
-            raise RuntimeError(f'claude exited {result.returncode}: {result.stderr.strip()[:500]}')
-        return new_session_id, result.stdout.strip()
+        new_session_id = new_session_id or str(uuid.uuid4())
+        cmd = self.command(session_id, new_session_id, prompt, grant=grant, budget=budget, effort=effort)
+        # Its own process group, so ending it ends everything it started: a
+        # child left holding the output pipe would keep the turn open.
+        proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, bufsize=1, start_new_session=True)
+        stderr = []
+        drain = threading.Thread(target=lambda: stderr.append(proc.stderr.read()), daemon=True)
+        drain.start()
+        timer = threading.Timer(self.timeout, end_process_group, args=(proc,))  # a turn that never ends is ended
+        timer.start()
+        result = None
+        try:
+            for raw in proc.stdout:
+                try:
+                    event = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if event.get('type') == 'result':
+                    result = event
+                if on_event:
+                    try:
+                        on_event(event)
+                    except Exception as e:  # never let reporting stop the turn
+                        logger.warning(f'on_event failed: {e}')
+            proc.wait()
+        finally:
+            timer.cancel()
+        drain.join(5)
+        self.last_result = result or {}
+        if result is None:
+            raise RuntimeError(f'claude exited {proc.returncode} without a result: {"".join(stderr).strip()[:500]}')
+        return new_session_id, (result.get('result') or '').strip()
 
 
 class MotionPoller:
 
     def __init__(self, api, waker, agent='magent', state_path=None, grace=600,
-                 max_wakes_per_hour=4, dry_run=False, now=None):
+                 max_wakes_per_hour=4, dry_run=False, now=None, streamer=None, mention_effort='high'):
         self.api = api
         self.waker = waker
         self.agent = agent.lower()
@@ -219,6 +334,12 @@ class MotionPoller:
         self.max_wakes_per_hour = max_wakes_per_hour
         self.dry_run = dry_run
         self.now = now or (lambda: datetime.now(timezone.utc))
+        # streamer(slug, session_id) -> StreamPoster: a woken turn's events go
+        # straight to its Motion. None: the transcript brings them, later.
+        self.streamer = streamer
+        # Someone asked the agent directly: a considered answer is worth more
+        # effort than the harness's default (medium, seen 2026-10-01).
+        self.mention_effort = mention_effort
         self.state = self.load()
 
     # --- state ---------------------------------------------------------------
@@ -315,14 +436,31 @@ class MotionPoller:
         self.state['wakes'].append(self.now().isoformat())
         self.state['handled'] = sorted(set(self.state['handled']) | set(settled))
         self.save()
+        outcome = self.run_turn(slug, sessions[0], prompt, effort=self.mention_effort)
+        return settled, outcome
+
+    def run_turn(self, slug, session_id, prompt, **options):
+        """Wake one turn from `session_id` for `slug`; 'woken' or 'failed'."""
+        new_session = str(uuid.uuid4())
+        poster = self.streamer(slug, new_session) if self.streamer else None
         try:
-            new_session, reply = self.waker.wake(sessions[0], prompt)
+            new_session, reply = self.waker.wake(session_id, prompt, new_session_id=new_session,
+                                                 on_event=poster.put if poster else None, **options)
         except Exception as e:
             logger.error(f'{slug}: wake failed, not retrying: {e}')
-            return settled, 'failed'
-        logger.info(f'{slug}: woke {sessions[0]} as {new_session}; '
-                    f'{"stayed silent" if _SILENT_REPLY.match(reply or "") else f"replied {len(reply)} chars"}')
-        return settled, 'woken'
+            if poster:  # close the turn in the Motion, or it shows as working until it times out
+                poster.put({'type': 'result', 'subtype': 'error_during_execution', 'is_error': True,
+                            'session_id': new_session, 'uuid': str(uuid.uuid4())})
+                poster.close()
+            return 'failed'
+        if poster:
+            poster.close()
+        cost = (getattr(self.waker, 'last_result', None) or {}).get('total_cost_usd')
+        logger.info(f'{slug}: woke {session_id} as {new_session}; '
+                    f'{"stayed silent" if _SILENT_REPLY.match(reply or "") else f"replied {len(reply)} chars"}'
+                    + (f'; ${cost:.4f}' if isinstance(cost, (int, float)) else '')
+                    + (f'; streamed {poster.sent}, lost {poster.failed}' if poster else ''))
+        return 'woken'
 
     def prompt(self, slug, owed):
         if all(t.get('via') == 'web' for t in owed):
@@ -379,14 +517,22 @@ def main(argv=None):
     parser.add_argument('--grace', type=int, default=600, help='Seconds to leave for a live session to answer')
     parser.add_argument('--max-wakes-per-hour', type=int, default=4)
     parser.add_argument('--model', default=None)
+    parser.add_argument('--mention-effort', default='high', help='Effort for a turn woken by a mention')
     parser.add_argument('--once', action='store_true')
     parser.add_argument('--dry-run', action='store_true', help='Log what would be woken; change nothing')
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+    # The runner's key, from the vault via the hunter deploy. Without it,
+    # woken turns still reach their Motion through the transcript watcher.
+    key = os.environ.get('MEMORY_LANE_RUNNER_KEY', '')
+    streamer = (lambda slug, session: StreamPoster(args.base, key, slug, session)) if key else None
+    logger.info('streaming woken turns straight to their Motions' if key else
+                'no MEMORY_LANE_RUNNER_KEY: woken turns reach Motions through the transcript watcher')
     poller = MotionPoller(MotionAPI(args.base), ClaudeCodeWaker(model=args.model), agent=args.agent,
                           state_path=Path(args.state).expanduser(), grace=args.grace,
-                          max_wakes_per_hour=args.max_wakes_per_hour, dry_run=args.dry_run)
+                          max_wakes_per_hour=args.max_wakes_per_hour, dry_run=args.dry_run, streamer=streamer,
+                          mention_effort=args.mention_effort)
     while True:
         try:
             poller.poll_once()
