@@ -24,6 +24,17 @@ from .services.redaction import redact
 MAX_CHARS = 20_000
 PER_MINUTE = 20
 WEB_SOURCE = 'motion-web'
+ENROLL_MAX_BYTES = 64 * 1024
+# For everyone together: behind the proxy every client has the same address.
+ENROLL_PER_MINUTE = 30
+
+
+def _under_limit(bucket, per_minute):
+    """Count one more attempt in this minute; False once there are too many."""
+    from django.core.cache import cache
+    key = f'limit:{bucket}:{int(time.time() // 60)}'
+    cache.add(key, 0, 120)
+    return cache.incr(key) <= per_minute
 
 
 @require_GET
@@ -35,6 +46,11 @@ def api_challenge(request):
 @require_POST
 def api_enroll(request):
     """Trade a signed challenge for a one-time login link."""
+    # Each attempt runs ssh-keygen twice; keep strangers from making that a load.
+    if len(request.body) > ENROLL_MAX_BYTES:
+        return JsonResponse({'error': 'too large'}, status=413)
+    if not _under_limit('enroll', ENROLL_PER_MINUTE):
+        return JsonResponse({'error': 'too many sign-in attempts; wait a minute'}, status=429)
     try:
         body = json.loads(request.body)
         challenge, signature = body['challenge'], body['signature']
@@ -44,10 +60,11 @@ def api_enroll(request):
 
     if not motion_auth.challenge_is_fresh(challenge):
         return JsonResponse({'error': 'challenge expired; fetch a new one'}, status=400)
+    message = motion_auth.signed_message(challenge, motion_auth.origin_of(request))
     if name:
-        name = name if motion_auth.signature_is_valid(name, challenge, signature) else ''
+        name = name if motion_auth.signature_is_valid(name, message, signature) else ''
     else:
-        name = motion_auth.signer_of(challenge, signature) or ''  # the key says who you are
+        name = motion_auth.signer_of(message, signature) or ''  # the key says who you are
     entity = ThinkingEntity.objects.filter(name=name).first() if name else None
     if entity is None:
         return JsonResponse({'error': 'signature not accepted'}, status=403)
@@ -66,7 +83,8 @@ def login_page(request, code):
         return render(request, 'conversations/motion_login.html',
                       {'name': login.entity_id if login else None}, status=200 if login else 410)
 
-    device, token = motion_auth.redeem_login_code(code, label=request.POST.get('label', ''))
+    label = getattr(settings, 'DEVICE_LABEL_PREFIX', '') + request.POST.get('label', '')
+    device, token = motion_auth.redeem_login_code(code, label=label)
     if device is None:
         return render(request, 'conversations/motion_login.html', {'name': None}, status=410)
     response = HttpResponseRedirect('/motions/')
@@ -103,7 +121,9 @@ def api_say(request, slug):
         text = json.loads(request.body).get('text', '')
     except (ValueError, AttributeError):
         return JsonResponse({'error': 'expected {"text": ...}'}, status=400)
-    text = (text or '').strip()
+    if not isinstance(text, str):
+        return JsonResponse({'error': 'expected {"text": ...}'}, status=400)
+    text = text.replace('\x00', '').strip()  # Postgres text can't hold NUL
     if not text:
         return JsonResponse({'error': 'nothing to say'}, status=400)
     if len(text) > MAX_CHARS:

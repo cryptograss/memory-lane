@@ -203,8 +203,15 @@ TOOL_RESULT_CONTENT_CHARS = int(os.getenv('TOOL_RESULT_CONTENT_CHARS', '0'))
 # hunter's inventory. Unset or missing, nobody can enroll a device.
 MOTION_ALLOWED_SIGNERS = os.getenv('MOTION_ALLOWED_SIGNERS', '')
 
-# Behind Caddy, which terminates TLS and always sets X-Forwarded-Proto. The
-# CSRF check compares a POST's Origin with these.
+# Behind Caddy, which terminates TLS and always sets X-Forwarded-Proto, so
+# Django knows the request was https and a POST's Origin matches its own
+# host. CSRF_TRUSTED_ORIGINS is only for *other* origins allowed to post
+# here: exact hosts, never a wildcard -- every preview on hunter is a
+# *.hunter.cryptograss.live origin, and none of them should post here.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-CSRF_TRUSTED_ORIGINS = [f'https://*{h}' if h.startswith('.') else f'https://{h}'
-                        for h in ALLOWED_HOSTS if '.' in h and not h[0].isdigit()]
+CSRF_TRUSTED_ORIGINS = [f'https://{h}' for h in ALLOWED_HOSTS
+                        if '.' in h and not h.startswith('.') and not h[0].isdigit()]
+
+# Served only over https outside development.
+CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE = not DEBUG
+SECURE_HSTS_SECONDS = 0 if DEBUG else 365 * 24 * 3600  # this host only, no subdomains

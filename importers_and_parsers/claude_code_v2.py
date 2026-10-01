@@ -589,13 +589,18 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
             assert False
             self.stdout.write(self.style.WARNING(f'Unknown event type: {event_type}'))
 
-        if common['is_sidechain'] and not created and not message.is_sidechain:
+        # A line already stored is only ever corrected by a replay of the file
+        # it came from. Otherwise any line reusing a known uuid -- a web
+        # post's is public -- could hide a turn or move it in the thread.
+        own_line = created or message.source_file == filename
+
+        if own_line and common['is_sidechain'] and not created and not message.is_sidechain:
             # Imported before isSidechain was read; a replay corrects it.
             Message.objects.filter(id=message.id).update(is_sidechain=True)
             message.is_sidechain = True
 
         apparent_parent_id = event['parentUuid']
-        if apparent_parent_id is not None:
+        if own_line and apparent_parent_id is not None:
             message.set_parent_id(apparent_parent_id)
 
         return message, created

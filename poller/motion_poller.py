@@ -62,6 +62,9 @@ ETIQUETTE = 'https://pickipedia.xyz/wiki/Cryptograss:Magenta_26_Million#Speaking
 SILENT = '<silent/>'
 # Linux caps a single argument at 128 KiB; a prompt is an argument.
 MAX_PROMPT_CHARS = 100_000
+# Text that could pass for the wrapper's own tags, so a post can't close
+# <motion-wake> early and write what looks like the poller's instructions.
+_WRAPPER_TAG = re.compile(r'<(/?)(motion-wake)', re.I)
 
 
 def parse_time(iso):
@@ -280,7 +283,8 @@ class MotionPoller:
         lines = [f'<motion-wake motion="{slug}">', f'You were woken by the Motion poller: {why}', '']
         budget = MAX_PROMPT_CHARS
         for turn in owed:
-            entry = f"[{turn['sender']}, {turn['created_at'][:16]}Z] {turn['text']}"
+            text = _WRAPPER_TAG.sub(r'‹\1\2', turn['text'])
+            entry = f"[{turn['sender']}, {turn['created_at'][:16]}Z] {text}"
             if len(entry) > budget:
                 entry = entry[:max(budget, 0)] + ' [cut: too long to pass on]'
             budget -= len(entry)

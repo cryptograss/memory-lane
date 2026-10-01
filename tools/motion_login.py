@@ -23,9 +23,19 @@ import subprocess
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 
 DEFAULT_BASE = 'https://memory-lane.maybelle.cryptograss.live'
+# Fixed here, never taken from the server: a server must not choose what
+# your key signs for (`git` would make it a commit signature).
+NAMESPACE = 'magenta-motions'
+
+
+def signed_message(challenge, base):
+    """The challenge bound to the server it came from (motion_auth.signed_message)."""
+    parts = urllib.parse.urlsplit(base)
+    return f'{NAMESPACE} login\n{parts.scheme}://{parts.netloc}'.lower() + f'\n{challenge}'
 
 
 def call(url, payload=None):
@@ -51,13 +61,13 @@ def default_key():
     return None
 
 
-def sign(challenge, key, namespace):
+def sign(text, key):
     with tempfile.TemporaryDirectory() as tmp:
         message = os.path.join(tmp, 'challenge')
         with open(message, 'w') as f:
-            f.write(challenge)
+            f.write(text)
         # ssh-keygen may ask for the key's passphrase on the terminal.
-        subprocess.run(['ssh-keygen', '-Y', 'sign', '-f', key, '-n', namespace, message], check=True,
+        subprocess.run(['ssh-keygen', '-Y', 'sign', '-f', key, '-n', NAMESPACE, message], check=True,
                        stdout=subprocess.DEVNULL)
         with open(message + '.sig') as f:
             return f.read()
@@ -78,7 +88,7 @@ def main():
     base = args.base.rstrip('/')
     offer = call(f'{base}/api/auth/challenge/')
     try:
-        signature = sign(offer['challenge'], args.key, offer['namespace'])
+        signature = sign(signed_message(offer['challenge'], base), args.key)
     except subprocess.CalledProcessError:
         sys.exit('ssh-keygen could not sign with that key.')
     payload = {'challenge': offer['challenge'], 'signature': signature}

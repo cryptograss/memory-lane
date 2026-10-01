@@ -34,7 +34,7 @@
   .layout { flex: 1; display: flex; min-height: 0; }
 
   nav {
-    width: 270px; flex: none; overflow-y: auto; background: var(--panel);
+    width: 230px; flex: none; overflow-y: auto; background: var(--panel);
     border-right: 1px solid var(--line); padding: 10px 0;
   }
   nav .label { padding: 4px 16px 8px; font-size: 11px; text-transform: uppercase;
@@ -53,7 +53,7 @@
     line-height: 18px; text-align: center;
   }
 
-  main { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 0 60px; }
+  main { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 0 0; }  /* no bottom padding: it would hold the sticky footer off the bottom */
   .inner { max-width: 760px; margin: 0 auto; padding: 0 22px; }
 
   .motion-head h1 { font-size: 22px; margin: 0 0 4px; }
@@ -61,7 +61,11 @@
   .motion-head .meta { font-size: 12px; color: var(--muted); }
   .motion-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
 
-  .turn { padding: 14px 0 14px 10px; margin-left: -10px; border-bottom: 1px solid var(--line); border-left: 3px solid transparent; }
+  .turn { padding: 12px 0 12px 10px; margin-left: -10px; border-top: 1px solid var(--line); border-left: 3px solid transparent; }
+  #turns > .turn:first-child { border-top: 0; }
+  /* The same sender again within minutes: one heading for the run. */
+  .turn.cont { border-top: 0; padding-top: 0; }
+  .turn.cont .who { display: none; }
   .turn.mentions-me { border-left-color: var(--accent); }
   body.only-mine .turn:not(.mentions-me) { display: none; }
   .turn .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
@@ -91,8 +95,9 @@
   header .auth { font-size: 13px; color: var(--muted); }
   header .preview { font-size: 12px; font-weight: 600; color: #7a4b00; background: #ffe9b0; border-radius: 4px; padding: 1px 8px; }
   header .auth a { color: var(--muted); }
-  #footer { position: sticky; bottom: 0; background: var(--bg); }
-  #composer { display: none; position: relative; padding: 10px 16px 14px; border-top: 1px solid var(--line); }
+  #footer { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); }
+  #activity, #composer { max-width: 760px; margin: 0 auto; }  /* the reading column's width */
+  #composer { display: none; position: relative; padding: 10px 16px 14px; }
   body.writer #composer { display: flex; gap: 8px; align-items: flex-end; }
   #composer textarea { flex: 1; font: inherit; min-height: 44px; max-height: 40vh; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
   #composer button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
@@ -114,10 +119,28 @@
   #suggest div { padding: 5px 10px; cursor: pointer; font-size: 14px; }
   #suggest div.sel, #suggest div:hover { background: var(--accent-soft); }
   #suggest small { color: var(--muted); margin-left: 6px; }
+  #menu { display: none; font: inherit; font-size: 20px; line-height: 1; background: none; border: 0;
+          color: var(--muted); cursor: pointer; padding: 0 2px; }
   @media (max-width: 720px) {
+    header { flex-wrap: nowrap; gap: 8px; padding: 6px 12px; }
+    header .brand small { display: none; }
+    header .preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+    #menu { display: block; }
+    header .me, header label.only, header .auth { display: none !important; }
+    body.menu-open header { flex-wrap: wrap; }
+    body.menu-open header .me, body.menu-open header .auth { display: inline-flex !important; }
+    body.menu-open.has-me header label.only { display: inline-flex !important; }
     .layout { flex-direction: column; }
-    nav { width: auto; max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    nav { display: none; }
+    body.menu-open nav { display: block; width: auto; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    main { padding-top: 12px; }
+    .inner { padding: 0 12px; }
+    .motion-head h1 { font-size: 19px; }
+    #activity { padding: 6px 12px; }
+    #composer { padding: 8px 10px 10px; }
   }
+  /* Signed in, you are who you are: no need to choose whose view to see. */
+  body.writer header .me { display: none !important; }
 </style>
 </head>
 <body>
@@ -128,6 +151,7 @@
   <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
   <span class="auth" id="auth"></span>
   <span class="status" id="status">connecting…</span>
+  <button id="menu" type="button" aria-label="Menu" aria-expanded="false">☰</button>
 </header>
 <div class="layout">
   <nav id="nav"><div class="label">Motions</div></nav>
@@ -231,9 +255,16 @@
     </div><div id="turns"></div>`;
   }
 
+  const RUN_MS = 5 * 60 * 1000;  // the same sender within this is one run
+  let prev = null;               // the last turn rendered: {sender, at}
+
   function turnEl(t, isNew) {
     const el = document.createElement('article');
-    el.className = 'turn ' + (t.is_human ? 'human' : 'agent') + (isNew ? ' new' : '');
+    const at = new Date(t.created_at).getTime();
+    const cont = prev && prev.sender === t.sender && at - prev.at < RUN_MS;
+    prev = { sender: t.sender, at };
+    el.className = 'turn ' + (t.is_human ? 'human' : 'agent') + (cont ? ' cont' : '') + (isNew ? ' new' : '');
+    if (cont) el.title = t.sender + ' · ' + stamp(t.created_at);
     el.dataset.mentions = JSON.stringify(t.mentions || []);
     el.innerHTML = `<div class="who"><span class="name">${esc(t.sender)}</span><time datetime="${t.created_at}">${stamp(t.created_at)}</time></div><div class="body">${t.html}</div>`;
     markTurn(el, t.mentions || []);
@@ -303,6 +334,7 @@
       return;
     }
     if (full) {
+      prev = null;
       inner.innerHTML = renderHead(data.motion);
       baseTitle = data.motion.title + ' · Motions';
       setTitle();
@@ -389,6 +421,12 @@
     renderMe(); remarkAll(); refreshBadges();
   });
   onlyMine.addEventListener('change', () => document.body.classList.toggle('only-mine', onlyMine.checked));
+  const menu = document.getElementById('menu');
+  menu.addEventListener('click', () => {
+    menu.setAttribute('aria-expanded', document.body.classList.toggle('menu-open'));
+  });
+  nav.addEventListener('click', e => { if (e.target.closest('a.motion')) document.body.classList.remove('menu-open'); });
+  if (matchMedia('(max-width: 720px)').matches) sayBox.placeholder = 'Say something · @name · [[Page]]';
 
   function csrf() {
     const m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);

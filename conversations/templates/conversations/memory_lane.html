@@ -717,10 +717,10 @@
                 if (era.notes && era.notes.length > 0) {
                     const eraNotesId = `era-notes-${era.id}`;
                     globalThis[eraNotesId] = era.notes;
-                    eraNoteIcons = ` <span class="note-icon" data-notes-id="${eraNotesId}" data-title="Era Notes" style="font-size: 0.9em; cursor: pointer; color: #ce9178;">📝 ${era.notes.length}</span>`;
+                    eraNoteIcons = ` <span class="note-icon" data-notes-id="${escapeHtml(eraNotesId)}" data-title="Era Notes" style="font-size: 0.9em; cursor: pointer; color: #ce9178;">📝 ${era.notes.length}</span>`;
                 }
 
-                const eraUuid = era.id.substring(0, 8);
+                const eraUuid = escapeHtml(era.id.substring(0, 8));
                 const eraBlockheightRange = (era.earliest_blockheight && era.latest_blockheight)
                     ? ` [${era.earliest_blockheight.toLocaleString()}-${era.latest_blockheight.toLocaleString()}]`
                     : '';
@@ -789,14 +789,14 @@
                         if (window.notes && window.notes.length > 0) {
                             const windowNotesId = `window-notes-${window.id}`;
                             globalThis[windowNotesId] = window.notes;
-                            windowNoteIcons += ` <span class="note-icon" data-notes-id="${windowNotesId}" data-title="Context Window Notes" style="font-size: 0.9em; cursor: pointer; color: #ce9178;">📝 ${window.notes.length}</span>`;
+                            windowNoteIcons += ` <span class="note-icon" data-notes-id="${escapeHtml(windowNotesId)}" data-title="Context Window Notes" style="font-size: 0.9em; cursor: pointer; color: #ce9178;">📝 ${window.notes.length}</span>`;
                         }
 
                         let windowHtml = '';
                         let windowVisibleCount = 0;
 
                         // Context window header row
-                        const windowUuid = window.id.substring(0, 8);
+                        const windowUuid = escapeHtml(window.id.substring(0, 8));
                         const windowBlockheightRange = (window.earliest_blockheight && window.latest_blockheight)
                             ? `[${window.earliest_blockheight.toLocaleString()}-${window.latest_blockheight.toLocaleString()}]`
                             : '';
@@ -814,7 +814,7 @@
                         }
 
                         // Shorten window type
-                        const shortType = window.type_display.replace(' conversation', '').replace('After compacting', 'Post-compact');
+                        const shortType = escapeHtml(window.type_display.replace(' conversation', '').replace('After compacting', 'Post-compact'));
 
                         // Get preview from first non-command messages (accumulate until ~80 chars)
                         let messagePreview = '';
@@ -875,14 +875,14 @@
                         let compactingInfo = '';
                         if (window.compacting_action) {
                             const ca = window.compacting_action;
-                            const caId = ca.id.substring(0, 8);
+                            const caId = escapeHtml(ca.id.substring(0, 8));
                             const caSummary = ca.summary ? escapeHtml(ca.summary.substring(0, 80)) : '(no summary)';
 
                             // Show continuation message link or red X
                             let continuationLink = '';
                             if (ca.continuation_message_id) {
-                                const contId = ca.continuation_message_id.substring(0, 8);
-                                continuationLink = `<a href="#msg-${ca.continuation_message_id}" style="color: #4ec9b0; text-decoration: none;">→ ${contId}</a>`;
+                                const contId = escapeHtml(ca.continuation_message_id.substring(0, 8));
+                                continuationLink = `<a href="#msg-${escapeHtml(ca.continuation_message_id)}" style="color: #4ec9b0; text-decoration: none;">→ ${contId}</a>`;
                             } else {
                                 continuationLink = `<span style="color: #f44747;">❌ No Continuation Message</span>`;
                             }
@@ -910,7 +910,7 @@
 
                         const heapClasses = ['window-header', isActiveHeap ? 'active-heap' : '', isCurrentHeap ? 'current-heap' : ''].filter(c => c).join(' ');
                         const headerRow = `
-                            <tr class="${heapClasses}" data-heap-id="${window.id}" onclick="event.stopPropagation(); toggleWindow('${window.id}')" style="${activeStyle}">
+                            <tr class="${heapClasses}" data-heap-id="${escapeHtml(window.id)}" onclick="event.stopPropagation(); toggleWindow('${escapeJsAttr(window.id)}')" style="${activeStyle}">
                                 <td class="expand-icon" rowspan="2">${windowIcon}</td>
                                 <td colspan="7" style="padding: 4px 6px; padding-left: ${parentIndent}px; border-bottom: none;">
                                     <div style="font-weight: bold;">${heapNumber}${shortType} ${getMessageCount(window)}${splitInfo} ${windowBlockheightRange}</div>
@@ -919,7 +919,7 @@
                                 </td>
                                 <td class="window-uuid" rowspan="2" style="padding: 6px; text-align: right; vertical-align: top;">${windowUuid}</td>
                             </tr>
-                            <tr class="${heapClasses} window-preview" onclick="event.stopPropagation(); toggleWindow('${window.id}')" style="${activeStyle}">
+                            <tr class="${heapClasses} window-preview" onclick="event.stopPropagation(); toggleWindow('${escapeJsAttr(window.id)}')" style="${activeStyle}">
                                 <td colspan="7" style="padding: 0 6px 4px 6px; padding-left: ${parentIndent}px; border-top: none; font-size: 10px;">
                                     <span class="window-preview-text">"${messagePreview}"</span>${windowNoteIcons}
                                 </td>
@@ -967,7 +967,7 @@
                                 // Only show main flow header if there are matching messages (or if boundaries mode is on)
                                 if (filtered.length > 0 || heapBoundariesOnly) {
                                     const mainFlowHeader = `
-                                        <tr class="main-flow-header" onclick="event.stopPropagation(); toggleMainFlow('${window.id}')">
+                                        <tr class="main-flow-header" onclick="event.stopPropagation(); toggleMainFlow('${escapeJsAttr(window.id)}')">
                                             <td class="expand-icon">${mainFlowIcon}</td>
                                             <td colspan="7" style="padding: 4px; padding-left: ${mainFlowIndent}px;">
                                                 Main flow (${getMessageCount(window)} messages)
@@ -1104,10 +1104,10 @@
                     const isCurrentEra = era.id === currentEraId;
                     const eraClass = isCurrentEra ? 'era-header current-era' : 'era-header';
                     html += `
-                        <tr class="${eraClass}" data-era-id="${era.id}" onclick="toggleEra('${era.id}')">
+                        <tr class="${eraClass}" data-era-id="${escapeHtml(era.id)}" onclick="toggleEra('${escapeJsAttr(era.id)}')">
                             <td class="expand-icon">${eraIcon}</td>
                             <td colspan="7" style="padding: 8px;">
-                                ${era.name} (${heapCount} heaps, ${eraMessageCount.toLocaleString()} messages)${eraBlockheightRange}${eraNoteIcons}
+                                ${escapeHtml(era.name)} (${heapCount} heaps, ${eraMessageCount.toLocaleString()} messages)${eraBlockheightRange}${eraNoteIcons}
                             </td>
                             <td class="era-uuid" style="padding: 8px; text-align: right;">${eraUuid}</td>
                         </tr>
@@ -1135,7 +1135,7 @@
                 if (!orphanedCollapsed) {
                     eraData.orphaned_compacting_actions.forEach(compact => {
                         const boundaryPreview = compact.ending_message_id
-                            ? compact.ending_message_id.substring(0, 8)
+                            ? escapeHtml(compact.ending_message_id.substring(0, 8))
                             : 'unknown';
                         const compactPseudoMsg = {
                             id: compact.id,
@@ -1149,13 +1149,13 @@
                         };
                         const msgId = `msg-${compact.id}`;
                         html += `
-                            <tr id="${msgId}" onclick="toggleRow('${compact.id}')" data-message-id="${compact.id}" style="cursor: pointer; background: #3a1a1a;">
+                            <tr id="${escapeHtml(msgId)}" onclick="toggleRow('${escapeJsAttr(compact.id)}')" data-message-id="${escapeHtml(compact.id)}" style="cursor: pointer; background: #3a1a1a;">
                                 <td class="expand-icon">►</td>
                                 <td colspan="8" style="padding-left: 30px; color: #d4a574;">
                                     📋 <strong>(compact action)</strong><br>
                                     <span style="font-size: 10px; color: #858585;">
                                         Boundary: ${boundaryPreview} ·
-                                        Trigger: ${compact.compact_trigger || 'unknown'} ·
+                                        Trigger: ${escapeHtml(compact.compact_trigger || 'unknown')} ·
                                         Created: ${compact.created_at ? new Date(compact.created_at).toLocaleString() : 'unknown'}
                                     </span>
                                 </td>
@@ -1212,16 +1212,15 @@
 
                     // Load messages for this heap
                     try {
-                        const response = await fetch(`/api/heap_messages/${windowId}/`);
-                        const data = await response.json();
+                        const heapMessages = await fetchHeapMessages(windowId);
 
                         // Find the heap and update its messages
                         function findAndUpdateHeap(heaps) {
                             for (const heap of heaps) {
                                 if (heap.id === windowId) {
-                                    heap.messages = data.messages;
+                                    heap.messages = heapMessages;
                                     // Add messages to allMessages for searching
-                                    allMessages.push(...data.messages);
+                                    allMessages.push(...heapMessages);
                                     loadedHeaps.add(windowId);
                                     return true;
                                 }
@@ -1259,6 +1258,23 @@
                 collapsedWindows.add(windowId);
             }
             renderMessages();
+        }
+
+        // /api/heap_messages/ serves a heap a page at a time (at most 1000
+        // messages); follow `next` until the heap is complete.
+        async function fetchHeapMessages(heapId) {
+            const messages = [];
+            let after = null;
+            do {
+                let url = `/api/heap_messages/${encodeURIComponent(heapId)}/`;
+                if (after) url += `?after=${encodeURIComponent(after)}`;
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`heap_messages returned ${response.status}`);
+                const data = await response.json();
+                messages.push(...data.messages);
+                after = data.has_more ? data.next : null;
+            } while (after);
+            return messages;
         }
 
         function toggleMainFlow(windowId) {
@@ -1388,13 +1404,13 @@
             const icon = isCollapsed ? '►' : '▼';
             const thoughtText = chain.thoughtCount > 0 ? `💭 ${chain.thoughtCount} thought${chain.thoughtCount > 1 ? 's' : ''}` : '';
             const toolText = chain.toolCount > 0 ? `🔧 ${chain.toolCount} tool${chain.toolCount > 1 ? 's' : ''}` : '';
-            const commandText = chain.commandCount > 0 ? `🔧 /${chain.messages.find(m => m.content?.command_name)?.content.command_name || 'command'}` : '';
+            const commandText = chain.commandCount > 0 ? `🔧 /${escapeHtml(chain.messages.find(m => m.content?.command_name)?.content.command_name || 'command')}` : '';
 
             const parts = [thoughtText, toolText, commandText].filter(p => p);
             const summary = parts.join(', ');
 
             let html = `
-                <tr class="thinking" onclick="toggleChain('${chain.id}')" style="cursor: pointer;">
+                <tr class="thinking" onclick="toggleChain('${escapeJsAttr(chain.id)}')" style="cursor: pointer;">
                     <td class="expand-icon">${icon}</td>
                     <td class="num">${chain.messages[0].message_number}</td>
                     <td class="importance">Chain</td>
@@ -1424,11 +1440,11 @@
             if (m.message_type === 'CompactingAction') {
                 const orphanedIndicator = m.is_orphaned ? ' (orphaned)' : '';
                 const preview = `📋 COMPACTING: (compact action)`;
-                const uuid = m.id ? m.id.substring(0, 8) : '';
+                const uuid = m.id ? escapeHtml(m.id.substring(0, 8)) : '';
                 const rowNumDisplay = rowNumber !== null ? rowNumber : '';
 
                 const html = `
-                    <tr class="thinking" style="background: #4a3a2a; font-style: italic;" onclick="toggleRow('${m.id}')" data-message-id="${m.id}">
+                    <tr class="thinking" style="background: #4a3a2a; font-style: italic;" onclick="toggleRow('${escapeJsAttr(m.id)}')" data-message-id="${escapeHtml(m.id)}">
                         <td class="blockheight"></td>
                         <td class="num"></td>
                         <td class="importance">Compact</td>
@@ -1481,7 +1497,7 @@
             const preview = parsedContent.length > 200 ? parsedContent.substring(0, 200) + '...' : parsedContent;
 
             const indentClass = ''; // Removed indent since we removed hierarchy columns
-            const uuid = m.id ? m.id.substring(0, 8) : '';
+            const uuid = m.id ? escapeHtml(m.id.substring(0, 8)) : '';
 
             // Display sender and recipients
             let senderDisplay = m.sender;
@@ -1517,23 +1533,23 @@
             if (m.notes && m.notes.length > 0) {
                 m.notes.forEach(note => {
                     const truncated = note.content.length > 100 ? note.content.substring(0, 100) + '...' : note.content;
-                    noteIcons += `<span style="font-size: 0.7em; cursor: help;" title="[${note.from_entity}] ${escapeHtml(truncated)}">📝</span> `;
+                    noteIcons += `<span style="font-size: 0.7em; cursor: help;" title="[${escapeHtml(note.from_entity)}] ${escapeHtml(truncated)}">📝</span> `;
                 });
             }
 
             const blockheight = m.eth_blockheight ? m.eth_blockheight.toLocaleString() : '';
 
             let html = `
-                <tr class="${rowClass}" onclick="toggleRow('${m.id}')" data-message-id="${m.id}">
+                <tr class="${rowClass}" onclick="toggleRow('${escapeJsAttr(m.id)}')" data-message-id="${escapeHtml(m.id)}">
                     <td class="blockheight">${blockheight}</td>
                     <td class="num">${m.message_number || '?'}</td>
-                    <td class="importance">${continuationIcon}${m.message_type}</td>
-                    <td class="from ${indentClass}">${participantIcon}${thinkingIcon}${typeMarker}${senderDisplay}</td>
+                    <td class="importance">${continuationIcon}${escapeHtml(m.message_type)}</td>
+                    <td class="from ${indentClass}">${participantIcon}${thinkingIcon}${typeMarker}${escapeHtml(senderDisplay)}</td>
                     <td class="arrow">→</td>
-                    <td class="to">${recipientsDisplay}</td>
+                    <td class="to">${escapeHtml(recipientsDisplay)}</td>
                     <td class="content">${noteIcons}${escapeHtml(preview)}</td>
                     <td class="timestamp" style="font-size: 0.85em;">${timestamp}</td>
-                    <td class="source" style="font-size: 0.85em;">${sourceFile}</td>
+                    <td class="source" style="font-size: 0.85em;">${escapeHtml(sourceFile)}</td>
                     <td class="uuid">${uuid}</td>
                 </tr>
             `;
@@ -1632,22 +1648,22 @@
                     let expandedContent = `<td colspan="9" style="padding: 10px 20px; border-left: 3px solid ${borderColor};">`;
 
                     // Show UUID at top (always)
-                    expandedContent += `<div style="font-size: 11px; color: ${noteHeaderColor}; margin-bottom: 8px; user-select: text;">UUID: ${message.id}</div>`;
+                    expandedContent += `<div style="font-size: 11px; color: ${noteHeaderColor}; margin-bottom: 8px; user-select: text;">UUID: ${escapeHtml(message.id)}</div>`;
 
                     // Show metadata for CompactingAction
                     if (message.message_type === 'CompactingAction') {
                         expandedContent += `<div style="font-size: 12px; color: ${noteHeaderColor}; margin-bottom: 8px;">`;
                         expandedContent += `<strong>COMPACTING ACTION</strong><br>`;
                         expandedContent += `Summary: (compact action)<br>`;
-                        expandedContent += `Trigger: ${message.compact_trigger || 'unknown'}<br>`;
+                        expandedContent += `Trigger: ${escapeHtml(message.compact_trigger || 'unknown')}<br>`;
                         if (message.pre_compact_tokens) {
                             expandedContent += `Pre-compact tokens: ${message.pre_compact_tokens.toLocaleString()}<br>`;
                         }
-                        expandedContent += `Leaf message (last before compact): ${message.ending_message_id}<br>`;
+                        expandedContent += `Leaf message (last before compact): ${escapeHtml(message.ending_message_id)}<br>`;
                         if (message.is_orphaned) {
                             expandedContent += `<span style="color: #ce9178;">Status: Orphaned (context heap not yet linked)</span><br>`;
                         } else {
-                            expandedContent += `Linked to heap: ${message.linked_heap_id}<br>`;
+                            expandedContent += `Linked to heap: ${escapeHtml(message.linked_heap_id)}<br>`;
                         }
                         expandedContent += `</div>`;
 
@@ -1657,11 +1673,11 @@
                             expandedContent += `
                                 <div style="margin: 10px 0;">
                                     <button
-                                        onclick="toggleRawContent('${rawId}')"
+                                        onclick="toggleRawContent('${escapeJsAttr(rawId)}')"
                                         style="padding: 4px 8px; font-size: 11px; cursor: pointer; background: ${buttonBackground}; color: ${buttonText}; border: 1px solid ${buttonBorder}; border-radius: 3px;">
                                         Show Raw JSONL
                                     </button>
-                                    <div id="${rawId}" style="display: none; margin-top: 10px; padding: 10px; background: ${noteBackground}; border: 1px solid ${noteBorderColor}; border-radius: 3px;">
+                                    <div id="${escapeHtml(rawId)}" style="display: none; margin-top: 10px; padding: 10px; background: ${noteBackground}; border: 1px solid ${noteBorderColor}; border-radius: 3px;">
                                         <pre style="margin: 0; white-space: pre-wrap; font-size: 10px; max-height: 400px; overflow-y: auto;">${escapeHtml(JSON.stringify(message.raw_imported_content, null, 2))}</pre>
                                     </div>
                                 </div>
@@ -1673,20 +1689,20 @@
                     else if (message.message_type === 'ToolUse' || message.message_type === 'ToolResult' || message.message_type === 'Thought') {
                         expandedContent += `<div style="font-size: 11px; color: ${noteHeaderColor}; margin-bottom: 8px;">`;
                         if (message.message_type === 'ToolUse') {
-                            expandedContent += `Tool: ${message.tool_name || '?'} · ID: ${message.tool_id || '?'}`;
+                            expandedContent += `Tool: ${escapeHtml(message.tool_name || '?')} · ID: ${escapeHtml(message.tool_id || '?')}`;
                         } else if (message.message_type === 'ToolResult') {
-                            expandedContent += `Tool Result · Use ID: ${message.tool_use_id || '?'}`;
+                            expandedContent += `Tool Result · Use ID: ${escapeHtml(message.tool_use_id || '?')}`;
                             if (message.is_error) expandedContent += ` · ERROR`;
                         } else if (message.message_type === 'Thought') {
                             expandedContent += `Thinking`;
-                            if (message.signature) expandedContent += ` · Signature: ${message.signature}`;
+                            if (message.signature) expandedContent += ` · Signature: ${escapeHtml(message.signature)}`;
                         }
                         if (message.parent_id) {
-                            expandedContent += ` · Parent: ${message.parent_id.substring(0, 8)}`;
+                            expandedContent += ` · Parent: ${escapeHtml(message.parent_id.substring(0, 8))}`;
                         }
-                        if (message.cwd) expandedContent += ` · CWD: ${message.cwd}`;
-                        if (message.git_branch) expandedContent += ` · Branch: ${message.git_branch}`;
-                        if (message.client_version) expandedContent += ` · Client: ${message.client_version}`;
+                        if (message.cwd) expandedContent += ` · CWD: ${escapeHtml(message.cwd)}`;
+                        if (message.git_branch) expandedContent += ` · Branch: ${escapeHtml(message.git_branch)}`;
+                        if (message.client_version) expandedContent += ` · Client: ${escapeHtml(message.client_version)}`;
                         expandedContent += `</div>`;
                     }
 
@@ -1718,11 +1734,11 @@
                         expandedContent += `
                             <div style="margin: 10px 0;">
                                 <button
-                                    onclick="toggleRawContent('${rawId}')"
+                                    onclick="toggleRawContent('${escapeJsAttr(rawId)}')"
                                     style="padding: 4px 8px; font-size: 11px; cursor: pointer; background: ${buttonBackground}; color: ${buttonText}; border: 1px solid ${buttonBorder}; border-radius: 3px;">
                                     Show Raw JSONL
                                 </button>
-                                <div id="${rawId}" style="display: none; margin-top: 10px; padding: 10px; background: ${noteBackground}; border: 1px solid ${noteBorderColor}; border-radius: 3px;">
+                                <div id="${escapeHtml(rawId)}" style="display: none; margin-top: 10px; padding: 10px; background: ${noteBackground}; border: 1px solid ${noteBorderColor}; border-radius: 3px;">
                                     <pre style="margin: 0; white-space: pre-wrap; font-size: 10px; max-height: 400px; overflow-y: auto;">${escapeHtml(JSON.stringify(message.raw_imported_content, null, 2))}</pre>
                                 </div>
                             </div>
@@ -1736,7 +1752,7 @@
                         message.notes.forEach(note => {
                             const blockInfo = note.eth_blockheight ? ` · Block ${note.eth_blockheight.toLocaleString()}` : '';
                             expandedContent += `<div style="margin-bottom: 8px; padding: 8px; background: ${noteBackground}; border-left: 2px solid ${noteBorderColor};">`;
-                            expandedContent += `<div style="color: ${noteAuthorColor}; font-size: 10px; margin-bottom: 4px;">[${note.from_entity}]${blockInfo}</div>`;
+                            expandedContent += `<div style="color: ${noteAuthorColor}; font-size: 10px; margin-bottom: 4px;">[${escapeHtml(note.from_entity)}]${blockInfo}</div>`;
                             expandedContent += `<div style="white-space: pre-wrap;">${escapeHtml(note.content)}</div>`;
                             expandedContent += `</div>`;
                         });
@@ -1846,10 +1862,31 @@
             return JSON.stringify(content);
         }
 
+        // Escapes for both element content and quoted attribute values.  The
+        // old textContent->innerHTML trick left " and ' alone, so a value
+        // placed inside title="..." could break out of the attribute.
         function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+            if (text === null || text === undefined) return '';
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        // For a value inside a single-quoted JS string inside an HTML
+        // attribute: onclick="f('${escapeJsAttr(x)}')".  The browser
+        // HTML-decodes the attribute before the JS parser sees it, so
+        // escapeHtml alone would hand the parser a bare ' -- escape for JS
+        // first, then for the attribute.
+        function escapeJsAttr(text) {
+            if (text === null || text === undefined) return '';
+            return escapeHtml(String(text)
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'")
+                .replace(/\n/g, '\\n')
+                .replace(/\r/g, '\\r'));
         }
 
         // Handle note icon clicks with event delegation
@@ -1898,10 +1935,9 @@
             console.log(`Loading ${heapsToLoad.length} unloaded heaps for search...`);
             const loadPromises = heapsToLoad.map(async heap => {
                 try {
-                    const response = await fetch(`/api/heap_messages/${heap.id}/`);
-                    const data = await response.json();
-                    heap.messages = data.messages;
-                    allMessages.push(...data.messages);
+                    const heapMessages = await fetchHeapMessages(heap.id);
+                    heap.messages = heapMessages;
+                    allMessages.push(...heapMessages);
                     loadedHeaps.add(heap.id);
                 } catch (error) {
                     console.error(`Error loading heap ${heap.id}:`, error);

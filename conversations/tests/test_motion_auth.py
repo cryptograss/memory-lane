@@ -58,9 +58,10 @@ class MotionAuthTest(TestCase):
         patcher.enable()
         self.addCleanup(patcher.disable)
 
-    def enroll(self, name=None, key=None, namespace=motion_auth.NAMESPACE):
+    def enroll(self, name=None, key=None, namespace=motion_auth.NAMESPACE, origin='http://testserver'):
         challenge = self.client.get('/api/auth/challenge/').json()['challenge']
-        body = {'challenge': challenge, 'signature': sign(key or self.justin_key, challenge, namespace)}
+        message = motion_auth.signed_message(challenge, origin)
+        body = {'challenge': challenge, 'signature': sign(key or self.justin_key, message, namespace)}
         if name:
             body['name'] = name
         return self.client.post('/api/auth/enroll/', json.dumps(body), content_type='application/json')
@@ -95,6 +96,11 @@ class MotionAuthTest(TestCase):
         self.assertEqual(again.status_code, 410)
         self.assertEqual(Device.objects.count(), 1)
 
+    def test_a_preview_marks_the_devices_it_enrolls(self):
+        with override_settings(DEVICE_LABEL_PREFIX='preview · '):
+            self.sign_in()
+        self.assertEqual(Device.objects.get().label, 'preview · phone')
+
     def test_the_key_says_who_you_are(self):
         response = self.enroll()
         self.assertEqual(response.json()['name'], 'justin')
@@ -110,6 +116,36 @@ class MotionAuthTest(TestCase):
 
     def test_a_signature_for_another_purpose_is_refused(self):
         self.assertEqual(self.enroll(namespace='git').status_code, 403)
+
+    def test_a_signature_made_for_another_server_is_refused(self):
+        # What a server relaying a production challenge would hold.
+        self.assertEqual(self.enroll(origin='https://justin1.hunter.cryptograss.live').status_code, 403)
+
+    def test_a_bare_challenge_signature_is_refused(self):
+        challenge = self.client.get('/api/auth/challenge/').json()['challenge']
+        body = {'challenge': challenge, 'signature': sign(self.justin_key, challenge)}
+        response = self.client.post('/api/auth/enroll/', json.dumps(body), content_type='application/json')
+        self.assertEqual(response.status_code, 403)
+
+    def test_the_client_signs_what_the_server_checks(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('motion_login', 'tools/motion_login.py')
+        client = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(client)
+        self.assertEqual(client.NAMESPACE, motion_auth.NAMESPACE)
+        self.assertEqual(client.signed_message('c', 'https://Memory-Lane.example/'),
+                         motion_auth.signed_message('c', 'https://memory-lane.example'))
+
+    def test_enrolling_is_rate_limited_and_size_capped(self):
+        from django.core.cache import cache
+        cache.clear()
+        with mock.patch('conversations.views_auth.ENROLL_PER_MINUTE', 2):
+            codes = [self.enroll(key=self.stranger_key).status_code for _ in range(3)]
+        self.assertEqual(codes, [403, 403, 429])
+        cache.clear()
+        big = self.client.post('/api/auth/enroll/', '{"x": "' + 'a' * 70_000 + '"}',
+                               content_type='application/json')
+        self.assertEqual(big.status_code, 413)
 
     def test_a_stale_challenge_is_refused(self):
         with mock.patch.object(motion_auth, 'CHALLENGE_MAX_AGE', -1):
@@ -155,6 +191,16 @@ class MotionAuthTest(TestCase):
         with mock.patch('conversations.views_auth.PER_MINUTE', 2):
             self.say('one'); self.say('two')
             self.assertEqual(self.say('three').status_code, 429)
+
+    def test_odd_bodies_are_refused_not_crashed_on(self):
+        self.sign_in()
+        token = self.client.cookies['csrftoken'].value
+        for body in ('{"text": 5}', '{"text": ["a"]}', '[1]'):
+            response = self.client.post('/api/motions/m26/say/', body, content_type='application/json',
+                                        HTTP_X_CSRFTOKEN=token)
+            self.assertEqual(response.status_code, 400, body)
+        self.assertEqual(self.say('a\x00b').status_code, 201)
+        self.assertEqual(Message.objects.get(source_file='motion-web').content, 'ab')
 
     def test_signing_out_revokes_the_device(self):
         self.sign_in()

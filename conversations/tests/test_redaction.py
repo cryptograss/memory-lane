@@ -60,6 +60,28 @@ class RedactTest(SimpleTestCase):
         self.assertEqual(redact('-H "Authorization: Bearer abcdef123456"')[0],
                          f'-H "Authorization: Bearer {MARK}"')
 
+    def test_flags_that_carry_a_secret(self):
+        key = '0x' + 'ab' * 32
+        self.assertEqual(redact(f'cast send --private-key {key} --rpc-url x')[0],
+                         f'cast send --private-key {MARK} --rpc-url x')
+        self.assertEqual(redact('psql --password=hunter22 -h db')[0], f'psql --password={MARK} -h db')
+        self.assertEqual(redact('tool --api-key Zq8Fh2kLm0xx')[0], f'tool --api-key {MARK}')
+
+    def test_rpc_keys_in_url_paths(self):
+        key = 'Abc123' * 4
+        self.assertEqual(redact(f'https://eth-mainnet.g.alchemy.com/v2/{key} ok')[0],
+                         f'https://eth-mainnet.g.alchemy.com/v2/{MARK} ok')
+        self.assertEqual(redact(f'https://mainnet.infura.io/v3/{"a1" * 16}')[0],
+                         f'https://mainnet.infura.io/v3/{MARK}')
+
+    def test_flags_that_are_not_secrets(self):
+        for text in ('ssh -p 2222 host', 'docker run -p 8080:80 img', 'mkdir -p /tmp/x', 'claude -p "hello"',
+                     'find . -print', '--token-file ~/.config/token', '--max-tokens 4096', 'git log -p',
+                     'pytest -p no:cacheprovider', 'pip install -p pkg', 'ssh -p user@22',
+                     'gh auth login --with-token --hostname x'):
+            with self.subTest(text=text):
+                self.assertUntouched(text)
+
     def test_placeholders_and_templates_are_left_alone(self):
         for text in ('password: {{ vault_db_password }}', 'TOKEN=${GITHUB_TOKEN}', 'API_KEY=<your-key>',
                      'password=changeme', 'secret: ****', 'SECRET_KEY=[REDACTED]'):
@@ -131,3 +153,14 @@ class RedactStoredTest(TestCase):
         leaky.refresh_from_db(); clean.refresh_from_db()
         self.assertEqual(leaky.content, f'here {MARK} ok')
         self.assertEqual(clean.content, 'nothing to see')
+
+    def test_raw_imported_lines_are_redacted_too(self):
+        from conversations.models import RawImportedContent
+        raw = RawImportedContent.objects.create(raw_data={'message': {'content': f'GITHUB_TOKEN={GH}'}})
+        out = StringIO()
+        call_command('redact_stored', stdout=out)
+        self.assertIn('1 raw imported lines', out.getvalue())
+        self.assertNotIn(GH, out.getvalue())
+        call_command('redact_stored', '--apply', stdout=StringIO())
+        raw.refresh_from_db()
+        self.assertEqual(raw.raw_data, {'message': {'content': f'GITHUB_TOKEN={MARK}'}})

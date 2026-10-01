@@ -12,7 +12,9 @@ It looks for shapes, not values:
   - NAME=value / "name": "value" where the name says secret, token,
     password or key -- keeping the name, so the record still says what
     was there;
-  - credentials inside URLs, and Authorization headers.
+  - credentials inside URLs, and Authorization headers;
+  - command-line flags named for one (`--password X`, `--private-key X`),
+    and RPC keys that live in a URL's path (Alchemy, Infura).
 
 Deliberately not matched: bare 64-hex strings. Here they are mostly
 transaction and block hashes, and an Ethereum private key is caught by
@@ -53,6 +55,14 @@ _SECRET_NAME = r'(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]{0,40}?(?:secret|token|passw(?
 ASSIGNMENT = re.compile(
     rf'(?i)(?P<name>["\']?{_SECRET_NAME}["\']?\s*[:=]\s*["\']?)(?P<value>[^\s"\'\\,;(){{}}\[\]]{{4,}})(?=$|[\s"\'\\,;)}}\]])')
 URL_CREDENTIALS = re.compile(r'(?P<head>\b[a-z][a-z0-9+.-]*://[^\s:/@"\']+:)(?P<value>[^\s@/"\']+)(?=@)')
+# --password X, --private-key=X, --api-key X. Not a bare -p: over the
+# transcripts it was nearly always a port, `claude -p`, or another flag.
+FLAG = re.compile(
+    r'(?P<head>(?<![\w-])--?[a-z0-9-]{0,30}(?:password|passwd|secret|token|private-key|privkey|api-key|apikey|access-key)'
+    r'(?![a-z])[a-z0-9-]{0,30}(?:\s+|=))(?P<value>(?!-)[^\s"\'\\,;`]{4,})', re.I)
+# RPC providers that put the key in the path: .../v2/<key>, .../v3/<key>.
+URL_PATH_KEY = re.compile(
+    r'(?P<head>\bhttps?://[a-z0-9.-]*(?:alchemy\.com|alchemyapi\.io|infura\.io)/v[0-9]+/)(?P<value>[A-Za-z0-9_-]{16,})', re.I)
 AUTH_HEADER = re.compile(r'(?i)(?P<head>\bauthorization\s*[:=]\s*["\']?(?:bearer|basic|token)\s+)(?P<value>[A-Za-z0-9._~+/=-]{8,})')
 
 # Not secrets: placeholders, templates, numbers (token counts, file:line),
@@ -84,6 +94,8 @@ def redact(text):
     text = TOKEN.sub(token, text)
     text = AUTH_HEADER.sub(keep, text)
     text = URL_CREDENTIALS.sub(keep, text)
+    text = URL_PATH_KEY.sub(keep, text)
+    text = FLAG.sub(keep, text)
     text = ASSIGNMENT.sub(keep, text)
     return text, count
 
