@@ -11,7 +11,7 @@ never prints a secret.
 
 from django.core.management.base import BaseCommand
 
-from conversations.models import Message
+from conversations.models import Message, RawImportedContent
 from conversations.services.redaction import MARK, redact_value
 
 
@@ -33,27 +33,36 @@ class Command(BaseCommand):
         parser.add_argument('--chunk', type=int, default=2000)
 
     def handle(self, *args, **options):
-        changed = redactions = shown = 0
+        self.shown = 0
+        verb = 'redacted' if options['apply'] else 'would redact'
+        # Message content is what the views render; raw_data is the line as
+        # imported, which the legacy heap endpoints serve as-is.
+        for model, field, noun in ((Message, 'content', 'messages'),
+                                   (RawImportedContent, 'raw_data', 'raw imported lines')):
+            redactions, changed = self.sweep(model, field, options)
+            self.stdout.write(self.style.SUCCESS(f'{verb} {redactions} values in {changed} {noun}'))
+
+    def sweep(self, model, field, options):
+        changed = redactions = 0
         last = None
         while True:
-            rows = Message.objects.order_by('id')
+            rows = model.objects.order_by('id')
             if last is not None:
                 rows = rows.filter(id__gt=last)
-            rows = list(rows.values_list('id', 'content')[:options['chunk']])
+            rows = list(rows.values_list('id', field)[:options['chunk']])
             if not rows:
                 break
             last = rows[-1][0]
-            for message_id, content in rows:
-                new, count = redact_value(content)
+            for row_id, value in rows:
+                new, count = redact_value(value)
                 if not count:
                     continue
                 changed += 1
                 redactions += count
                 for snippet in contexts(new):
-                    if shown < options['show']:
-                        self.stdout.write(f'  {str(message_id)[:8]} …{snippet}')
-                        shown += 1
+                    if self.shown < options['show']:
+                        self.stdout.write(f'  {str(row_id)[:8]} …{snippet}')
+                        self.shown += 1
                 if options['apply']:
-                    Message.objects.filter(id=message_id).update(content=new)
-        verb = 'redacted' if options['apply'] else 'would redact'
-        self.stdout.write(self.style.SUCCESS(f'{verb} {redactions} values in {changed} messages'))
+                    model.objects.filter(id=row_id).update(**{field: new})
+        return redactions, changed
