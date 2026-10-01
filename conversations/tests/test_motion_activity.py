@@ -54,6 +54,13 @@ class ActivityTest(TestCase):
         self.add(self.magent, 5, [{'type': 'text', 'text': 'found it'}], stop_reason='end_turn', is_sidechain=True)
         self.assertEqual(self.now(), {'agent': 'magent', 'doing': 'working with helpers', 'since': NOW - 40})
 
+    def test_a_long_turn_counts_from_its_start(self):
+        self.add(self.magent, 400, [{'type': 'text', 'text': 'earlier'}], stop_reason='end_turn')
+        self.add(self.justin, 300, 'a big job')
+        for i in range(80):
+            self.add(self.magent, 299 - i, {}, model=ToolUse, tool_name='Bash', tool_id=f't{i}', stop_reason='tool_use')
+        self.assertEqual(self.now()['since'], NOW - 300)
+
     def test_end_turn_is_the_end(self):
         self.add(self.justin, 40, 'go')
         self.add(self.magent, 5, [{'type': 'text', 'text': 'done'}], stop_reason='end_turn')

@@ -318,6 +318,7 @@ def turn_payload(msg, text, mentionable=()):
 
 TURN_ENDS = {'end_turn', 'refusal', 'stop_sequence', 'max_tokens'}
 ACTIVITY_WINDOW = 600  # seconds; a streak older than this is a session that died
+RECENT = 60  # rows read to see what's happening now
 _TOOL_WORDS = {
     'Bash': 'running a command', 'Read': 'reading', 'Grep': 'searching', 'Glob': 'searching',
     'Edit': 'editing', 'Write': 'writing a file', 'NotebookEdit': 'editing',
@@ -363,7 +364,7 @@ def activity(motion, now=None):
     # they neither describe nor end its turn.
     recent = list(motion.messages.filter(is_sidechain=False)
                   .select_related('sender', 'tooluse', 'thought', 'toolresult')
-                  .order_by('-created_at')[:60])
+                  .order_by('-created_at')[:RECENT])
     if not recent or now - _when(recent[0]) > ACTIVITY_WINDOW:
         return None
 
@@ -390,7 +391,17 @@ def activity(motion, now=None):
             break
         streak.append(msg)
     agent = next((m.sender_id for m in streak if m.sender_id in agents), None) or sorted(agents or {'magent'})[0]
-    return {'agent': agent, 'doing': _doing(newest), 'since': _when(streak[-1])}
+    start = streak[-1]
+    if len(streak) == len(recent) == RECENT:
+        # A long turn runs past the rows read above: find where it began.
+        from django.db.models import Q
+        mine = motion.messages.filter(is_sidechain=False)
+        boundary = (mine.filter(created_at__lt=start.created_at)
+                    .filter(Q(sender_id__in=agents, stop_reason__in=TURN_ENDS) | Q(source_file='motion-web'))
+                    .order_by('-created_at').first())
+        if boundary is not None:
+            start = mine.filter(created_at__gt=boundary.created_at).order_by('created_at').first() or start
+    return {'agent': agent, 'doing': _doing(newest), 'since': _when(start)}
 
 
 def motion_payload(motion):
