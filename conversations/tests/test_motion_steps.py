@@ -37,6 +37,14 @@ class StepsTest(TestCase):
         self.assertEqual([t['sender'] for t in body['turns']], ['justin', 'magent'])
         self.assertEqual([(s['tool'], s['verb'], s['summary']) for s in body['steps']], [('Bash', 'ran', 'List files')])
 
+    def test_a_choice_not_to_speak_is_a_dot_not_a_turn(self):
+        self.add(self.justin, '@magent anything?')
+        self.add(self.magent, [{'type': 'text', 'text': '<silent/>'}])
+        self.add(self.magent, [{'type': 'text', 'text': '<silent>they are sorting out the gig</silent>'}])
+        body = self.get()
+        self.assertEqual([t['sender'] for t in body['turns']], ['justin'])  # the poller reads turns as answers
+        self.assertEqual([q['reason'] for q in body['quiet']], ['', 'they are sorting out the gig'])
+
     def test_a_step_opens_to_its_input_and_result(self):
         step = self.add(self.magent, {'command': 'false'}, model=ToolUse, tool_name='Bash', tool_id='t9')
         self.add(self.tool, 'exit 1', model=ToolResult, tool_use_id='t9', is_error=True)

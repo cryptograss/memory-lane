@@ -77,7 +77,7 @@ class MotionPollerTest(TestCase):
         self.assertEqual(session, 's-local')
         self.assertTrue(prompt.startswith('<motion-wake motion="m26">'))
         self.assertIn('[skyler, 2026-09-29T18:00Z] @magent are you there?', prompt)
-        self.assertIn(SILENT, prompt)
+        self.assertIn('<silent>a few words on why</silent>', prompt)
 
     def test_only_the_poller_holding_the_newest_session_answers(self):
         # Two containers each hold a session in the Motion; only one may speak.

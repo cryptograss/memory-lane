@@ -67,21 +67,26 @@ def api_motion_turns(request, slug):
     limit = None if after is not None else PAGE
 
     names = known_names()
-    turns_out, step_msgs = [], []
+    turns_out, step_msgs, quiet_out = [], [], []
     for kind, msg, text in timeline(motion, after=after, before=before, limit=limit):
         if kind == 'turn':
             turns_out.append(turn_payload(msg, text, names))
+        elif kind == 'quiet':
+            quiet_out.append({'id': str(msg.id), 'sender': msg.sender_id,
+                              'created_at': msg.created_at.isoformat(), 'reason': text})
         else:
             step_msgs.append(msg)
     images = step_images(step_msgs)
     steps_out = [{**step_payload(m), 'images': images.get(str(m.id), [])} for m in step_msgs]
-    first = min([t['created_at'] for t in turns_out] + [s['created_at'] for s in steps_out], default=None)
+    first = min([i['created_at'] for i in turns_out + steps_out + quiet_out], default=None)
     return JsonResponse({
         'motion': motion_payload(motion),
         # Prose only: the poller reads an agent turn here as an answer, so a
         # tool call must never appear in this list.
         'turns': turns_out,
         'steps': steps_out,
+        # Choices not to speak, shown as dots. Not turns: they answer nothing.
+        'quiet': quiet_out,
         'has_earlier': bool(limit) and first is not None and motion.messages.filter(
             is_sidechain=False, created_at__lt=first).exists(),
         'activity': activity(motion),

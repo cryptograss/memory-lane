@@ -44,6 +44,18 @@ def prose(content):
     return ''
 
 
+# An agent's choice not to speak: <silent/>, or <silent>why</silent>.
+_QUIET = re.compile(r'^<silent\s*/>$|^<silent>(.*)</silent>$', re.S)
+
+
+def quiet_reason(text):
+    """The reason in a silent reply ('' if none given), or None if it isn't one."""
+    match = _QUIET.match(text)
+    if not match:
+        return None
+    return (match.group(1) or '').strip()
+
+
 def is_wrapper(text):
     return text.startswith(_WRAPPER_PREFIXES)
 
@@ -338,7 +350,8 @@ def render_html(text, mentionable=()):
 def timeline(motion, after=None, before=None, limit=None):
     """Readable turns and the agent's tool steps, oldest first.
 
-    Yields ('turn', message, text) and ('step', message, None). A step is
+    Yields ('turn', message, text), ('quiet', message, reason) for an
+    agent's choice not to speak, and ('step', message, None). A step is
     one tool call; its result is fetched on demand (step_detail), so the
     thread stays light. `limit` keeps the newest that many items -- a first
     load, or a page further back with `before`.
@@ -358,7 +371,12 @@ def timeline(motion, after=None, before=None, limit=None):
         if hasattr(msg, 'tooluse'):
             return ('step', msg, None)
         text = prose(msg.content)
-        if not text or is_wrapper(text):
+        if not text:
+            return None
+        reason = quiet_reason(text)
+        if reason is not None:
+            return ('quiet', msg, reason)
+        if is_wrapper(text):
             return None
         return ('turn', msg, text)
 
