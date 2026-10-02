@@ -2,6 +2,7 @@ from django.urls import path
 from . import views
 from . import views_auth
 from . import views_motions
+from . import views_runner
 
 urlpatterns = [
     path('motions/', views_motions.motions_page, name='motions'),
@@ -18,6 +19,7 @@ urlpatterns = [
     path('api/motions/<slug:slug>/steps/<str:step_id>/', views_motions.api_motion_step, name='api_motion_step'),
     path('api/motions/<slug:slug>/typing/', views_motions.api_typing, name='api_motion_typing'),
     path('api/motions/<slug:slug>/media/', views_auth.api_media, name='api_motion_media'),
+    path('api/motions/<slug:slug>/stream/', views_runner.api_stream, name='api_motion_stream'),
     path('motions/media/<str:sha256>.<str:ext>', views_motions.media_file, name='motion_media'),
     path('api/wikilinks/', views_motions.api_wikilinks, name='api_wikilinks'),
     path('api/mentions/<slug:name>/', views_motions.api_mentions, name='api_mentions'),

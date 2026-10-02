@@ -962,7 +962,26 @@ def ingest(request):
     if not lines:
         return JsonResponse({'error': 'No lines provided'}, status=400)
 
-    # Get or create era
+    imported, skipped, errors = import_lines(lines, era_name=era_name, source=source, username=username)
+    return JsonResponse({
+        'imported': imported,
+        'skipped': skipped,
+        'errors': errors[:10]  # Limit error messages returned
+    })
+
+
+def import_lines(lines, *, era_name='Current Working Era (Era N)', source='unknown', username='justin'):
+    """Scrub, import and heap-assign transcript lines: (imported, skipped, errors).
+
+    Every way into the record goes through here -- the watcher's ingest and
+    the runner's stream alike -- so a line gets the same redaction, routing
+    and storage whichever way it came. Rows are filed as from
+    'ingest-<source>'.
+    """
+    from importers_and_parsers.claude_code_v2 import import_line_from_claude_code_v2
+    from watcher.heap_assignment import assign_heap_to_message
+    from constant_sorrow.constants import EVENT_TYPE_WE_DO_NOT_HANDLE_YET
+
     era, _ = Era.objects.get_or_create(name=era_name)
 
     # Optional: Apply secrets scrubbing via external scrubber service. Lines
@@ -1024,9 +1043,4 @@ def ingest(request):
             logger.error(f"Error importing line from {source}: {e}")
 
     logger.info(f"Ingest from {source}: imported={imported}, skipped={skipped}, errors={len(errors)}")
-
-    return JsonResponse({
-        'imported': imported,
-        'skipped': skipped,
-        'errors': errors[:10]  # Limit error messages returned
-    })
+    return imported, skipped, errors

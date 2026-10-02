@@ -48,11 +48,17 @@ class FakeWaker:
     def can_wake(self, session_id):
         return session_id in self.local
 
-    def wake(self, session_id, prompt):
+    def wake(self, session_id, prompt, new_session_id=None, on_event=None, **options):
         self.woken.append((session_id, prompt))
+        self.options = options
         if session_id in self.fail:
             raise RuntimeError('No conversation found')
-        return 'fork-1', self.reply
+        if on_event:  # what a real run prints, in order
+            on_event({'type': 'system', 'subtype': 'init'})
+            on_event({'type': 'assistant', 'uuid': 'u-1', 'message': {'role': 'assistant', 'content': [
+                {'type': 'text', 'text': self.reply}]}})
+            on_event({'type': 'result', 'subtype': 'success', 'result': self.reply, 'total_cost_usd': 0.01})
+        return new_session_id or 'fork-1', self.reply
 
 
 def mention(motion, t):
@@ -152,10 +158,10 @@ class MotionPollerTest(TestCase):
         seen = {}
 
         class Interrupted(FakeWaker):
-            def wake(inner, session_id, prompt):
+            def wake(inner, session_id, prompt, **kwargs):
                 # Another process starting now reads the state file as it is.
                 seen['state'] = json.loads(poller.state_path.read_text())
-                return super().wake(session_id, prompt)
+                return super().wake(session_id, prompt, **kwargs)
 
         poller.waker = Interrupted()
         poller.poll_once()
@@ -296,3 +302,138 @@ class ClaudeCodeWakerTest(TestCase):
         self.assertEqual(project_dir_name('/home/magent/workspace/memory-lane/.claude/worktrees/importer-cleanup'),
                          '-home-magent-workspace-memory-lane--claude-worktrees-importer-cleanup')
         self.assertTrue(os.path.isdir(os.path.expanduser('~/.claude/projects/' + project_dir_name(os.path.expanduser('~')))))
+
+
+class FakeHTTP:
+    """Records posts; answers each with the next status (an Exception is raised)."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers) or [200]
+        self.posts = []
+
+    def post(self, url, json=None, headers=None, timeout=None):
+        from unittest import mock
+        self.posts.append((url, json, headers))
+        answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        if isinstance(answer, Exception):
+            raise answer
+        return mock.Mock(status_code=answer)
+
+
+class StreamPosterTest(TestCase):
+
+    def poster(self, http):
+        from poller.motion_poller import StreamPoster
+        return StreamPoster('https://ml.test/', 'k', 'm26', 'sess-1', http=http, pause=0)
+
+    def test_events_worth_posting_go_to_the_motion_in_batches(self):
+        http = FakeHTTP(200)
+        poster = self.poster(http)
+        poster.put({'type': 'system', 'subtype': 'init'})  # about the run, not the turn
+        poster.put({'type': 'assistant', 'uuid': 'a'})
+        poster.put({'type': 'result', 'uuid': 'r'})
+        poster.close()
+        url, body, headers = http.posts[0]
+        self.assertEqual(url, 'https://ml.test/api/motions/m26/stream/')
+        self.assertEqual(headers, {'Authorization': 'Bearer k'})
+        self.assertEqual(body['session_id'], 'sess-1')
+        self.assertEqual([e['type'] for p in http.posts for e in p[1]['events']], ['assistant', 'result'])
+        self.assertEqual((poster.sent, poster.failed), (2, 0))
+
+    def test_a_refusal_is_not_retried_and_a_failure_is(self):
+        import requests
+        refused = FakeHTTP(401)
+        poster = self.poster(refused)
+        poster.put({'type': 'assistant'})
+        poster.close()
+        self.assertEqual((len(refused.posts), poster.failed), (1, 1))
+
+        flaky = FakeHTTP(requests.ConnectionError('down'), 200)
+        poster = self.poster(flaky)
+        poster.put({'type': 'assistant'})
+        poster.close()
+        self.assertEqual((len(flaky.posts), poster.sent), (2, 1))
+
+
+class StreamingPollerTest(TestCase):
+
+    def make(self, waker, http):
+        from poller.motion_poller import StreamPoster
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        state.write_text(json.dumps({'since': (T0 - timedelta(hours=1)).isoformat(), 'handled': [], 'wakes': []}))
+        api = FakeAPI([mention('m26', dict(turn('a', 'skyler', 0), via='web'))], sessions={'m26': ['s-local']})
+        self.posters = []
+
+        def streamer(slug, session):
+            poster = StreamPoster('https://ml.test', 'k', slug, session, http=http, pause=0)
+            self.posters.append(poster)
+            return poster
+        return MotionPoller(api, waker, state_path=state, now=lambda: T0, streamer=streamer)
+
+    def test_a_woken_turn_streams_to_its_motion_under_its_new_session(self):
+        http = FakeHTTP(200)
+        poller = self.make(FakeWaker(reply='here'), http)
+        self.assertEqual(poller.poll_once(), ['m26'])
+        events = [e for p in http.posts for e in p[1]['events']]
+        self.assertEqual([e['type'] for e in events], ['assistant', 'result'])
+        self.assertEqual({p[1]['session_id'] for p in http.posts}, {self.posters[0].session_id})
+
+    def test_a_mention_gets_a_considered_answer(self):
+        waker = FakeWaker()
+        self.make(waker, FakeHTTP(200)).poll_once()
+        self.assertEqual(waker.options.get('effort'), 'high')
+
+    def test_a_turn_that_fails_is_closed_in_the_motion(self):
+        http = FakeHTTP(200)
+        poller = self.make(FakeWaker(fail=('s-local',)), http)
+        poller.poll_once()
+        events = [e for p in http.posts for e in p[1]['events']]
+        self.assertEqual([(e['type'], e.get('is_error')) for e in events], [('result', True)])
+
+
+class RealProcessTest(TestCase):
+    """ClaudeCodeWaker against a stand-in `claude` that prints a stream."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.cwd = self.home / 'work'
+        self.cwd.mkdir()
+        projects = self.home / 'projects' / project_dir_name(str(self.cwd))
+        projects.mkdir(parents=True)
+        (projects / 's-old.jsonl').write_text(json.dumps({'cwd': str(self.cwd)}) + '\n')
+        self.projects = self.home / 'projects'
+
+    def fake_claude(self, body):
+        script = self.home / 'claude'
+        script.write_text('#!/bin/sh\n' + body)
+        script.chmod(0o755)
+        return str(script)
+
+    def waker(self, body, timeout=30):
+        from unittest import mock
+        waker = ClaudeCodeWaker(projects_dir=self.projects, claude=self.fake_claude(body), timeout=timeout)
+        waker.command = mock.Mock(side_effect=lambda *a, **k: [waker.claude])
+        return waker
+
+    def test_events_are_seen_as_they_come_and_the_result_is_the_reply(self):
+        stream = [{'type': 'system', 'subtype': 'init'},
+                  {'type': 'assistant', 'uuid': 'a1', 'message': {'content': [{'type': 'text', 'text': 'hi'}]}},
+                  {'type': 'result', 'subtype': 'success', 'result': 'hi there', 'total_cost_usd': 0.02}]
+        body = ''.join(f"echo '{json.dumps(e)}'\n" for e in stream) + "echo 'not json'\n"
+        seen = []
+        waker = self.waker(body)
+        new_session, reply = waker.wake('s-old', 'prompt', new_session_id='s-new', on_event=seen.append)
+        self.assertEqual((new_session, reply), ('s-new', 'hi there'))
+        self.assertEqual([e['type'] for e in seen], ['system', 'assistant', 'result'])
+        self.assertEqual(waker.last_result['total_cost_usd'], 0.02)
+
+    def test_a_run_without_a_result_is_a_failure(self):
+        with self.assertRaises(RuntimeError):
+            self.waker("echo 'oops' >&2; exit 3").wake('s-old', 'prompt')
+
+    def test_a_turn_that_never_ends_is_ended(self):
+        import time
+        start = time.time()
+        with self.assertRaises(RuntimeError):
+            self.waker('sleep 30', timeout=1).wake('s-old', 'prompt')
+        self.assertLess(time.time() - start, 10)

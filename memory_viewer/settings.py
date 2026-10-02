@@ -207,6 +207,11 @@ LOGGING = {
 # public. Raise this deliberately.
 TOOL_RESULT_CONTENT_CHARS = int(os.getenv('TOOL_RESULT_CONTENT_CHARS', '0'))
 
+# Runners (poller/motion_poller.py) that stream agent turns into Motions:
+# "agent:key,agent2:key2", each key from the vault. Unset, nobody can.
+MOTION_RUNNER_KEYS = dict(
+    pair.split(':', 1) for pair in os.getenv('MOTION_RUNNER_KEYS', '').split(',') if ':' in pair)
+
 # Hosts a Motion may embed images from by URL, besides its own stored media.
 MOTION_IMAGE_HOSTS = {'pickipedia.xyz', 'www.pickipedia.xyz', 'raw.githubusercontent.com',
                       'user-images.githubusercontent.com', 'private-user-images.githubusercontent.com'}
