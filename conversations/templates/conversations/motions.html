@@ -179,10 +179,20 @@
   .work .thumbs img, .step-detail .shots img { height: 84px; max-width: 160px; object-fit: cover; border-radius: 4px;
                                                 border: 1px solid var(--line); cursor: zoom-in; }
   .step-detail .shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
-  #attach { font: inherit; font-size: 18px; line-height: 1; padding: 8px 10px; background: none; color: var(--muted);
+  #composer #attach {  /* beats #composer button, the Send style */
+    font: inherit; font-size: 18px; line-height: 1; padding: 8px 10px; background: none; color: var(--muted);
             border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
-  #attach:hover { color: var(--ink); }
+  #composer #attach:hover { color: var(--ink); }
   #composer.dropping textarea { outline: 2px dashed var(--accent); }
+  /* Whether each agent is listening here; a hush for a long deliberation. */
+  .hush { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+  .hush select { font: inherit; font-size: 12.5px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px;
+                 background: var(--panel); color: var(--ink); }
+  .hush .off { color: var(--accent); }
+  #locked { display: none; background: #3a0d0d; color: #ffd9d9; padding: 8px 16px; font-size: 13.5px; }
+  body.locked #locked { display: block; }
+  body.locked #composer, body.locked #typing { display: none !important; }
+  header a.settings { font-size: 13px; color: var(--muted); }
   #suggest { display: none; position: absolute; bottom: 100%; left: 16px; margin-bottom: 4px; background: var(--panel);
              border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.08); min-width: 180px; z-index: 5; }
   #suggest.on { display: block; }
@@ -216,6 +226,7 @@
 <body>
 <header>
   <span class="brand">Motions<small>memory-lane</small></span>
+  <a class="settings" href="/motions/settings/" title="How each agent carries itself in each Motion">settings</a>
   {% if preview_label %}<span class="preview" title="A branch's code, not production; see the label for which record">{{ preview_label }}</span>{% endif %}
   <span class="me">viewing as <select id="me"><option value="">nobody</option></select></span>
   <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
@@ -223,6 +234,7 @@
   <span class="status" id="status">connecting…</span>
   <button id="menu" type="button" aria-label="Menu" aria-expanded="false">☰</button>
 </header>
+<div id="locked"></div>
 <div class="layout">
   <nav id="nav"><div class="label">Motions</div></nav>
   <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div>
@@ -341,6 +353,7 @@
       <div class="meta">${block ? block + ' · ' : ''}${m.message_count} messages in the record</div>
       <div class="people" id="people">${m.participants.map(n =>
         `<span class="who ${human[n] ? 'human' : 'agent'}" data-who="${esc(n)}">${icon(n)}${esc(n)}</span>`).join('')}</div>
+      <div class="hush" id="hush"></div>
     </div><button id="earlier" type="button" hidden>Load earlier</button><div id="turns"></div>`;
   }
 
@@ -591,6 +604,8 @@
     renderActivity();
     tasks = data.tasks || [];
     renderTasks();
+    renderHush(data.listening || {});
+    renderLocked(data.scram || null);
     typingNow = (data.typing || []).filter(n => n !== viewer);
     renderTyping();
     const turnsEl = document.getElementById('turns');
@@ -621,6 +636,49 @@
     const s = Math.max(0, Math.floor(Date.now() / 1000 - since));
     return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
   }
+  // --- listening: hush an agent here, for a while or until changed ----------
+  const HUSH = [['on', 0, 'listening'], ['mentions', 60, 'mentions only · 1 hour'],
+                ['mentions', 0, 'mentions only · until changed'], ['off', 60, 'hushed · 1 hour'],
+                ['off', 120, 'hushed · 2 hours'], ['off', 0, 'hushed · until changed']];
+  let hushShown = '';
+  function describeListening(l) {
+    const until = l.until ? ' until ' + new Date(l.until).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
+    return l.mode === 'on' ? 'listening' : (l.mode === 'mentions' ? 'mentions only' : 'hushed') + until;
+  }
+  function renderHush(listening) {
+    const box = document.getElementById('hush');
+    if (!box) return;
+    const key = JSON.stringify(listening);
+    if (key === hushShown && box.childElementCount) return;  // don't reset a menu someone has open
+    hushShown = key;
+    box.innerHTML = Object.entries(listening).map(([agent, l]) => {
+      const now = `<option selected disabled>${esc(describeListening(l))}</option>`;
+      const choices = HUSH.map(([mode, minutes, label], i) => `<option value="${i}">${esc(label)}</option>`).join('');
+      return `<span class="${l.mode === 'on' ? '' : 'off'}">${icon(agent, false)}${esc(agent)}: `
+        + (viewer ? `<select data-agent="${esc(agent)}">${now}${choices}</select>` : esc(describeListening(l))) + '</span>';
+    }).join('');
+  }
+  document.addEventListener('change', async e => {
+    const select = e.target.closest('#hush select');
+    if (!select) return;
+    const [mode, minutes] = HUSH[Number(select.value)];
+    const until = minutes ? new Date(Date.now() + minutes * 60000).toISOString() : null;
+    const r = await fetch('/api/settings/', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify({ key: 'listening', value: { mode, until }, motion: current, agent: select.dataset.agent,
+                             note: 'from the Motion' }),
+    });
+    if (!r.ok) showError('hush: ' + ((await r.json().catch(() => ({}))).error || r.status));
+    hushShown = '';
+    poll(false);
+  });
+  function renderLocked(scram) {
+    document.body.classList.toggle('locked', !!scram);
+    document.getElementById('locked').textContent = scram
+      ? `Locked: AZ5 by ${scram.by} at ${new Date(scram.at).toLocaleString()}. Nobody can post or sign in, and every agent is still, until it's lifted.`
+      : '';
+  }
+
   // What an agent left running in the background, as in its terminal.
   let tasks = [];
   const tasksEl = document.getElementById('tasks');
