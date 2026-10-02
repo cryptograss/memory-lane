@@ -34,7 +34,7 @@
   .layout { flex: 1; display: flex; min-height: 0; }
 
   nav {
-    width: 230px; flex: none; overflow-y: auto; background: var(--panel);
+    width: var(--nav-width, 190px); flex: none; overflow-y: auto; background: var(--panel);
     border-right: 1px solid var(--line); padding: 10px 0;
   }
   nav .label { padding: 4px 16px 8px; font-size: 11px; text-transform: uppercase;
@@ -47,6 +47,12 @@
   nav a.motion.active { background: var(--accent-soft); border-left-color: var(--accent); }
   nav a.motion .title { font-weight: 600; display: flex; align-items: center; gap: 8px; }
   nav a.motion .meta { font-size: 12px; color: var(--muted); }
+  /* Someone typing or an agent at work: their name pulses where the Motion is listed. */
+  nav .nm.live { color: var(--ink); font-weight: 600; animation: pulse 1.2s ease-in-out infinite; }
+  /* Drag the pane's edge to size it; the width is remembered in this browser. */
+  #grip { width: 5px; margin-left: -3px; flex: none; cursor: col-resize; position: relative; z-index: 1; }
+  #grip:hover, body.sizing #grip { background: var(--accent-soft); }
+  body.sizing { cursor: col-resize; user-select: none; }
   .badge {
     display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px;
     background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
@@ -216,7 +222,7 @@
     body.menu-open header .me, body.menu-open header .auth { display: inline-flex !important; }
     body.menu-open.has-me header label.only { display: inline-flex !important; }
     .layout { flex-direction: column; }
-    nav { display: none; }
+    nav, #grip { display: none; }
     body.menu-open nav { display: block; width: auto; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--line); }
     main { padding-top: 12px; }
     .inner { padding: 0 12px; }
@@ -242,6 +248,7 @@
 <div id="locked"></div>
 <div class="layout">
   <nav id="nav"><div class="label">Motions</div></nav>
+  <div id="grip" title="Drag to resize; double-click to reset"></div>
   <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div>
     <div id="footer">
     <div id="typing"></div>
@@ -294,6 +301,7 @@
   let people = [];          // everyone who can be named, for @-completion
   let human = {};           // name -> is a person
   let act = null;           // what an agent is doing now, from /turns/
+  let typingNow = [];       // who else is typing here, from /turns/
 
   const ICONS = {
     human: '<svg class="ico" viewBox="0 0 16 16" aria-label="person"><circle cx="8" cy="4.6" r="3"/><path d="M2.2 15c0-3.4 2.6-5.6 5.8-5.6s5.8 2.2 5.8 5.6z"/></svg>',
@@ -332,10 +340,39 @@
     const items = motions.map(m => `
       <a class="motion ${m.slug === current ? 'active' : ''}" href="/motions/${encodeURIComponent(m.slug)}/" data-slug="${esc(m.slug)}">
         <div class="title">${esc(m.title)}${badges[m.slug] ? `<span class="badge">${badges[m.slug]}</span>` : ''}</div>
-        <div class="meta">${esc(m.participants.join(', ') || '—')} · ${m.message_count} · ${ago(m.last_at)}</div>
+        <div class="meta">${m.participants.map(n => `<span class="nm" data-who="${esc(n)}">${esc(n)}</span>`).join(', ') || '—'} · ${m.message_count} · ${ago(m.last_at)}</div>
       </a>`).join('');
     nav.innerHTML = '<div class="label">Motions</div>' + items;
+    markLive();
   }
+
+  // Pulse the names of whoever is typing or at work in the open Motion.
+  function markLive() {
+    const live = new Set(typingNow);
+    if (act) live.add(act.agent);
+    nav.querySelectorAll('a.motion.active .nm').forEach(el => el.classList.toggle('live', live.has(el.dataset.who)));
+  }
+
+  const grip = document.getElementById('grip');
+  const NAV_MIN = 140, NAV_MAX = 480;
+  function navWidth(w) {
+    if (w) document.documentElement.style.setProperty('--nav-width', Math.max(NAV_MIN, Math.min(NAV_MAX, w)) + 'px');
+    else document.documentElement.style.removeProperty('--nav-width');
+  }
+  navWidth(store.get('navWidth', 0));
+  grip.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    document.body.classList.add('sizing');
+  });
+  grip.addEventListener('pointermove', e => {
+    if (document.body.classList.contains('sizing')) navWidth(e.clientX - nav.getBoundingClientRect().left);
+  });
+  grip.addEventListener('pointerup', () => {
+    document.body.classList.remove('sizing');
+    store.set('navWidth', Math.round(nav.getBoundingClientRect().width));
+  });
+  grip.addEventListener('dblclick', () => { navWidth(0); store.set('navWidth', 0); });
 
   function renderMe() {
     const opts = ['<option value="">nobody</option>'].concat(
@@ -703,18 +740,19 @@
   });
   setInterval(renderTasks, 1000);
 
-  let typingNow = [];
   const typingEl = document.getElementById('typing');
   function renderTyping() {
     document.querySelectorAll('.people .who').forEach(el => el.classList.toggle('typing', typingNow.includes(el.dataset.who)));
     typingEl.classList.toggle('on', typingNow.length > 0);
     typingEl.innerHTML = typingNow.map(n => `${icon(n, true)}<b>${esc(n)}</b>`).join(', ')
       + (typingNow.length ? (typingNow.length > 1 ? ' are typing…' : ' is typing…') : '');
+    markLive();
   }
 
   function renderActivity() {
     document.querySelectorAll('.people .who').forEach(el => el.classList.toggle('busy', !!act && el.dataset.who === act.agent));
     activityEl.classList.toggle('on', !!act);
+    markLive();
     if (!act) return;
     activityText.innerHTML = act.doing === 'waking'
       ? `waking ${icon(act.agent, false)}<b>${esc(act.agent)}</b> · ${elapsed(act.since)}`
