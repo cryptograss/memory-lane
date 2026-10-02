@@ -122,6 +122,14 @@ class MotionAPI:
                                   headers={'Authorization': f'Bearer {self.key}'}, timeout=30)
         return response.status_code == 201
 
+    def held(self, slug, reason, until=None):
+        """Say the agent's next turn in `slug` is held, and why; no reason lifts it."""
+        if not self.key:
+            return False
+        response = self.http.post(f'{self.base}/api/motions/{slug}/held/', json={'reason': reason or '', 'until': until},
+                                  headers={'Authorization': f'Bearer {self.key}'}, timeout=30)
+        return response.status_code == 200
+
 
 def project_dir_name(cwd):
     """The folder Claude Code files a session under, for a working directory."""
@@ -558,6 +566,10 @@ class MotionPoller:
         self.settings = {}
         self.budget = {}
         self.scrammed = False
+        # slug -> (reason, until, when last said): mentions held this pass and
+        # why, so each hold is logged and posted once, then quietly renewed.
+        self.holds = {}
+        self.held_now = set()
         self.state = self.load()
         self.state.setdefault('consider', {})
         self.state.setdefault('spend', {'day': '', 'usd': 0.0})
@@ -589,6 +601,39 @@ class MotionPoller:
     def recent_wakes(self):
         cutoff = self.now() - timedelta(hours=1)
         return [w for w in self.state['wakes'] if parse_time(w) > cutoff]
+
+    # --- holds: a mention owed a turn that isn't starting yet -----------------
+    # Without a word from the runner, the Motion can only show "waking" for as
+    # long as a mention goes unanswered. So a hold is said once -- logged, and
+    # posted to the Motion with its reason -- renewed before it lapses there,
+    # and lifted when it ends.
+    RENEW_HOLD = timedelta(minutes=5)  # well inside the server's HELD_FOR
+
+    def hold(self, slug, reason, until=None):
+        self.held_now.add(slug)
+        until = until.isoformat() if hasattr(until, 'isoformat') else (until or None)
+        said = self.holds.get(slug)
+        if said and said[:2] == (reason, until) and self.now() - said[2] < self.RENEW_HOLD:
+            return
+        if not said or said[:2] != (reason, until):
+            logger.warning(f'{slug}: holding a mention: {reason}' + (f' (until {until})' if until else ''))
+        self.holds[slug] = (reason, until, self.now())
+        self.say_held(slug, reason, until)
+
+    def lift_holds(self):
+        """Lift the holds no longer in force: this pass held nothing there."""
+        for slug in [s for s in self.holds if s not in self.held_now]:
+            del self.holds[slug]
+            self.say_held(slug, '')
+        self.held_now = set()
+
+    def say_held(self, slug, reason, until=None):
+        if self.dry_run:
+            return
+        try:
+            self.api.held(slug, reason, until)
+        except Exception as e:  # the Motion showing "waking" a while longer is no reason to stall
+            logger.warning(f'{slug}: could not post the hold: {e}')
 
     # --- one pass ------------------------------------------------------------
 
@@ -639,9 +684,14 @@ class MotionPoller:
         woken = []
         for slug, mentioned in pending.items():
             if self.listening(slug) == 'off':
-                continue  # held, not dropped: answered once the agent is listening again
+                # Held, not dropped: answered once the agent is listening again.
+                self.hold(slug, 'hushed here', (self.knob(slug, 'listening') or {}).get('until'))
+                continue
             if not self.free(slug):
-                continue  # held too: answered when the turn there (or a slot) is done
+                # Held too: answered when the turn there (or a slot) is done.
+                self.hold(slug, 'a turn is under way here; this one is next' if slug in self.running
+                          else f'all {self.parallel} turn slots are busy')
+                continue
             try:
                 done, outcome = self.consider(slug, mentioned)
             except Exception as e:  # one Motion's trouble must not stall the others
@@ -655,6 +705,7 @@ class MotionPoller:
 
         self.advance_since(mentions, handled)
         self.save()
+        self.lift_holds()
         return woken
 
     def consider(self, slug, mentioned):
@@ -678,8 +729,11 @@ class MotionPoller:
         grace = self.grace if any(t.get('via') != 'web' for t in owed) else timedelta(0)
         if self.now() - parse_time(owed[0]['created_at']) < grace:
             return settled, None
-        if len(self.recent_wakes()) >= self.max_wakes_per_hour:
-            logger.warning(f'{slug}: owed a turn, but {self.max_wakes_per_hour} wakes this hour already')
+        recent = self.recent_wakes()
+        if len(recent) >= self.max_wakes_per_hour:
+            # The next slot opens when the oldest of the hour's wakes ages out.
+            opens = min(parse_time(w) for w in recent) + timedelta(hours=1)
+            self.hold(slug, f'{self.max_wakes_per_hour} wakes this hour already', opens)
             return settled, None
 
         sessions = self.api.sessions(slug, self.agent)

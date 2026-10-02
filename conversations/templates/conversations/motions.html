@@ -108,6 +108,8 @@
   #activity.on { display: flex; }
   #activity .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--agent); animation: pulse 1.2s ease-in-out infinite; }
   #activity b { color: var(--agent); }
+  /* Held: owed a turn the runner isn't starting yet -- a still dot, not a pulse. */
+  #activity.held .dot { animation: none; opacity: .35; }
   @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
   .people { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .people .who { font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--code); }
@@ -713,11 +715,16 @@
   }
 
   function renderActivity() {
-    document.querySelectorAll('.people .who').forEach(el => el.classList.toggle('busy', !!act && el.dataset.who === act.agent));
+    document.querySelectorAll('.people .who').forEach(el => el.classList.toggle('busy', !!act && act.doing !== 'held' && el.dataset.who === act.agent));
     activityEl.classList.toggle('on', !!act);
+    activityEl.classList.toggle('held', !!act && act.doing === 'held');
     if (!act) return;
+    const hhmm = iso => new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     activityText.innerHTML = act.doing === 'waking'
       ? `waking ${icon(act.agent, false)}<b>${esc(act.agent)}</b> · ${elapsed(act.since)}`
+      : act.doing === 'held'
+      ? `${icon(act.agent, false)}<b>${esc(act.agent)}</b> · held: ${esc(act.why || 'not yet')}`
+        + (act.until ? ` · answers about ${esc(hhmm(act.until))}` : '') + ` · asked ${elapsed(act.since)} ago`
       : `${icon(act.agent, false)}<b>${esc(act.agent)}</b> · ${esc(act.doing)} · ${elapsed(act.since)}`
         + ([act.model, act.effort].filter(Boolean).length ? ` · ${esc([act.model, act.effort].filter(Boolean).join(' · '))}` : '');
   }
