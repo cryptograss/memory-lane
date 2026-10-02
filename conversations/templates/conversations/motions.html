@@ -213,6 +213,11 @@
   .hush select { font: inherit; font-size: 12.5px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px;
                  background: var(--panel); color: var(--ink); }
   .hush .off { color: var(--accent); }
+  /* How full an agent's context is: a little pie, its details on hover. */
+  .pie { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-right: 4px;
+         background: conic-gradient(var(--agent) var(--p), transparent 0); box-shadow: inset 0 0 0 1px var(--agent);
+         cursor: help; }
+  .pie.full { background: conic-gradient(var(--accent) var(--p), transparent 0); box-shadow: inset 0 0 0 1px var(--accent); }
   #locked { display: none; background: #3a0d0d; color: #ffd9d9; padding: 8px 16px; font-size: 13.5px; }
   body.locked #locked { display: block; }
   body.locked #composer, body.locked #typing { display: none !important; }
@@ -690,7 +695,7 @@
     renderActivity();
     tasks = data.tasks || [];
     renderTasks();
-    renderHush(data.listening || {});
+    renderAgents(data.agents || {});
     renderLocked(data.scram || null);
     typingNow = (data.typing || []).filter(n => n !== viewer);
     renderTyping();
@@ -728,36 +733,82 @@
   const HUSH = [['on', 0, 'listening'], ['mentions', 60, 'mentions only · 1 hour'],
                 ['mentions', 0, 'mentions only · until changed'], ['off', 60, 'hushed · 1 hour'],
                 ['off', 120, 'hushed · 2 hours'], ['off', 0, 'hushed · until changed']];
-  let hushShown = '';
+  // Model and effort for this agent's mention wakes here (settings: model,
+  // mention_effort), so changing them needs no trip to the settings page.
+  const MODELS = [['', 'default model'], ['opus', 'opus'], ['sonnet', 'sonnet'], ['fable', 'fable'], ['haiku', 'haiku']];
+  const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+  let agentsNow = {}, agentsShown = '';
   function describeListening(l) {
     const until = l.until ? ' until ' + new Date(l.until).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
     return l.mode === 'on' ? 'listening' : (l.mode === 'mentions' ? 'mentions only' : 'hushed') + until;
   }
-  function renderHush(listening) {
+  function shortModel(m) { return (m || '').replace(/^claude-/, '').replace(/-(\d+)-(\d+)$/, ' $1.$2'); }
+  // A pie for how full `name`'s context is here, or nothing if unknown.
+  function pieAttrs(name) {
+    const c = (agentsNow[name] || {}).context;
+    if (!c || !c.window) return null;
+    const pct = Math.min(100, Math.round(100 * c.tokens / c.window));
+    const title = `context ${pct}% full · ${c.tokens.toLocaleString()} of ${c.window.toLocaleString()} tokens`
+      + (c.model ? ` · ${shortModel(c.model)}` : '') + ` · as of ${stamp(c.at)}`;
+    return { pct, title };
+  }
+  // Wherever an agent is named with its settings -- the people chips, the
+  // agent rows -- its pie leads; drawn in place, since the rest changes rarely.
+  function refreshPies() {
+    document.querySelectorAll('.people .who.agent, #hush .agent').forEach(el => {
+      const a = pieAttrs(el.dataset.who);
+      let p = el.querySelector('.pie');
+      if (!a) { if (p) p.remove(); return; }
+      if (!p) { p = document.createElement('span'); el.prepend(p); }
+      p.className = 'pie' + (a.pct >= 80 ? ' full' : '');
+      p.style.setProperty('--p', a.pct + '%');
+      p.title = a.title;
+    });
+  }
+  function renderAgents(agents) {
+    agentsNow = agents;
     const box = document.getElementById('hush');
-    if (!box) return;
-    const key = JSON.stringify(listening);
-    if (key === hushShown && box.childElementCount) return;  // don't reset a menu someone has open
-    hushShown = key;
-    box.innerHTML = Object.entries(listening).map(([agent, l]) => {
-      const now = `<option selected disabled>${esc(describeListening(l))}</option>`;
-      const choices = HUSH.map(([mode, minutes, label], i) => `<option value="${i}">${esc(label)}</option>`).join('');
-      return `<span class="${l.mode === 'on' ? '' : 'off'}">${icon(agent, false)}${esc(agent)}: `
-        + (viewer ? `<select data-agent="${esc(agent)}">${now}${choices}</select>` : esc(describeListening(l))) + '</span>';
+    // Redraw the menus only when a setting changed: never under someone's open menu.
+    const key = JSON.stringify(Object.entries(agents).map(([n, a]) => [n, a.listening, a.model, a.effort, viewer]));
+    if (box && (key !== agentsShown || !box.childElementCount)) {
+      agentsShown = key;
+      box.innerHTML = agentRows(agents);
+    }
+    refreshPies();
+  }
+  function agentRows(agents) {
+    return Object.entries(agents).map(([agent, a]) => {
+      const l = a.listening, ctx = a.context || {};
+      const row = `<span class="agent${l.mode === 'on' ? '' : ' off'}" data-who="${esc(agent)}">${icon(agent, false)}${esc(agent)}: `;
+      if (!viewer) {
+        return row
+          + `${esc(describeListening(l))} · ${esc(a.model || 'default model')} · effort ${esc(a.effort)}</span>`;
+      }
+      const listen = `<select data-agent="${esc(agent)}" data-knob="listening"><option selected disabled>${esc(describeListening(l))}</option>`
+        + HUSH.map(([mode, minutes, label], i) => `<option value="${i}">${esc(label)}</option>`).join('') + '</select>';
+      const models = MODELS.some(([v]) => v === a.model) ? MODELS : [...MODELS, [a.model, a.model]];
+      const model = `<select data-agent="${esc(agent)}" data-knob="model" title="model for its wakes here">`
+        + models.map(([v, label]) => `<option value="${esc(v)}"${v === a.model ? ' selected' : ''}>`
+          + `${esc(v ? label : (ctx.model ? `default (${shortModel(ctx.model)})` : label))}</option>`).join('') + '</select>';
+      const effort = `<select data-agent="${esc(agent)}" data-knob="mention_effort" title="how hard it thinks when @mentioned here">`
+        + EFFORTS.map(v => `<option value="${v}"${v === a.effort ? ' selected' : ''}>effort ${v}</option>`).join('') + '</select>';
+      return `${row}${listen} ${model} ${effort}</span>`;
     }).join('');
   }
   document.addEventListener('change', async e => {
     const select = e.target.closest('#hush select');
     if (!select) return;
-    const [mode, minutes] = HUSH[Number(select.value)];
-    const until = minutes ? new Date(Date.now() + minutes * 60000).toISOString() : null;
+    let key = select.dataset.knob, value = select.value;
+    if (key === 'listening') {
+      const [mode, minutes] = HUSH[Number(select.value)];
+      value = { mode, until: minutes ? new Date(Date.now() + minutes * 60000).toISOString() : null };
+    }
     const r = await fetch('/api/settings/', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
-      body: JSON.stringify({ key: 'listening', value: { mode, until }, motion: current, agent: select.dataset.agent,
-                             note: 'from the Motion' }),
+      body: JSON.stringify({ key, value, motion: current, agent: select.dataset.agent, note: 'from the Motion' }),
     });
-    if (!r.ok) showError('hush: ' + ((await r.json().catch(() => ({}))).error || r.status));
-    hushShown = '';
+    if (!r.ok) showError(key + ': ' + ((await r.json().catch(() => ({}))).error || r.status));
+    agentsShown = '';
     poll(false);
   });
   function renderLocked(scram) {

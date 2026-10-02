@@ -553,6 +553,35 @@ def _when(msg):
     return msg.timestamp / 1000 if msg.timestamp else msg.created_at.timestamp()
 
 
+# --- how full an agent's context is ------------------------------------------
+# Every assistant line records what its model read to write it: fresh input
+# plus cache reads and writes. The newest such line in a Motion's newest
+# session is how full that agent's context is now -- what a wake would
+# resume into. Windows by model; the record shows Opus 5.5 sessions passing
+# 865k tokens, so its window is 1M. Anything unlisted is taken as 200k,
+# and a session seen past its window is taken to have the larger one.
+CONTEXT_WINDOWS = (('claude-opus-5', 1_000_000),)
+DEFAULT_WINDOW = 200_000
+
+
+def context_window(model, tokens=0):
+    window = next((w for prefix, w in CONTEXT_WINDOWS if (model or '').startswith(prefix)), DEFAULT_WINDOW)
+    return window if tokens <= window else max(window, 1_000_000)
+
+
+def context_in(motion, agent):
+    """{'tokens', 'window', 'model', 'at'} for `agent`'s context here, or None."""
+    row = (motion.messages.filter(sender_id=agent, is_sidechain=False, input_tokens__isnull=False)
+           .order_by('-created_at')
+           .values('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'model_backend',
+                   'created_at').first())
+    if row is None:
+        return None
+    tokens = sum(row[k] or 0 for k in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
+    return {'tokens': tokens, 'window': context_window(row['model_backend'], tokens),
+            'model': row['model_backend'] or '', 'at': row['created_at'].isoformat()}
+
+
 # --- a mention the runner is holding ----------------------------------------
 # The record can show that a post names an agent and nothing has answered it,
 # but not why: a runner may be holding it -- its hourly cap reached, the
