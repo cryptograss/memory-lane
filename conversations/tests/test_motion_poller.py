@@ -796,3 +796,20 @@ class MentionsAndPulse(ConsiderAPI):
 class DigestingScreen(FakeScreen):
     def digest(self, text):
         return 'THE GIST: they agreed on the bus time.', 0.002
+
+
+class RunnerKeyTest(TestCase):
+
+    def test_from_the_environment_else_from_the_file_else_none(self):
+        from unittest import mock
+        from poller import motion_poller
+        home = Path(tempfile.mkdtemp())
+        keyfile = home / 'runner_key'
+        with mock.patch.object(motion_poller, 'RUNNER_KEY_FILE', str(keyfile)), \
+                mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('MEMORY_LANE_RUNNER_KEY', None)
+            self.assertEqual(motion_poller.runner_key(), '')
+            keyfile.write_text('from-file\n')
+            self.assertEqual(motion_poller.runner_key(), 'from-file')
+            os.environ['MEMORY_LANE_RUNNER_KEY'] = 'from-env'
+            self.assertEqual(motion_poller.runner_key(), 'from-env')
