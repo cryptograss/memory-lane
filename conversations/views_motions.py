@@ -219,6 +219,9 @@ def api_typing(request, slug):
     from django.core.cache import cache
     import json
     import time
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
     device = motion_auth.device_for(request)
     if device is None:
         return JsonResponse({'error': 'sign in to write'}, status=401)

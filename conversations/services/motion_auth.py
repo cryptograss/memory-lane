@@ -47,16 +47,18 @@ def new_challenge():
     return signing.dumps({'nonce': secrets.token_hex(16)}, salt=NAMESPACE)
 
 
-def signed_message(challenge, origin):
+def signed_message(challenge, origin, purpose='login'):
     """What a client signs: the challenge, bound to the origin it was talking to.
 
     Signing the bare challenge let any server a client was pointed at (a
     tampered preview, say) fetch a challenge from production, have the
     client sign it, and relay the signature: a device in someone else's
     name. Bound to the origin, a relayed signature names the wrong server.
-    tools/motion_login.py builds the same string.
+    tools/motion_login.py builds the same string. An admin's signature
+    names its action instead of 'login' (views_admin.py), so it can't be
+    replayed as any other.
     """
-    return f'{NAMESPACE} login\n{origin.lower().rstrip("/")}\n{challenge}'
+    return f'{NAMESPACE} {purpose}\n{origin.lower().rstrip("/")}\n{challenge}'
 
 
 def origin_of(request):

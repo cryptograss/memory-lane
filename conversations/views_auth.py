@@ -68,6 +68,12 @@ def api_enroll(request):
     entity = ThinkingEntity.objects.filter(name=name).first() if name else None
     if entity is None:
         return JsonResponse({'error': 'signature not accepted'}, status=403)
+    from .views_admin import locked_response
+    from .services import settings as knobs
+    if locked_response():
+        return locked_response()
+    if knobs.banned(name):
+        return JsonResponse({'error': 'signing in is barred for this name; ask an admin'}, status=403)
 
     code = motion_auth.issue_login_code(entity)
     url = request.build_absolute_uri(f'/motions/login/{code}/')
@@ -83,6 +89,9 @@ def login_page(request, code):
         return render(request, 'conversations/motion_login.html',
                       {'name': login.entity_id if login else None}, status=200 if login else 410)
 
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
     label = getattr(settings, 'DEVICE_LABEL_PREFIX', '') + request.POST.get('label', '')
     device, token = motion_auth.redeem_login_code(code, label=label)
     if device is None:
@@ -104,7 +113,10 @@ def api_media(request, slug):
     Content-Type. Answers with the markdown to put in a message.
     """
     from .services import media
+    from .views_admin import locked_response
 
+    if locked_response():
+        return locked_response()
     device = motion_auth.device_for(request)
     if device is None:
         return JsonResponse({'error': 'sign in to write'}, status=401)
@@ -138,6 +150,9 @@ def api_logout(request):
 @require_POST
 def api_say(request, slug):
     """Post a turn into a Motion as the device's person."""
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
     device = motion_auth.device_for(request)
     if device is None:
         return JsonResponse({'error': 'sign in to write'}, status=401)

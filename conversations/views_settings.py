@@ -51,6 +51,9 @@ def api_settings(request):
     if request.method == 'GET':
         return JsonResponse(settings_state())
 
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
     device = motion_auth.device_for(request)
     if device is None:
         return JsonResponse({'error': 'sign in to change settings'}, status=401)
