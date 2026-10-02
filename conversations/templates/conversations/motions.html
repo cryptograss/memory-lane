@@ -104,9 +104,13 @@
   header .auth a { color: var(--muted); }
   #footer { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); }
   /* Up and down a message at a time, at the right of the thread. */
-  #jump { position: absolute; right: 16px; bottom: calc(100% + 12px); display: flex; flex-direction: column; gap: 6px; }
+  /* Two pairs: every message (right), people's messages only (left, with a person on them). */
+  #jump { position: absolute; right: 16px; bottom: calc(100% + 12px); display: grid; grid-template-columns: auto auto; gap: 6px; }
   #jump button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel);
-                 color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+                 color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08);
+                 display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+  #jump button.human { color: var(--human); font-size: 12px; gap: 1px; }
+  #jump button.human svg { width: 11px; height: 11px; }
   #jump button:hover { color: var(--accent); border-color: var(--accent); }
   /* Where a session's context was compacted: one line, its summary on demand. */
   .compaction { margin: 10px 0; font-size: 13px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
@@ -209,7 +213,10 @@
   #composer #attach:hover { color: var(--ink); }
   #composer.dropping textarea { outline: 2px dashed var(--accent); }
   /* Whether each agent is listening here; a hush for a long deliberation. */
-  .hush { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+  /* Each agent's listening, model and effort, and its pie: in the footer, always in view. */
+  .hush { display: flex; flex-wrap: wrap; gap: 8px; max-width: 760px; margin: 0 auto; padding: 6px 16px 0;
+          font-size: 12.5px; color: var(--muted); }
+  .hush:empty { display: none; }
   .hush select { font: inherit; font-size: 12.5px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px;
                  background: var(--panel); color: var(--ink); }
   .hush .off { color: var(--accent); }
@@ -247,6 +254,9 @@
     .inner { padding: 0 12px; }
     .motion-head h1 { font-size: 19px; }
     #activity { padding: 6px 12px; }
+    .hush { padding: 4px 12px 0; }
+    #jump { right: 10px; gap: 5px; }
+    #jump button { width: 30px; height: 30px; font-size: 13px; }
     #composer { padding: 8px 10px 10px; }
   }
   /* Signed in, you are who you are: no need to choose whose view to see. */
@@ -270,10 +280,11 @@
   <div id="grip" title="Drag to resize; double-click to reset"></div>
   <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div>
     <div id="footer">
-    <div id="jump"><button type="button" id="jumpUp" title="previous message" aria-label="previous message">↑</button><button type="button" id="jumpDown" title="next message" aria-label="next message">↓</button></div>
+    <div id="jump"><button type="button" class="human" id="jumpHumanUp" title="previous message from a person" aria-label="previous message from a person">↑</button><button type="button" id="jumpUp" title="previous message" aria-label="previous message">↑</button><button type="button" class="human" id="jumpHumanDown" title="next message from a person" aria-label="next message from a person">↓</button><button type="button" id="jumpDown" title="next message" aria-label="next message">↓</button></div>
     <div id="typing"></div>
     <div id="tasks"></div>
     <div id="activity"><span class="dot"></span><span id="activityText"></span></div>
+    <div class="hush" id="hush"></div>
     <form id="composer" autocomplete="off">
       <div id="suggest"></div>
       <button type="button" id="attach" title="Add an image (or paste or drop one)" aria-label="Add an image">＋</button>
@@ -415,7 +426,6 @@
       <div class="meta">${block ? block + ' · ' : ''}${m.message_count} messages in the record</div>
       <div class="people" id="people">${m.participants.map(n =>
         `<span class="who ${human[n] ? 'human' : 'agent'}" data-who="${esc(n)}">${icon(n)}${esc(n)}</span>`).join('')}</div>
-      <div class="hush" id="hush"></div>
     </div><button id="earlier" type="button" hidden>Load earlier</button><div id="turns"></div>`;
   }
 
@@ -539,9 +549,9 @@
   }
 
   // --- up and down a message at a time --------------------------------------
-  function jump(dir) {
+  function jump(dir, only = '') {
     const top = main.getBoundingClientRect().top;
-    const turns = [...document.querySelectorAll('#turns .turn')];
+    const turns = [...document.querySelectorAll('#turns .turn' + only)];
     const at = t => t.getBoundingClientRect().top - top;
     const target = dir > 0 ? turns.find(t => at(t) > 16) : turns.reverse().find(t => at(t) < -16);
     if (target) main.scrollTo({ top: main.scrollTop + at(target) - 8, behavior: 'smooth' });
@@ -554,6 +564,11 @@
   }
   document.getElementById('jumpUp').addEventListener('click', () => jump(-1));
   document.getElementById('jumpDown').addEventListener('click', () => jump(1));
+  for (const [id, dir] of [['jumpHumanUp', -1], ['jumpHumanDown', 1]]) {
+    const b = document.getElementById(id);
+    b.innerHTML = ICONS.human + b.textContent;
+    b.addEventListener('click', () => jump(dir, '.human'));
+  }
 
   function addQuiet(q, container) {
     let row = container.lastElementChild;
