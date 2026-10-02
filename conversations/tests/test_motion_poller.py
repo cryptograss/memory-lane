@@ -813,3 +813,65 @@ class RunnerKeyTest(TestCase):
             self.assertEqual(motion_poller.runner_key(), 'from-file')
             os.environ['MEMORY_LANE_RUNNER_KEY'] = 'from-env'
             self.assertEqual(motion_poller.runner_key(), 'from-env')
+
+
+class GlovesOffTest(TestCase):
+    """Full tools for a mention wake, only when every post that woke it is a trusted person's."""
+
+    def wake_for(self, *senders):
+        api = FakeAPI([mention('m26', dict(turn(f'm{i}', who, i), via='web')) for i, who in enumerate(senders)],
+                      sessions={'m26': ['s-local']})
+        waker = FakeWaker()
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        state.write_text(json.dumps({'since': (T0 - timedelta(hours=1)).isoformat(), 'handled': [], 'wakes': []}))
+        poller = MotionPoller(api, waker, state_path=state, now=lambda: T0 + timedelta(minutes=30))
+        poller.poll_once()
+        return waker
+
+    def test_justins_mention_wakes_with_full_tools(self):
+        waker = self.wake_for('justin')
+        self.assertTrue(waker.options['full'])
+        self.assertIn('This turn has your full tools', waker.woken[0][1])
+
+    def test_anyone_elses_or_a_mix_looks_but_does_not_touch(self):
+        for senders in (('skyler',), ('justin', 'skyler')):
+            with self.subTest(senders=senders):
+                waker = self.wake_for(*senders)
+                self.assertFalse(waker.options['full'])
+                self.assertIn('This turn can look but not touch', waker.woken[0][1])
+
+    def test_the_full_command_has_no_tool_limits(self):
+        from unittest import mock
+        with mock.patch('poller.motion_poller.mcp_config_for_wakes', return_value='/tmp/x.json'):
+            full = ClaudeCodeWaker(claude='claude').command('s-old', 's-new', 'p', full=True)
+            limited = ClaudeCodeWaker(claude='claude').command('s-old', 's-new', 'p')
+        self.assertEqual(full[full.index('--permission-mode') + 1], 'bypassPermissions')
+        for flag in ('--tools', '--strict-mcp-config', '--allowedTools', '--mcp-config'):
+            self.assertNotIn(flag, full)
+            self.assertIn(flag, limited)
+
+
+class RunCostTest(TestCase):
+    """A fork inherits its session's running total; a run's cost is what it added."""
+
+    def test_the_run_cost_is_the_new_total_less_the_sessions_old_one(self):
+        home = Path(tempfile.mkdtemp())
+        cwd = home / 'work'
+        cwd.mkdir()
+        folder = home / 'projects' / project_dir_name(str(cwd))
+        folder.mkdir(parents=True)
+        (folder / 's-old.jsonl').write_text('\n'.join([
+            json.dumps({'cwd': str(cwd)}),
+            json.dumps({'type': 'cost-state', 'totalCostUSD': 12.0}),
+            json.dumps({'type': 'cost-state', 'totalCostUSD': 35.0086}),
+        ]) + '\n')
+        script = home / 'claude'
+        result = {'type': 'result', 'subtype': 'success', 'result': 'hi', 'total_cost_usd': 35.1839}
+        script.write_text(f"#!/bin/sh\necho '{json.dumps(result)}'\n")
+        script.chmod(0o755)
+        from unittest import mock
+        waker = ClaudeCodeWaker(projects_dir=home / 'projects', claude=str(script))
+        waker.command = mock.Mock(side_effect=lambda *a, **k: [waker.claude])
+        waker.wake('s-old', 'prompt')
+        self.assertAlmostEqual(waker.last_result['run_cost_usd'], 0.1753, places=4)
+        self.assertEqual(waker.last_result['total_cost_usd'], 35.1839)

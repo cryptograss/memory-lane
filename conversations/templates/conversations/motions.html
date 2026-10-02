@@ -121,6 +121,10 @@
            max-width: 760px; margin: 0 auto; }
   #tasks.on { display: flex; }
   #tasks .task { background: var(--code); border-radius: 10px; padding: 1px 9px; }
+  #tasks .sum { cursor: pointer; }
+  #tasks .sum:hover { color: var(--ink); }
+  #tasks .list { display: none; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
+  #tasks.open .list { display: flex; }
   #tasks .task::before { content: '⚙ '; }
   #tasks .task.helper::before { content: '✦ '; }
   #typing { display: none; padding: 6px 16px 0; font-size: 13px; color: var(--muted); }
@@ -199,6 +203,7 @@
   #suggest div { padding: 5px 10px; cursor: pointer; font-size: 14px; }
   #suggest div.sel, #suggest div:hover { background: var(--accent-soft); }
   #suggest small { color: var(--muted); margin-left: 6px; }
+  #suggest .emo { display: inline-block; width: 1.6em; font-size: 16px; }
   #menu { display: none; font: inherit; font-size: 20px; line-height: 1; background: none; border: 0;
           color: var(--muted); cursor: pointer; padding: 0 2px; }
   @media (max-width: 720px) {
@@ -634,7 +639,9 @@
   const activityText = document.getElementById('activityText');
   function elapsed(since) {
     const s = Math.max(0, Math.floor(Date.now() / 1000 - since));
-    return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
+    return Math.floor(s / 3600) + 'h ' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + 'm';
   }
   // --- listening: hush an agent here, for a while or until changed ----------
   const HUSH = [['on', 0, 'listening'], ['mentions', 60, 'mentions only · 1 hour'],
@@ -682,11 +689,18 @@
   // What an agent left running in the background, as in its terminal.
   let tasks = [];
   const tasksEl = document.getElementById('tasks');
+  // One line -- how many, and the longest-running -- opened on demand.
   function renderTasks() {
     tasksEl.classList.toggle('on', tasks.length > 0);
-    tasksEl.innerHTML = tasks.length ? 'running: ' + tasks.map(t =>
-      `<span class="task ${t.kind === 'helper' ? 'helper' : ''}" title="${esc(t.kind)} ${esc(t.id)}">${esc(t.label)} · ${elapsed(t.since)}</span>`).join('') : '';
+    if (!tasks.length) { tasksEl.innerHTML = ''; return; }
+    const oldest = Math.min(...tasks.map(t => t.since));
+    tasksEl.innerHTML = `<span class="sum" title="show them">⚙ ${tasks.length} running · longest ${elapsed(oldest)} ${tasksEl.classList.contains('open') ? '▾' : '▸'}</span>`
+      + `<span class="list">${tasks.map(t =>
+        `<span class="task ${t.kind === 'helper' ? 'helper' : ''}" title="${esc(t.kind)} ${esc(t.id)}">${esc(t.label)} · ${elapsed(t.since)}</span>`).join('')}</span>`;
   }
+  tasksEl.addEventListener('click', e => {
+    if (e.target.closest('.sum')) { tasksEl.classList.toggle('open'); renderTasks(); }
+  });
   setInterval(renderTasks, 1000);
 
   let typingNow = [];
@@ -712,29 +726,64 @@
   // --- @-completion: people in this Motion first, then everyone else -------
   const suggest = document.getElementById('suggest');
   let choices = [], chosen = 0;
-  function mentionAtCaret() {
+  // Emoji by name, as `:name` -- a small set, favourites first.
+  const EMOJI = [
+    ['thumbsup', '👍'], ['heart', '❤️'], ['joy', '😂'], ['smile', '😄'], ['tada', '🎉'], ['fire', '🔥'],
+    ['pray', '🙏'], ['eyes', '👀'], ['100', '💯'], ['clap', '👏'], ['banjo', '🪕'], ['violin', '🎻'],
+    ['fiddle', '🎻'], ['guitar', '🎸'], ['notes', '🎶'], ['musical_note', '🎵'], ['microphone', '🎤'],
+    ['drum', '🥁'], ['cowboy', '🤠'], ['bus', '🚌'], ['train', '🚂'], ['sun', '☀️'], ['sunrise', '🌄'],
+    ['mountain', '⛰️'], ['hot_springs', '♨️'], ['coffee', '☕'], ['beer', '🍺'], ['wave', '👋'], ['ok', '👌'],
+    ['thinking', '🤔'], ['grin', '😁'], ['wink', '😉'], ['blush', '😊'], ['sweat_smile', '😅'], ['laughing', '😆'],
+    ['heart_eyes', '😍'], ['sunglasses', '😎'], ['cry', '😢'], ['sob', '😭'], ['scream', '😱'], ['zany', '🤪'],
+    ['upside_down', '🙃'], ['shrug', '🤷'], ['facepalm', '🤦'], ['raised_hands', '🙌'], ['muscle', '💪'],
+    ['thumbsdown', '👎'], ['point_up', '☝️'], ['point_right', '👉'], ['handshake', '🤝'], ['v', '✌️'],
+    ['rocket', '🚀'], ['star', '⭐'], ['sparkles', '✨'], ['zap', '⚡'], ['rainbow', '🌈'], ['moon', '🌙'],
+    ['earth', '🌎'], ['seedling', '🌱'], ['sunflower', '🌻'], ['rose', '🌹'], ['tree', '🌲'], ['cactus', '🌵'],
+    ['check', '✅'], ['x', '❌'], ['warning', '⚠️'], ['question', '❓'], ['exclamation', '❗'], ['bulb', '💡'],
+    ['memo', '📝'], ['books', '📚'], ['link', '🔗'], ['lock', '🔒'], ['key', '🔑'], ['bell', '🔔'],
+    ['no_bell', '🔕'], ['hourglass', '⏳'], ['clock', '🕐'], ['calendar', '📅'], ['pin', '📌'], ['gear', '⚙️'],
+    ['wrench', '🔧'], ['hammer', '🔨'], ['bug', '🐛'], ['robot', '🤖'], ['brain', '🧠'], ['computer', '💻'],
+    ['phone', '📱'], ['camera', '📷'], ['movie', '🎬'], ['headphones', '🎧'], ['radio', '📻'], ['cd', '💿'],
+    ['ticket', '🎫'], ['trophy', '🏆'], ['medal', '🏅'], ['gift', '🎁'], ['balloon', '🎈'], ['cake', '🎂'],
+    ['pizza', '🍕'], ['taco', '🌮'], ['apple', '🍎'], ['peach', '🍑'], ['dog', '🐶'], ['cat', '🐱'],
+    ['horse', '🐴'], ['turtle', '🐢'], ['snake', '🐍'], ['bird', '🐦'], ['owl', '🦉'], ['frog', '🐸'],
+    ['crab', '🦀'], ['dragon', '🐉'], ['unicorn', '🦄'], ['bee', '🐝'], ['butterfly', '🦋'], ['moneybag', '💰'],
+    ['chart', '📈'], ['ghost', '👻'], ['skull', '💀'], ['alien', '👽'], ['magenta', '🟣'], ['purple_heart', '💜'],
+  ];
+  function wordAtCaret() {
     const upto = sayBox.value.slice(0, sayBox.selectionStart);
-    const m = upto.match(/(^|[^\w@\/.])@([A-Za-z][\w.-]*)?$/);
-    return m ? { start: upto.length - (m[2] || '').length, prefix: (m[2] || '').toLowerCase() } : null;
+    let m = upto.match(/(^|[^\w@\/.])@([A-Za-z][\w.-]*)?$/);
+    if (m) return { kind: 'mention', start: upto.length - (m[2] || '').length, prefix: (m[2] || '').toLowerCase() };
+    // `:` starting a word -- so 10:30 doesn't open it.
+    m = upto.match(/(^|[\s(]):([a-z0-9_+-]{0,30})$/);
+    if (m) return { kind: 'emoji', start: upto.length - m[2].length - 1, prefix: m[2] };
+    return null;
   }
   function closeSuggest() { suggest.classList.remove('on'); choices = []; }
   function showSuggest() {
-    const at = mentionAtCaret();
+    const at = wordAtCaret();
     if (!at) return closeSuggest();
-    const here = new Set((motions.find(m => m.slug === current) || {}).participants || []);
-    choices = people.map(p => p.name).filter(n => n.startsWith(at.prefix))
-      .sort((a, b) => (here.has(b) - here.has(a)) || a.localeCompare(b)).slice(0, 8);
+    if (at.kind === 'emoji') {
+      const hits = EMOJI.filter(([name]) => name.startsWith(at.prefix))
+        .concat(at.prefix ? EMOJI.filter(([name]) => !name.startsWith(at.prefix) && name.includes(at.prefix)) : [])
+        .slice(0, 8);
+      choices = hits.map(([name, char]) => ({ insert: char, html: `<span class="emo">${char}</span>:${esc(name)}:` }));
+    } else {
+      const here = new Set((motions.find(m => m.slug === current) || {}).participants || []);
+      choices = people.map(p => p.name).filter(n => n.startsWith(at.prefix))
+        .sort((a, b) => (here.has(b) - here.has(a)) || a.localeCompare(b)).slice(0, 8)
+        .map(n => ({ insert: n + ' ', html: `${icon(n)}@${esc(n)}<small>${human[n] ? 'person' : 'agent'}${here.has(n) ? '' : ' · not here yet'}</small>` }));
+    }
     if (!choices.length) return closeSuggest();
     chosen = Math.min(chosen, choices.length - 1);
-    suggest.innerHTML = choices.map((n, i) =>
-      `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">${icon(n)}@${esc(n)}<small>${human[n] ? 'person' : 'agent'}${here.has(n) ? '' : ' · not here yet'}</small></div>`).join('');
+    suggest.innerHTML = choices.map((c, i) => `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">${c.html}</div>`).join('');
     suggest.classList.add('on');
   }
   function acceptSuggest(i) {
-    const at = mentionAtCaret(); if (!at || !choices[i]) return;
+    const at = wordAtCaret(); if (!at || !choices[i]) return;
     const before = sayBox.value.slice(0, at.start), after = sayBox.value.slice(sayBox.selectionStart);
-    sayBox.value = before + choices[i] + ' ' + after;
-    const caret = (before + choices[i] + ' ').length;
+    sayBox.value = before + choices[i].insert + after;
+    const caret = (before + choices[i].insert).length;
     sayBox.setSelectionRange(caret, caret);
     closeSuggest(); sayBox.focus();
   }
