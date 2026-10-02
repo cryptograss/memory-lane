@@ -34,6 +34,8 @@ def motions_page(request, slug=None):
         # database is read-only, so nothing it sends is kept.
         'viewer': device.entity_id if device else getattr(settings, 'PREVIEW_VIEWER', ''),
         'preview_label': getattr(settings, 'PREVIEW_LABEL', ''),
+        # [[ in the composer suggests PickiPedia titles, asked of the wiki itself.
+        'pickipedia_url': getattr(settings, 'PICKIPEDIA_URL', 'https://pickipedia.xyz').rstrip('/'),
     })
 
 

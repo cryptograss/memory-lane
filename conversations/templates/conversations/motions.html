@@ -750,8 +750,34 @@
     ['crab', '🦀'], ['dragon', '🐉'], ['unicorn', '🦄'], ['bee', '🐝'], ['butterfly', '🦋'], ['moneybag', '💰'],
     ['chart', '📈'], ['ghost', '👻'], ['skull', '💀'], ['alien', '👽'], ['magenta', '🟣'], ['purple_heart', '💜'],
   ];
+  // [[ suggests PickiPedia titles, as the wiki's own editor does (LinkSuggest).
+  // Its API answers any origin, so the browser asks the wiki directly.
+  const WIKI = "{{ pickipedia_url|escapejs }}" || 'https://pickipedia.xyz';
+  const wikiCache = new Map();
+  let wikiTimer = null;
+  function titleCase(s) { return s.replace(/(^|[\s:_(-])([a-z])/g, (m, p, c) => p + c.toUpperCase()); }
+  async function wikiTitles(prefix) {
+    if (wikiCache.has(prefix)) return wikiCache.get(prefix);
+    const ask = async q => {
+      const r = await fetch(`${WIKI}/api.php?action=query&list=prefixsearch&pslimit=8&format=json&origin=*&pssearch=${encodeURIComponent(q)}`);
+      return ((await r.json()).query || {}).prefixsearch || [];
+    };
+    let hits = [];
+    try {
+      hits = await ask(prefix);
+      // Titles are case-sensitive after the first letter: 'tony r' finds
+      // nothing, 'Tony R' finds Tony Rice.
+      if (!hits.length && titleCase(prefix) !== prefix) hits = await ask(titleCase(prefix));
+    } catch (e) { hits = []; }
+    const titles = hits.map(h => h.title);
+    wikiCache.set(prefix, titles);
+    return titles;
+  }
+
   function wordAtCaret() {
     const upto = sayBox.value.slice(0, sayBox.selectionStart);
+    const w = upto.match(/\[\[([^\[\]|\n]{1,100})$/);
+    if (w) return { kind: 'wiki', start: upto.length - w[1].length, prefix: w[1] };
     let m = upto.match(/(^|[^\w@\/.])@([A-Za-z][\w.-]*)?$/);
     if (m) return { kind: 'mention', start: upto.length - (m[2] || '').length, prefix: (m[2] || '').toLowerCase() };
     // `:` starting a word -- so 10:30 doesn't open it.
@@ -763,6 +789,21 @@
   function showSuggest() {
     const at = wordAtCaret();
     if (!at) return closeSuggest();
+    if (at.kind === 'wiki') {
+      clearTimeout(wikiTimer);
+      const prefix = at.prefix;
+      wikiTimer = setTimeout(async () => {
+        const titles = await wikiTitles(prefix);
+        const still = wordAtCaret();
+        if (!still || still.kind !== 'wiki' || still.prefix !== prefix) return;  // they've typed on
+        choices = titles.map(t => ({ insert: t + ']]', html: `<span class="emo">📖</span>${esc(t)}` }));
+        if (!choices.length) return closeSuggest();
+        chosen = Math.min(chosen, choices.length - 1);
+        suggest.innerHTML = choices.map((c, i) => `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">${c.html}</div>`).join('');
+        suggest.classList.add('on');
+      }, wikiCache.has(prefix) ? 0 : 150);
+      return;
+    }
     if (at.kind === 'emoji') {
       const hits = EMOJI.filter(([name]) => name.startsWith(at.prefix))
         .concat(at.prefix ? EMOJI.filter(([name]) => !name.startsWith(at.prefix) && name.includes(at.prefix)) : [])
@@ -794,6 +835,7 @@
       e.preventDefault(); chosen = (chosen + (e.key === 'ArrowDown' ? 1 : choices.length - 1)) % choices.length; showSuggest();
     } else if ((e.key === 'Enter' && !e.ctrlKey && !e.metaKey) || e.key === 'Tab') {
       e.preventDefault(); e.stopImmediatePropagation(); acceptSuggest(chosen);
+      return;
     } else if (e.key === 'Escape') { closeSuggest(); }
   });
   suggest.addEventListener('mousedown', e => { const d = e.target.closest('[data-i]'); if (d) { e.preventDefault(); acceptSuggest(+d.dataset.i); } });
