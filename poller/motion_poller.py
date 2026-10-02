@@ -887,6 +887,22 @@ class MotionPoller:
         self.state['wakes'] = self.recent_wakes()
 
 
+RUNNER_KEY_FILE = '~/.config/magenta/runner_key'
+
+
+def runner_key():
+    """The runner's key: from the environment, else from the file hunter's
+    container startup writes (the poller is started by `su -`, which leaves
+    the container's environment behind). '' if neither has it."""
+    key = os.environ.get('MEMORY_LANE_RUNNER_KEY', '').strip()
+    if key:
+        return key
+    try:
+        return Path(RUNNER_KEY_FILE).expanduser().read_text().strip()
+    except OSError:
+        return ''
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--agent', default='magent')
@@ -915,7 +931,7 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
     # The runner's key, from the vault via the hunter deploy. Without it,
     # woken turns still reach their Motion through the transcript watcher.
-    key = os.environ.get('MEMORY_LANE_RUNNER_KEY', '')
+    key = runner_key()
     streamer = (lambda slug, session: StreamPoster(args.base, key, slug, session)) if key else None
     logger.info('streaming woken turns straight to their Motions' if key else
                 'no MEMORY_LANE_RUNNER_KEY: woken turns reach Motions through the transcript watcher')
