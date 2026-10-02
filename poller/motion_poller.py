@@ -100,9 +100,11 @@ class MotionAPI:
     def sessions(self, slug, sender):
         return [s['session_id'] for s in self._get(f'/api/motions/{slug}/sessions/', sender=sender)['sessions']]
 
-    def pulse(self):
-        """Every Motion at a glance: newest message, newest web post, typing, activity."""
-        return self._get('/api/motions/pulse/')['motions']
+    def pulse(self, agent='magent'):
+        """Every Motion at a glance -- newest message, newest web post, typing,
+        activity, and how `agent` is to carry itself there -- plus the scram
+        and the day's budget."""
+        return self._get('/api/motions/pulse/', agent=agent)
 
     def recent(self, slug, limit=40):
         """A Motion's newest turns (and its title and description), for context."""
@@ -253,14 +255,28 @@ class ClaudeCodeScreen:
               '{agent}: people coordinating among themselves, thanks, small talk that needs nothing. '
               'When in doubt, PASS.')
 
+    DIGEST = ('Summarize this stretch of a group conversation for {agent}, an AI who takes part in it and '
+              'was away for it. In under 200 words of plain prose: what was decided, what is still open, and '
+              'anything asked of or said about {agent}. Name who said what when it matters.')
+
     def __init__(self, agent='magent', claude='claude', model='haiku', timeout=120, budget=0.05):
         self.agent, self.claude, self.model, self.timeout, self.budget = agent, claude, model, timeout, budget
 
-    def command(self, prompt):
+    def command(self, prompt, system=None):
         return [self.claude, '-p', '--model', self.model, '--no-session-persistence', '--tools', '',
                 '--strict-mcp-config', '--permission-mode', 'dontAsk', '--effort', 'low',
                 '--max-budget-usd', f'{self.budget:.2f}', '--output-format', 'json',
-                '--system-prompt', self.SYSTEM.format(agent=self.agent), '--', prompt]
+                '--system-prompt', (system or self.SYSTEM).format(agent=self.agent), '--', prompt]
+
+    def digest(self, text):
+        """(a short summary of a long stretch of conversation, cost) -- ('', 0) if it fails."""
+        try:
+            result = subprocess.run(self.command(text, system=self.DIGEST), cwd=tempfile.gettempdir(),
+                                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=self.timeout)
+            data = json.loads(result.stdout)
+        except (subprocess.SubprocessError, OSError, ValueError):
+            return '', 0.0
+        return (data.get('result') or '').strip(), float(data.get('total_cost_usd') or 0.0)
 
     def __call__(self, prompt):
         """('pass' or 'dismiss', reason, cost in USD)."""
@@ -313,7 +329,7 @@ class ClaudeCodeWaker:
     def can_wake(self, session_id):
         return self.cwd_for(session_id) is not None
 
-    def command(self, session_id, new_session_id, prompt, grant=(), budget=None, effort=None):
+    def command(self, session_id, new_session_id, prompt, grant=(), budget=None, effort=None, model=None):
         cmd = [self.claude, '-p', '--resume', session_id, '--fork-session',
                '--session-id', new_session_id,
                # Every event on stdout as it happens: what the runner posts to
@@ -326,15 +342,16 @@ class ClaudeCodeWaker:
         mcp = mcp_config_for_wakes()
         if mcp:
             cmd += ['--mcp-config', mcp]
-        if self.model:
-            cmd += ['--model', self.model]
+        if model or self.model:
+            cmd += ['--model', model or self.model]
         if budget:
             cmd += ['--max-budget-usd', f'{budget:.2f}']
         if effort:
             cmd += ['--effort', effort]
         return cmd + ['--', prompt]
 
-    def wake(self, session_id, prompt, new_session_id=None, on_event=None, grant=(), budget=None, effort=None):
+    def wake(self, session_id, prompt, new_session_id=None, on_event=None, grant=(), budget=None, effort=None,
+             model=None):
         """Run one turn; (new session id, its reply). `on_event` sees every
         stream event as it comes out. self.last_result keeps the run's
         result event: its cost, its duration, how it ended."""
@@ -342,7 +359,7 @@ class ClaudeCodeWaker:
         if cwd is None:
             raise RuntimeError(f'session {session_id} cannot be resumed from here')
         new_session_id = new_session_id or str(uuid.uuid4())
-        cmd = self.command(session_id, new_session_id, prompt, grant=grant, budget=budget, effort=effort)
+        cmd = self.command(session_id, new_session_id, prompt, grant=grant, budget=budget, effort=effort, model=model)
         # Its own process group, so ending it ends everything it started: a
         # child left holding the output pipe would keep the turn open.
         proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -436,6 +453,11 @@ class MotionPoller:
         self.debounce = timedelta(seconds=debounce)
         self.idle_first = idle_first
         self.last_reply = None
+        # From the pulse, every cycle: how the agent is to carry itself in
+        # each Motion (services/settings.py on memory-lane), and the budget.
+        self.settings = {}
+        self.budget = {}
+        self.scrammed = False
         self.state = self.load()
         self.state.setdefault('consider', {})
         self.state.setdefault('spend', {'day': '', 'usd': 0.0})
@@ -470,6 +492,38 @@ class MotionPoller:
 
     # --- one pass ------------------------------------------------------------
 
+    def knob(self, slug, key, fallback=None):
+        value = self.settings.get(slug, {}).get(key)
+        return fallback if value in (None, '') else value
+
+    def listening(self, slug):
+        """'on', 'mentions' or 'off': whether the agent may be woken in this Motion."""
+        return (self.knob(slug, 'listening') or {}).get('mode', 'on')
+
+    def cycle(self):
+        """One look: the pulse, then mentions, then perhaps speaking up unasked.
+        Returns (Motions woken by a mention, [(slug, outcome)] considered)."""
+        try:
+            pulse = self.api.pulse(self.agent)
+        except Exception as e:
+            logger.error(f'pulse failed: {e}')
+            pulse = None
+        if pulse and pulse.get('scram'):
+            if not self.scrammed:
+                scram = pulse['scram']
+                logger.warning(f"scram by {scram.get('by')} at {scram.get('at')}: waking nothing until it's lifted")
+                self.scrammed = True
+            return [], []
+        if self.scrammed:
+            logger.warning('scram lifted: waking again')
+            self.scrammed = False
+        if pulse:
+            self.settings = {m['slug']: m.get('settings') or {} for m in pulse.get('motions', [])}
+            self.budget = pulse.get('budget') or {}
+        woken = self.poll_once()
+        considered = self.consider_once(pulse) if pulse else []
+        return woken, considered
+
     def poll_once(self):
         """Look once; at most one wake per Motion. Returns the Motions woken."""
         mentions = self.api.mentions(self.agent, since=self.state['since'])
@@ -483,6 +537,8 @@ class MotionPoller:
 
         woken = []
         for slug, mentioned in pending.items():
+            if self.listening(slug) == 'off':
+                continue  # held, not dropped: answered once the agent is listening again
             try:
                 done, outcome = self.consider(slug, mentioned)
             except Exception as e:  # one Motion's trouble must not stall the others
@@ -540,7 +596,8 @@ class MotionPoller:
         self.state['wakes'].append(self.now().isoformat())
         self.state['handled'] = sorted(set(self.state['handled']) | set(settled))
         self.save()
-        outcome = self.run_turn(slug, sessions[0], prompt, effort=self.mention_effort)
+        outcome = self.run_turn(slug, sessions[0], prompt, effort=self.knob(slug, 'mention_effort', self.mention_effort),
+                                model=self.knob(slug, 'model'))
         return settled, outcome
 
     def run_turn(self, slug, session_id, prompt, **options):
@@ -581,7 +638,23 @@ class MotionPoller:
                 entry = entry[:max(budget, 0)] + ' [cut: too long to pass on]'
             budget -= len(entry)
             lines.append(entry)
-        return '\n'.join(lines + wake_footer())
+        # What else was said around it: a web post can follow a conversation
+        # this session never saw. (Also why the consider loop needn't look at
+        # the same posts again.)
+        try:
+            owed_ids = {t['id'] for t in owed}
+            around = [t for t in self.api.recent(slug, limit=20)['turns'] if t['id'] not in owed_ids]
+        except Exception:
+            around = []
+        if around:
+            lines += ['', 'The Motion lately, for context (newest last):', *transcript_of(around, limit=12_000, each=800)]
+        return '\n'.join(lines + self.rules_lines(slug) + wake_footer())
+
+    def rules_lines(self, slug):
+        rules = self.knob(slug, 'rules')
+        if not rules:
+            return []
+        return ['', f"This Motion's people asked you to keep this in mind here:", rules]
 
     # --- the consider loop ------------------------------------------------------
     #
@@ -617,18 +690,22 @@ class MotionPoller:
     # a day across screens and considerations (mentions aren't counted).
 
     IDLE_REST = timedelta(hours=12)
+    DIGEST_OVER = 12_000  # characters of new posts beyond which the older ones are summarized
+    DIGEST_KEEP = 8       # the newest posts always go verbatim
 
-    def consider_once(self):
+    def consider_once(self, pulse=None):
         """One look at every Motion; [(slug, outcome)] for those considered."""
         if not self.consider_enabled:
             return []
-        try:
-            motions = self.api.pulse()
-        except Exception as e:
-            logger.error(f'pulse failed: {e}')
-            return []
+        if pulse is None:
+            try:
+                pulse = self.api.pulse(self.agent)
+            except Exception as e:
+                logger.error(f'pulse failed: {e}')
+                return []
+            self.settings = {m['slug']: m.get('settings') or {} for m in pulse.get('motions', [])}
         done = []
-        for m in motions:
+        for m in pulse.get('motions', []):
             try:
                 outcome = self.consider_motion(m)
             except Exception as e:  # one Motion's trouble is not every Motion's
@@ -649,57 +726,91 @@ class MotionPoller:
                 # From now, not from the last word: a runner just started (or
                 # deployed) shouldn't greet every quiet Motion at once.
                 'quiet_since': now.isoformat(),
-                'idle_after': self.idle_first, 'wakes': []}
+                'idle_after': None, 'wakes': []}
             self.save()
             return None
         if newest and newest['id'] != st['newest_seen']:  # something was said: the quiet starts over
             st['newest_seen'], st['quiet_since'] = newest['id'], newest['created_at']
             self.save()
+        if self.listening(slug) != 'on':
+            return None  # hushed: what's posted meanwhile waits, to be caught up on afterwards
         busy = bool(m.get('typing')) or m.get('activity') is not None
+        debounce = timedelta(seconds=self.knob(slug, 'consider_after', self.debounce.total_seconds()))
 
         if web and web['id'] != st['web_seen']:
-            if busy or now - parse_time(web['created_at']) < self.debounce:
+            if busy or now - parse_time(web['created_at']) < debounce:
                 return None  # let them finish
-            recent = self.api.recent(slug)
+            recent = self.api.recent(slug, limit=200)
             seen_at = parse_time(st['web_seen_at']) if st.get('web_seen_at') else None
             posts = [t for t in recent['turns'] if t.get('is_human') and t.get('via') == 'web'
                      and (seen_at is None or parse_time(t['created_at']) > seen_at)]
             st['web_seen'], st['web_seen_at'] = web['id'], web['created_at']
-            st['idle_after'] = self.idle_first  # a person spoke
+            st['idle_after'] = None  # a person spoke: back to the first wait
             self.save()
-            if not posts or any(self.agent in t.get('mentions', []) for t in posts):
-                return None  # asked directly: the mention path answers
+            # A mention is answered by the mention path, whose prompt carries
+            # the conversation around it; only what came after is left.
+            asked = [t for t in posts if self.agent in t.get('mentions', [])]
+            if asked:
+                last_asked = max(parse_time(t['created_at']) for t in asked)
+                posts = [t for t in posts if parse_time(t['created_at']) > last_asked]
+            if not posts:
+                return None
             return self.consider_posts(slug, recent, posts)
 
-        if busy or not human or now - parse_time(human['created_at']) > self.IDLE_REST:
+        idle_first = self.knob(slug, 'idle_after', self.idle_first)
+        if busy or not idle_first or not human or now - parse_time(human['created_at']) > self.IDLE_REST:
             return None
+        wait = st.get('idle_after') or idle_first
         quiet_for = now - parse_time(st['quiet_since'])
-        if quiet_for.total_seconds() < st['idle_after']:
+        if quiet_for.total_seconds() < wait:
             return None
         outcome = self.consider_quiet(slug, quiet_for)
-        st['idle_after'] = self.idle_first if outcome == 'spoke' else st['idle_after'] * 2
+        st['idle_after'] = None if outcome == 'spoke' else wait * 2
         st['quiet_since'] = now.isoformat()  # the next long quiet counts from here
         self.save()
         return outcome
 
+    def catch_up(self, slug, recent, posts):
+        """Prompt lines for what's new: verbatim if it's short; if not, a digest of
+        the older part and the newest verbatim. Returns (lines, cost)."""
+        new_ids = {t['id'] for t in posts}
+        size = sum(len(t.get('text', '')) for t in posts)
+        if size <= self.DIGEST_OVER or len(posts) <= self.DIGEST_KEEP or not self.screen:
+            context = [t for t in recent['turns'] if parse_time(t['created_at']) <= parse_time(posts[-1]['created_at'])]
+            return transcript_of(context[-(len(posts) + 15):], new_ids), 0.0
+        older, newer = posts[:-self.DIGEST_KEEP], posts[-self.DIGEST_KEEP:]
+        summary, cost = self.screen.digest('\n'.join(transcript_of(older, limit=60_000, each=2000)))
+        lines = [f'While you were away, {len(older)} earlier posts, in short:',
+                 summary or '(the summary failed; the posts are in the Motion if you need them)', '',
+                 'The newest, as they were posted:', *transcript_of(newer, {t['id'] for t in newer})]
+        return lines, cost
+
     def consider_posts(self, slug, recent, posts):
         if not self.within_budget(slug):
             return 'over budget'
+        lines, cost = self.catch_up(slug, recent, posts)
+        self.spend(cost)
         if self.screen:
-            new_ids = {t['id'] for t in posts}
             motion = recent.get('motion') or {}
             prompt = '\n'.join([f"Motion: {motion.get('title', slug)} -- {motion.get('description', '')}",
+                                 *(['', f"Rules for {self.agent} here: {self.knob(slug, 'rules')}"]
+                                   if self.knob(slug, 'rules') else []),
                                  'Recent conversation, newest last; ► marks what is new:', '',
-                                 *transcript_of(recent['turns'][-25:], new_ids, limit=12_000, each=600), '',
+                                 *lines[-60:], '',
                                  f'Should {self.agent} look closely at the new posts?'])
-            verdict, reason, cost = self.screen(prompt)
-            self.spend(cost)
+            verdict, reason, screen_cost = self.screen(prompt)
+            self.spend(screen_cost)
             if verdict == 'dismiss':
                 if not self.dry_run and not self.api.quiet(slug, reason or 'not for me', by='screen'):
                     logger.info(f'{slug}: screened (no runner key, so no dot): {reason}')
                 logger.info(f'{slug}: screened: {reason}')
                 return 'screened'
-        return self.consider_wake(slug, self.consider_prompt(slug, recent, posts))
+        prompt_lines = [f'<motion-wake motion="{slug}" reason="consider">',
+                        'Nobody asked you anything. This is the Motion lately, newest last; ► marks what was '
+                        'posted since you last looked:', '', *lines, '',
+                        'If you have something that would genuinely help -- a fact, a connection, a question, a '
+                        'kind word -- say it, briefly. Most of the time the right answer is to stay quiet.']
+        return self.consider_wake(slug, '\n'.join(prompt_lines + self.rules_lines(slug) + wake_footer()))
 
     def consider_quiet(self, slug, quiet_for):
         if not self.within_budget(slug):
@@ -711,16 +822,7 @@ class MotionPoller:
                  '', *transcript_of(recent['turns']), '',
                  'You might pick up a loose end, offer something you have been turning over, or just let it '
                  'rest. Nobody is waiting on you.']
-        return self.consider_wake(slug, '\n'.join(lines + wake_footer()))
-
-    def consider_prompt(self, slug, recent, posts):
-        new_ids = {t['id'] for t in posts}
-        lines = [f'<motion-wake motion="{slug}" reason="consider">',
-                 'Nobody asked you anything. This is the Motion lately, newest last; ► marks what was posted '
-                 'since you last looked:', '', *transcript_of(recent['turns'][-30:], new_ids), '',
-                 'If you have something that would genuinely help -- a fact, a connection, a question, a kind '
-                 'word -- say it, briefly. Most of the time the right answer is to stay quiet.']
-        return '\n'.join(lines + wake_footer())
+        return self.consider_wake(slug, '\n'.join(lines + self.rules_lines(slug) + wake_footer()))
 
     def consider_wake(self, slug, prompt):
         """Wake the agent itself to consider; 'spoke', 'silent', 'failed' or 'elsewhere'."""
@@ -734,8 +836,8 @@ class MotionPoller:
         st['wakes'] = [w for w in st.get('wakes', []) if self.now() - parse_time(w) < timedelta(hours=1)]
         st['wakes'].append(self.now().isoformat())
         self.save()  # recorded before the turn runs, as for mentions
-        outcome = self.run_turn(slug, sessions[0], prompt, effort=self.consider_effort,
-                                budget=self.consider_budget)
+        outcome = self.run_turn(slug, sessions[0], prompt, effort=self.knob(slug, 'consider_effort', self.consider_effort),
+                                budget=self.consider_budget, model=self.knob(slug, 'model'))
         self.spend((getattr(self.waker, 'last_result', None) or {}).get('total_cost_usd') or 0.0)
         if outcome == 'failed':
             return 'failed'
@@ -743,12 +845,14 @@ class MotionPoller:
 
     def within_budget(self, slug):
         hour_ago = self.now() - timedelta(hours=1)
+        per_hour = self.knob(slug, 'considers_per_hour', self.considers_per_hour)
         wakes = [w for w in self.state['consider'].get(slug, {}).get('wakes', []) if parse_time(w) > hour_ago]
-        if len(wakes) >= self.considers_per_hour:
-            logger.warning(f'{slug}: would consider, but {self.considers_per_hour} this hour already')
+        if len(wakes) >= per_hour:
+            logger.warning(f'{slug}: would consider, but {per_hour} this hour already')
             return False
-        if self.spent_today() >= self.consider_usd_per_day:
-            logger.warning(f'{slug}: would consider, but today\'s ${self.consider_usd_per_day:.2f} is spent')
+        per_day = self.budget.get('consider_usd_per_day', self.consider_usd_per_day)
+        if self.spent_today() >= per_day:
+            logger.warning(f"{slug}: would consider, but today's ${per_day:.2f} is spent")
             return False
         return True
 
@@ -825,8 +929,7 @@ def main(argv=None):
                           consider_effort=args.consider_effort, debounce=args.debounce, idle_first=args.idle_first)
     while True:
         try:
-            poller.poll_once()
-            poller.consider_once()
+            poller.cycle()
         except Exception as e:  # keep looking; one bad pass is not a reason to stop
             logger.error(f'poll failed: {e}')
         if args.once:

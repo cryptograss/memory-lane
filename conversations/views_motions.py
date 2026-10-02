@@ -99,11 +99,25 @@ def api_motion_turns(request, slug):
         'activity': activity(motion),
         # What an agent started in the background here and is still running.
         'tasks': background_tasks(motion),
+        # Whether each agent is listening here (the hush menu in the head).
+        'listening': listening_in(motion),
+        'scram': settings_scram(),
         'typing': typing_in(motion.slug),
     })
 
 
 PAGE = 400
+
+
+def listening_in(motion):
+    from .services import settings as knobs
+    agents = ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True)
+    return {name: knobs.resolve(motion.slug, name)['listening'] for name in agents}
+
+
+def settings_scram():
+    from .services import settings as knobs
+    return knobs.scram()
 
 
 def _message_or_none(raw):
@@ -143,7 +157,12 @@ def api_pulse(request):
         return message and {'id': str(message['id']), 'created_at': message['created_at'].isoformat(),
                             'sender': message['sender_id']}
 
+    from .models import Setting
+    from .services import settings as knobs
+
     humans = set(ThinkingEntity.objects.filter(is_biological_human=True).values_list('name', flat=True))
+    agent = request.GET.get('agent', 'magent')
+    rows = list(Setting.objects.exclude(key__in=knobs.MODERATION_KEYS))
     motions = []
     for motion in Motion.objects.all():
         said = motion.messages.filter(is_sidechain=False).exclude(sender_id__in=MACHINERY_SENDERS)
@@ -155,8 +174,17 @@ def api_pulse(request):
             'last_human': brief(said.filter(sender_id__in=humans).order_by('-created_at').values(*fields).first()),
             'typing': typing_in(motion.slug),
             'activity': activity(motion),
+            # How this agent is to carry itself here (services/settings.py).
+            'settings': knobs.resolve(motion.slug, agent, rows=rows),
         })
-    return JsonResponse({'now': timezone.now().isoformat(), 'motions': motions})
+    return JsonResponse({
+        'now': timezone.now().isoformat(),
+        'agent': agent,
+        # An admin's emergency stop: while set, a runner wakes nothing.
+        'scram': knobs.scram(),
+        'budget': {k: knobs.global_value(k) for k in knobs.GLOBAL_KNOBS},
+        'motions': motions,
+    })
 
 
 @require_GET
