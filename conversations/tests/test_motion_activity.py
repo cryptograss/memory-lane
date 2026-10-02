@@ -8,7 +8,9 @@ from django.test import TestCase
 from conversations.models import (
     ConversationParticipant, Message, Motion, ThinkingEntity, Thought, ToolResult, ToolUse,
 )
-from conversations.services.motion_view import activity
+from django.core.cache import cache
+
+from conversations.services.motion_view import HELD_FOR, activity, held_in, set_held
 
 NOW = 1_790_000_000.0
 
@@ -21,6 +23,9 @@ class ActivityTest(TestCase):
         cls.magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
         cls.tool = ConversationParticipant.objects.create(name='tool-result', participant_type='tool')
         cls.motion = Motion.objects.create(slug='m26')
+
+    def setUp(self):
+        cache.delete('held:m26')  # the cache is shared, not rolled back with the test
 
     def add(self, sender, seconds_ago, content='x', model=Message, **fields):
         return model.objects.create(id=uuid.uuid4(), sender=sender, motion=self.motion, content=content,
@@ -132,6 +137,27 @@ class ActivityTest(TestCase):
     def test_a_web_post_naming_an_agent_is_waking_it(self):
         self.add(self.justin, 3, '@magent can you see?', source_file='motion-web')
         self.assertEqual(self.now(), {'agent': 'magent', 'doing': 'waking', 'since': NOW - 3})
+
+    def test_a_mention_the_runner_holds_says_so_and_why(self):
+        # Asked 20 minutes ago -- longer than an unexplained wait is shown.
+        self.add(self.justin, 1200, '@magent and another thing', source_file='motion-web')
+        self.assertIsNone(self.now())
+        set_held('m26', 'magent', '30 wakes this hour already', '2026-10-02T23:15:00+00:00', now=NOW - 5)
+        self.assertEqual(self.now(), {'agent': 'magent', 'doing': 'held', 'why': '30 wakes this hour already',
+                                      'until': '2026-10-02T23:15:00+00:00', 'since': NOW - 1200})
+        # A newer post is waking again, until the runner has looked at it.
+        self.add(self.justin, 2, '@magent still there?', source_file='motion-web')
+        self.assertEqual(self.now()['doing'], 'waking')
+
+    def test_a_hold_lapses_unless_renewed_or_lifted(self):
+        self.add(self.justin, 200, '@magent hello', source_file='motion-web')
+        set_held('m26', 'magent', 'hushed here', now=NOW - 100)
+        self.assertEqual(self.now()['doing'], 'held')
+        # A runner that died says nothing more: its hold lapses.
+        self.assertEqual(held_in('m26', now=NOW - 100 + HELD_FOR - 1).keys(), {'magent'})
+        self.assertEqual(held_in('m26', now=NOW - 100 + HELD_FOR + 1), {})
+        set_held('m26', 'magent', '', now=NOW - 1)
+        self.assertEqual(self.now()['doing'], 'waking')
 
     def test_a_web_post_naming_nobody_wakes_nobody(self):
         self.add(self.justin, 3, 'just a note', source_file='motion-web')

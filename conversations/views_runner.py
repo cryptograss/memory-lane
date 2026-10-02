@@ -189,3 +189,34 @@ def api_quiet(request, slug):
         id=uuid.uuid4(), sender=sender, motion=motion, content=f'<silent by="{by}">{reason}</silent>',
         timestamp=int(time.time() * 1000), source_file=f'ingest-{SOURCE}', stop_reason='end_turn')
     return JsonResponse({'id': str(message.id)}, status=201)
+
+
+@csrf_exempt  # authenticated by the runner's key
+@require_POST
+def api_held(request, slug):
+    """The runner is holding its agent's next turn here, and why.
+
+    Body: {"reason": "a few words", "until": "<iso>" or null}. An empty
+    reason lifts the hold. Not in the record: it's how things stand, like
+    typing, and lapses unless renewed (services/motion_view.py, HELD_FOR).
+    """
+    import re
+    from datetime import datetime
+    from .services.motion_view import set_held
+
+    if not getattr(settings, 'MOTION_RUNNER_KEYS', {}):
+        return JsonResponse({'error': 'no runners are configured'}, status=503)
+    agent = runner_agent(request)
+    if agent is None:
+        return JsonResponse({'error': 'unauthorized'}, status=401)
+    get_object_or_404(Motion, slug=slug)
+    try:
+        body = json.loads(request.body)
+        reason = re.sub(r'<[^>]*>|[<>]', '', str(body.get('reason') or '')).strip()[:200]
+        until = body.get('until') or None
+        if until is not None:
+            until = datetime.fromisoformat(str(until).replace('Z', '+00:00')).isoformat()
+    except (ValueError, AttributeError, TypeError):
+        return JsonResponse({'error': 'expected {"reason": ..., "until": <iso> or null}'}, status=400)
+    holds = set_held(slug, agent, reason, until)
+    return JsonResponse({'held': holds.get(agent)})
