@@ -542,6 +542,42 @@ def _when(msg):
     return msg.timestamp / 1000 if msg.timestamp else msg.created_at.timestamp()
 
 
+# --- a mention the runner is holding ----------------------------------------
+# The record can show that a post names an agent and nothing has answered it,
+# but not why: a runner may be holding it -- its hourly cap reached, the
+# agent hushed here, a turn already under way. The runner says so, and the
+# Motion shows "held" instead of an endless "waking". Ephemeral, like typing:
+# a shared cache entry per Motion, agent -> {reason, until, at}, which lapses
+# unless the runner renews it, so a runner that dies leaves no stale hold.
+HELD_FOR = 600  # seconds a hold lasts unless renewed
+
+
+def _held_key(slug):
+    return f'held:{slug}'
+
+
+def held_in(slug, now=None):
+    """agent -> {'reason', 'until', 'at'} for each hold still in force."""
+    from django.core.cache import cache
+    import time
+    now = now or time.time()
+    return {agent: h for agent, h in (cache.get(_held_key(slug)) or {}).items() if now - h['at'] < HELD_FOR}
+
+
+def set_held(slug, agent, reason, until=None, now=None):
+    """Hold `agent`'s next turn in `slug` for `reason`; an empty reason lifts it."""
+    from django.core.cache import cache
+    import time
+    now = now or time.time()
+    holds = held_in(slug, now)
+    if reason:
+        holds[agent] = {'reason': reason, 'until': until, 'at': now}
+    else:
+        holds.pop(agent, None)
+    cache.set(_held_key(slug), holds, HELD_FOR)
+    return holds
+
+
 def activity(motion, now=None):
     """What an agent in this Motion is doing now, or None if nothing is underway.
 
@@ -550,7 +586,8 @@ def activity(motion, now=None):
     an assistant line whose stop_reason is end_turn closes the turn. So an
     agent is working from the first line after its last finished turn until
     the next one, and the newest line says what it's doing. A web post that
-    names an agent and has nothing after it means the agent is being woken.
+    names an agent and has nothing after it means the agent is being woken,
+    unless its runner has said it is holding that turn, and why.
     """
     from conversations.models import ThinkingEntity
     import time
@@ -564,10 +601,28 @@ def activity(motion, now=None):
     recent = list(motion.messages.filter(is_sidechain=False).exclude(sender_id='system')
                   .select_related('sender', 'tooluse', 'thought', 'toolresult')
                   .order_by('-created_at')[:RECENT])
-    if not recent or now - _when(recent[0]) > ACTIVITY_WINDOW:
+    if not recent:
         return None
-
     newest = recent[0]
+
+    if newest.source_file == 'motion-web':
+        named = [n for n in mentions_in(prose(newest.content), agents)]
+        if not named:
+            return None
+        # Held only if the runner said so after this post: a newer post is
+        # waking until the runner has looked at it. A hold is shown for as
+        # long as the runner keeps it -- an hour, at the hourly cap -- not
+        # just the window an unexplained wait is shown for.
+        hold = held_in(motion.slug, now).get(named[0])
+        if hold and hold['at'] >= _when(newest):
+            return {'agent': named[0], 'doing': 'held', 'why': hold['reason'], 'until': hold.get('until'),
+                    'since': _when(newest)}
+        if now - _when(newest) > ACTIVITY_WINDOW:
+            return None
+        return {'agent': named[0], 'doing': 'waking', 'since': _when(newest)}
+
+    if now - _when(newest) > ACTIVITY_WINDOW:
+        return None
     if newest.sender_id in agents and newest.stop_reason in TURN_ENDS:
         return None
     # Rows imported before stop_reason was kept: a plain reply that has sat
@@ -575,12 +630,6 @@ def activity(motion, now=None):
     if (newest.sender_id in agents and newest.stop_reason is None and now - _when(newest) > 30
             and not hasattr(newest, 'tooluse') and not hasattr(newest, 'thought')):
         return None
-
-    if newest.source_file == 'motion-web':
-        named = [n for n in mentions_in(prose(newest.content), agents)]
-        if not named:
-            return None
-        return {'agent': named[0], 'doing': 'waking', 'since': _when(newest)}
 
     streak = []
     for msg in recent:
