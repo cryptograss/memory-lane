@@ -503,7 +503,13 @@ class MotionPoller:
         'elsewhere', or None when nothing is due yet."""
         agent_turns = [parse_time(t['created_at']) for t in self.api.turns_after(slug, mentioned[0]['id'])
                        if t['sender'] == self.agent]
-        answered = [t for t in mentioned if any(a > parse_time(t['created_at']) for a in agent_turns)]
+        # Only a mention typed into a session can be answered by the agent's
+        # next turn there: that session saw it. A web post is seen by no
+        # session -- a reply that happens to come later (from a terminal, or
+        # from a woken turn about something else) never read it -- so it is
+        # owed until a wake that carried it has run.
+        answered = [t for t in mentioned if t.get('via') != 'web'
+                    and any(a > parse_time(t['created_at']) for a in agent_turns)]
         owed = [t for t in mentioned if t not in answered]
         settled = [t['id'] for t in answered]
         if not owed:

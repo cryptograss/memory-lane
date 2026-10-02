@@ -100,6 +100,16 @@ class MotionPollerTest(TestCase):
         self.assertEqual(poller.poll_once(), [])
         self.assertEqual(self.waker.woken, [])
 
+    def test_a_web_mention_is_not_answered_by_a_reply_that_never_saw_it(self):
+        # A terminal session (or a woken turn about something else) replies
+        # after the web post, but never read it.
+        web = dict(turn('a', 'skyler', 0), via='web')
+        api = FakeAPI([mention('m26', web)], turns={'m26': [turn('b', 'magent', 1, 'about something else')]},
+                      sessions={'m26': ['s-local']})
+        poller = self.make(api, minutes_now=2)
+        self.assertEqual(poller.poll_once(), ['m26'])
+        self.assertIn('@magent are you there?', self.waker.woken[0][1])
+
     def test_a_follow_up_after_the_answer_is_still_owed(self):
         api = FakeAPI([mention('m26', turn('a', 'justin', 0)), mention('m26', turn('c', 'justin', 6, '@magent and?'))],
                       turns={'m26': [turn('b', 'magent', 5, 'here')]}, sessions={'m26': ['s-local']})
