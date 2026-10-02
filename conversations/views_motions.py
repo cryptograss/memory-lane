@@ -86,6 +86,7 @@ def api_motion_turns(request, slug):
     images = step_images(step_msgs)
     steps_out = [{**step_payload(m), 'images': images.get(str(m.id), [])} for m in step_msgs]
     first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out], default=None)
+    agents = agents_in(motion)
     return JsonResponse({
         'motion': motion_payload(motion),
         # Prose only: the poller reads an agent turn here as an answer, so a
@@ -102,7 +103,9 @@ def api_motion_turns(request, slug):
         # What an agent started in the background here and is still running.
         'tasks': background_tasks(motion),
         # Whether each agent is listening here (the hush menu in the head).
-        'listening': listening_in(motion),
+        'listening': {name: a['listening'] for name, a in agents.items()},
+        # Each agent here: listening, model, effort, and how full its context is.
+        'agents': agents,
         'scram': settings_scram(),
         'typing': typing_in(motion.slug),
     })
@@ -111,10 +114,17 @@ def api_motion_turns(request, slug):
 PAGE = 400
 
 
-def listening_in(motion):
+def agents_in(motion):
+    """name -> {listening, model, effort, context} for each agent, in this Motion."""
     from .services import settings as knobs
+    from .services.motion_view import context_in
     agents = ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True)
-    return {name: knobs.resolve(motion.slug, name)['listening'] for name in agents}
+    out = {}
+    for name in agents:
+        resolved = knobs.resolve(motion.slug, name)
+        out[name] = {'listening': resolved['listening'], 'model': resolved['model'],
+                     'effort': resolved['mention_effort'], 'context': context_in(motion, name)}
+    return out
 
 
 def settings_scram():

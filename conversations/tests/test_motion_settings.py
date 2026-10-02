@@ -104,3 +104,28 @@ class SettingsAPITest(TestCase):
         self.assertEqual(pulse['budget'], {'consider_usd_per_day': 10.0})
         turns = self.client.get('/api/motions/m26/turns/').json()
         self.assertEqual(turns['listening']['magent']['mode'], 'mentions')
+
+    def test_the_motion_shows_each_agents_model_effort_and_context(self):
+        import uuid
+        from conversations.models import Message
+        knobs.change('model', 'sonnet', motion=self.m26, agent=self.magent, by=self.justin)
+        knobs.change('mention_effort', 'max', motion=self.m26, agent=self.magent, by=self.justin)
+        magent = self.client.get('/api/motions/m26/turns/').json()['agents']['magent']
+        self.assertEqual((magent['model'], magent['effort'], magent['context']), ('sonnet', 'max', None))
+        for tokens, model in ((150_000, 'claude-opus-5-5'), (210_000, 'claude-opus-5-5')):
+            Message.objects.create(id=uuid.uuid4(), sender_id='magent', motion=self.m26, content='x',
+                                   model_backend=model, input_tokens=10, cache_read_input_tokens=tokens,
+                                   cache_creation_input_tokens=5)
+        # A helper's line is its own context, not the agent's.
+        Message.objects.create(id=uuid.uuid4(), sender_id='magent', motion=self.m26, content='x', is_sidechain=True,
+                               model_backend='claude-haiku-4-5', input_tokens=9_000)
+        context = self.client.get('/api/motions/m26/turns/').json()['agents']['magent']['context']
+        self.assertEqual((context['tokens'], context['window'], context['model']),
+                         (210_015, 1_000_000, 'claude-opus-5-5'))
+
+    def test_a_context_window_by_model(self):
+        from conversations.services.motion_view import context_window
+        self.assertEqual(context_window('claude-opus-5-5'), 1_000_000)
+        self.assertEqual(context_window('claude-haiku-4-5', 150_000), 200_000)
+        self.assertEqual(context_window('claude-haiku-4-5', 300_000), 1_000_000)  # seen past it: the larger one
+        self.assertEqual(context_window(None), 200_000)
