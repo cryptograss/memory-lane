@@ -138,3 +138,49 @@ class StreamTest(TestCase):
                        parent_tool_use_id='toolu_agent1')
         self.post([helper])
         self.assertTrue(Message.objects.get(id=helper['uuid']).is_sidechain)
+
+
+@override_settings(MOTION_RUNNER_KEYS={'magent': KEY})
+class PulseAndQuietTest(TestCase):
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        cls.magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+        cls.motion = Motion.objects.create(slug='m26')
+        Motion.objects.create(slug='quiet-one')
+
+    def test_the_pulse_shows_every_motion_at_a_glance(self):
+        Message.objects.create(id=uuid.uuid4(), sender=self.justin, motion=self.motion, content='from the web',
+                               timestamp=1, source_file='motion-web')
+        reply = Message.objects.create(id=uuid.uuid4(), sender=self.magent, motion=self.motion,
+                                       content=[{'type': 'text', 'text': 'hi'}], timestamp=2, stop_reason='end_turn')
+        pulse = {m['slug']: m for m in self.client.get('/api/motions/pulse/').json()['motions']}
+        self.assertEqual(pulse['m26']['newest']['id'], str(reply.id))
+        self.assertEqual(pulse['m26']['last_web_post']['sender'], 'justin')
+        self.assertEqual(pulse['m26']['last_human']['sender'], 'justin')
+        self.assertIsNone(pulse['m26']['activity'])
+        self.assertIsNone(pulse['quiet-one']['newest'])
+
+    def test_a_screen_records_a_dot_marked_as_its_own(self):
+        def post(body, auth=AUTH):
+            return self.client.post('/api/motions/m26/quiet/', json.dumps(body),
+                                    content_type='application/json', **auth)
+        self.assertEqual(post({'reason': 'x'}, auth={}).status_code, 401)
+        self.assertEqual(post({'reason': 'x', 'by': 'not one word'}).status_code, 400)
+        self.assertEqual(post({'reason': 'two people <b>sorting</b> the bus; GITHUB_TOKEN=zq8Fh2kLm0xY'}).status_code, 201)
+        quiet = self.client.get('/api/motions/m26/turns/').json()['quiet']
+        self.assertEqual(len(quiet), 1)
+        self.assertEqual(quiet[0]['by'], 'screen')
+        self.assertNotIn('<b>', quiet[0]['reason'])
+        self.assertNotIn('zq8Fh2kLm0xY', quiet[0]['reason'])
+        stored = Message.objects.get(id=quiet[0]['id'])
+        self.assertIsNone(stored.session_id)  # never a session anyone would resume
+        self.assertIsNone(activity(self.motion))
+
+    def test_recent_context_only_when_asked(self):
+        for i in range(5):
+            Message.objects.create(id=uuid.uuid4(), sender=self.justin, motion=self.motion, content=f'line {i}',
+                                   timestamp=i)
+        turns = self.client.get('/api/motions/m26/turns/?limit=2').json()['turns']
+        self.assertEqual([t['text'] for t in turns], ['line 3', 'line 4'])

@@ -45,15 +45,17 @@ def prose(content):
 
 
 # An agent's choice not to speak: <silent/>, or <silent>why</silent>.
-_QUIET = re.compile(r'^<silent\s*/>$|^<silent>(.*)</silent>$', re.S)
+# by="screen": the runner's quick screen let it pass, not the agent itself.
+_QUIET = re.compile(r'^<silent\s*/>$|^<silent(?:\s+by="(\w+)")?>(.*)</silent>$', re.S)
 
 
 def quiet_reason(text):
-    """The reason in a silent reply ('' if none given), or None if it isn't one."""
+    """{'reason', 'by'} for a silent reply ('by' is '' when the agent itself
+    chose), or None if the text isn't one."""
     match = _QUIET.match(text)
     if not match:
         return None
-    return (match.group(1) or '').strip()
+    return {'reason': (match.group(2) or '').strip(), 'by': match.group(1) or ''}
 
 
 def is_wrapper(text):
