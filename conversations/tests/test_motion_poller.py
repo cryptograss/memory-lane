@@ -419,9 +419,10 @@ class RealProcessTest(TestCase):
         script.chmod(0o755)
         return str(script)
 
-    def waker(self, body, timeout=30):
+    def waker(self, body, timeout=30, full_timeout=60):
         from unittest import mock
-        waker = ClaudeCodeWaker(projects_dir=self.projects, claude=self.fake_claude(body), timeout=timeout)
+        waker = ClaudeCodeWaker(projects_dir=self.projects, claude=self.fake_claude(body), timeout=timeout,
+                                full_timeout=full_timeout)
         waker.command = mock.Mock(side_effect=lambda *a, **k: [waker.claude])
         return waker
 
@@ -447,6 +448,13 @@ class RealProcessTest(TestCase):
         with self.assertRaises(RuntimeError):
             self.waker('sleep 30', timeout=1).wake('s-old', 'prompt')
         self.assertLess(time.time() - start, 10)
+
+    def test_a_turn_with_full_tools_is_given_longer(self):
+        stream = json.dumps({'type': 'result', 'subtype': 'success', 'result': 'done', 'total_cost_usd': 0.1})
+        body = f"sleep 2; echo '{stream}'\n"
+        self.assertEqual(self.waker(body, timeout=1, full_timeout=30).wake('s-old', 'p', full=True)[1], 'done')
+        with self.assertRaises(RuntimeError):
+            self.waker(body, timeout=1, full_timeout=30).wake('s-old', 'p')
 
 
 class ConsiderAPI:

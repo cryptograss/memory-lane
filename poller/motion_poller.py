@@ -295,10 +295,12 @@ class ClaudeCodeScreen:
 class ClaudeCodeWaker:
     """Starts one Claude Code turn by forking a session that exists on this machine."""
 
-    def __init__(self, projects_dir='~/.claude/projects', claude='claude', timeout=900, model=None):
+    def __init__(self, projects_dir='~/.claude/projects', claude='claude', timeout=900, model=None,
+                 full_timeout=3600):
         self.projects_dir = Path(projects_dir).expanduser()
         self.claude = claude
         self.timeout = timeout
+        self.full_timeout = full_timeout  # a turn with full tools is asked for real work, which takes longer
         self.model = model
 
     def find(self, session_id):
@@ -395,7 +397,8 @@ class ClaudeCodeWaker:
         stderr = []
         drain = threading.Thread(target=lambda: stderr.append(proc.stderr.read()), daemon=True)
         drain.start()
-        timer = threading.Timer(self.timeout, end_process_group, args=(proc,))  # a turn that never ends is ended
+        timer = threading.Timer(self.full_timeout if full else self.timeout,  # a turn that never ends is ended
+                                end_process_group, args=(proc,))
         timer.start()
         result = None
         try:
@@ -957,6 +960,8 @@ def main(argv=None):
     parser.add_argument('--max-wakes-per-hour', type=int, default=4)
     parser.add_argument('--model', default=None)
     parser.add_argument('--mention-effort', default='high', help='Effort for a turn woken by a mention')
+    parser.add_argument('--full-timeout', type=int, default=3600,
+                        help='Seconds a turn with full tools may run before it is ended (others: 900)')
     parser.add_argument('--full-tools-for', default='justin',
                         help="Comma-separated: a mention wake gets full tools when every post that woke it is "
                              "from these people ('' for nobody)")
@@ -983,7 +988,7 @@ def main(argv=None):
     logger.info('streaming woken turns straight to their Motions' if key else
                 'no MEMORY_LANE_RUNNER_KEY: woken turns reach Motions through the transcript watcher')
     screen = None if args.screen_model == 'none' else ClaudeCodeScreen(agent=args.agent, model=args.screen_model)
-    poller = MotionPoller(MotionAPI(args.base, key=key), ClaudeCodeWaker(model=args.model), agent=args.agent,
+    poller = MotionPoller(MotionAPI(args.base, key=key), ClaudeCodeWaker(model=args.model, full_timeout=args.full_timeout), agent=args.agent,
                           state_path=Path(args.state).expanduser(), grace=args.grace,
                           max_wakes_per_hour=args.max_wakes_per_hour, dry_run=args.dry_run, streamer=streamer,
                           mention_effort=args.mention_effort, screen=screen, consider=not args.no_consider,
