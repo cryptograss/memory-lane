@@ -15,6 +15,10 @@ A mention is owed a turn when all of these hold:
     one poller, the one holding that session, ever answers;
   - fewer than --max-wakes-per-hour attempts were made in the last hour.
 
+Turns in different Motions run side by side (--parallel, default 4 at
+once), at most one per Motion: a Motion with a turn under way holds its
+next mention until that turn ends.
+
 Mentions owed in the same Motion are answered together in one turn. Each
 owed mention gets one attempt: a failed wake is logged, not retried.
 The attempt is written to the state file before the turn starts, so a
@@ -308,6 +312,16 @@ class ClaudeCodeWaker:
         self.quiet_limit = quiet_limit
         self.check_every = check_every
         self.model = model
+        self._local = threading.local()
+
+    @property
+    def last_result(self):
+        """The result event of the last turn this thread ran: turns in different Motions run side by side."""
+        return getattr(self._local, 'last_result', None)
+
+    @last_result.setter
+    def last_result(self, value):
+        self._local.last_result = value
 
     def find(self, session_id):
         matches = list(self.projects_dir.glob(f'*/{session_id}.jsonl'))
@@ -498,10 +512,10 @@ def transcript_of(turns, new_ids=(), limit=20_000, each=1500):
 class MotionPoller:
 
     def __init__(self, api, waker, agent='magent', state_path=None, grace=600,
-                 max_wakes_per_hour=4, dry_run=False, now=None, streamer=None, mention_effort='high',
+                 max_wakes_per_hour=30, dry_run=False, now=None, streamer=None, mention_effort='high',
                  screen=None, consider=True, considers_per_hour=6, consider_usd_per_day=10.0,
                  consider_budget=3.0, consider_effort='medium', debounce=10, idle_first=3000,
-                 full_tools_for=('justin',)):
+                 full_tools_for=('justin',), parallel=0):
         self.api = api
         self.waker = waker
         self.agent = agent.lower()
@@ -531,6 +545,14 @@ class MotionPoller:
         self.debounce = timedelta(seconds=debounce)
         self.idle_first = idle_first
         self.last_reply = None
+        # Turns at once, at most one per Motion: each Motion is its own context
+        # and usually its own person, so one long turn mustn't hold up the
+        # rest. 0 runs each turn to its end before looking again (tests).
+        # Workers only run turns; what a turn's end changes in the state is
+        # handed back to this thread through `finished`, so one thread writes.
+        self.parallel = parallel
+        self.running = {}  # slug -> thread
+        self.finished = queue.Queue()
         # From the pulse, every cycle: how the agent is to carry itself in
         # each Motion (services/settings.py on memory-lane), and the budget.
         self.settings = {}
@@ -581,6 +603,7 @@ class MotionPoller:
     def cycle(self):
         """One look: the pulse, then mentions, then perhaps speaking up unasked.
         Returns (Motions woken by a mention, [(slug, outcome)] considered)."""
+        self.reap()
         try:
             pulse = self.api.pulse(self.agent)
         except Exception as e:
@@ -617,6 +640,8 @@ class MotionPoller:
         for slug, mentioned in pending.items():
             if self.listening(slug) == 'off':
                 continue  # held, not dropped: answered once the agent is listening again
+            if not self.free(slug):
+                continue  # held too: answered when the turn there (or a slot) is done
             try:
                 done, outcome = self.consider(slug, mentioned)
             except Exception as e:  # one Motion's trouble must not stall the others
@@ -625,7 +650,7 @@ class MotionPoller:
             handled.update(done)
             self.state['handled'] = sorted(handled)
             self.save()
-            if outcome == 'woken':
+            if outcome in ('woken', 'started'):
                 woken.append(slug)
 
         self.advance_since(mentions, handled)
@@ -675,9 +700,51 @@ class MotionPoller:
         self.state['wakes'].append(self.now().isoformat())
         self.state['handled'] = sorted(set(self.state['handled']) | set(settled))
         self.save()
-        outcome = self.run_turn(slug, sessions[0], prompt, effort=self.knob(slug, 'mention_effort', self.mention_effort),
-                                model=self.knob(slug, 'model'), full=full)
+        options = dict(effort=self.knob(slug, 'mention_effort', self.mention_effort), model=self.knob(slug, 'model'),
+                       full=full)
+        outcome = self.launch(slug, lambda: self.run_turn(slug, sessions[0], prompt, **options))
         return settled, outcome
+
+    # --- turns side by side ----------------------------------------------------
+
+    def free(self, slug):
+        """Whether a turn may start in `slug` now: none running there, and a slot free."""
+        if not self.parallel:
+            return True
+        self.running = {s: t for s, t in self.running.items() if t.is_alive()}
+        return slug not in self.running and len(self.running) < self.parallel
+
+    def launch(self, slug, turn, after=None):
+        """Run `turn()`. Run to its end, its outcome is returned; side by side,
+        'started' is, and `after(outcome)` runs on this thread once it ends."""
+        if not self.parallel:
+            return turn()
+
+        def work():
+            try:
+                outcome = turn()
+            except Exception as e:
+                logger.error(f'{slug}: turn failed: {e}')
+                outcome = 'failed'
+            self.finished.put((slug, after, outcome))
+
+        thread = threading.Thread(target=work, name=f'turn-{slug}', daemon=True)
+        self.running[slug] = thread
+        thread.start()
+        return 'started'
+
+    def reap(self):
+        """Settle the turns that have ended since the last look."""
+        while True:
+            try:
+                slug, after, outcome = self.finished.get_nowait()
+            except queue.Empty:
+                return
+            if after:
+                try:
+                    after(outcome)
+                except Exception as e:
+                    logger.error(f'{slug}: settling a turn failed: {e}')
 
     def scram_now(self):
         """Whether an AZ5 is in force: asked while a turn runs, so it ends that turn too."""
@@ -685,6 +752,11 @@ class MotionPoller:
 
     def run_turn(self, slug, session_id, prompt, **options):
         """Wake one turn from `session_id` for `slug`; 'woken' or 'failed'."""
+        outcome, self.last_reply, _ = self.run_turn_for(slug, session_id, prompt, **options)
+        return outcome
+
+    def run_turn_for(self, slug, session_id, prompt, **options):
+        """Wake one turn; (outcome, reply, what it cost). Safe to run beside others."""
         new_session = str(uuid.uuid4())
         poster = self.streamer(slug, new_session) if self.streamer else None
         try:
@@ -697,16 +769,15 @@ class MotionPoller:
                 poster.put({'type': 'result', 'subtype': 'error_during_execution', 'is_error': True,
                             'session_id': new_session, 'uuid': str(uuid.uuid4())})
                 poster.close()
-            return 'failed'
+            return 'failed', None, 0.0
         if poster:
             poster.close()
-        self.last_reply = reply
         cost = (getattr(self.waker, 'last_result', None) or {}).get('run_cost_usd')
         logger.info(f'{slug}: woke {session_id} as {new_session}; '
                     f'{"stayed silent" if _SILENT_REPLY.match(reply or "") else f"replied {len(reply)} chars"}'
                     + (f'; ${cost:.4f}' if isinstance(cost, (int, float)) else '')
                     + (f'; streamed {poster.sent}, lost {poster.failed}' if poster else ''))
-        return 'woken'
+        return 'woken', reply, cost if isinstance(cost, (int, float)) else 0.0
 
     def prompt(self, slug, owed, full=False):
         if all(t.get('via') == 'web' for t in owed):
@@ -818,6 +889,8 @@ class MotionPoller:
             self.save()
         if self.listening(slug) != 'on':
             return None  # hushed: what's posted meanwhile waits, to be caught up on afterwards
+        if not self.free(slug):
+            return None  # a turn is under way here (or every slot is busy): look again after
         busy = bool(m.get('typing')) or m.get('activity') is not None
         debounce = timedelta(seconds=self.knob(slug, 'consider_after', self.debounce.total_seconds()))
 
@@ -848,10 +921,14 @@ class MotionPoller:
         quiet_for = now - parse_time(st['quiet_since'])
         if quiet_for.total_seconds() < wait:
             return None
-        outcome = self.consider_quiet(slug, quiet_for)
-        st['idle_after'] = None if outcome == 'spoke' else wait * 2
-        st['quiet_since'] = now.isoformat()  # the next long quiet counts from here
-        self.save()
+        def settle(outcome):
+            st['idle_after'] = None if outcome == 'spoke' else wait * 2
+            st['quiet_since'] = self.now().isoformat()  # the next long quiet counts from here
+            self.save()
+
+        outcome = self.consider_quiet(slug, quiet_for, after=settle)
+        if outcome != 'started':
+            settle(outcome)
         return outcome
 
     def catch_up(self, slug, recent, posts):
@@ -896,7 +973,7 @@ class MotionPoller:
                         'kind word -- say it, briefly. Most of the time the right answer is to stay quiet.']
         return self.consider_wake(slug, '\n'.join(prompt_lines + self.rules_lines(slug) + wake_footer()))
 
-    def consider_quiet(self, slug, quiet_for):
+    def consider_quiet(self, slug, quiet_for, after=None):
         if not self.within_budget(slug):
             return 'over budget'
         recent = self.api.recent(slug, limit=12)
@@ -906,9 +983,9 @@ class MotionPoller:
                  '', *transcript_of(recent['turns']), '',
                  'You might pick up a loose end, offer something you have been turning over, or just let it '
                  'rest. Nobody is waiting on you.']
-        return self.consider_wake(slug, '\n'.join(lines + self.rules_lines(slug) + wake_footer()))
+        return self.consider_wake(slug, '\n'.join(lines + self.rules_lines(slug) + wake_footer()), after=after)
 
-    def consider_wake(self, slug, prompt):
+    def consider_wake(self, slug, prompt, after=None):
         """Wake the agent itself to consider; 'spoke', 'silent', 'failed' or 'elsewhere'."""
         sessions = self.api.sessions(slug, self.agent)
         if not sessions or not self.waker.can_wake(sessions[0]):
@@ -920,12 +997,26 @@ class MotionPoller:
         st['wakes'] = [w for w in st.get('wakes', []) if self.now() - parse_time(w) < timedelta(hours=1)]
         st['wakes'].append(self.now().isoformat())
         self.save()  # recorded before the turn runs, as for mentions
-        outcome = self.run_turn(slug, sessions[0], prompt, effort=self.knob(slug, 'consider_effort', self.consider_effort),
-                                budget=self.consider_budget, model=self.knob(slug, 'model'))
-        self.spend((getattr(self.waker, 'last_result', None) or {}).get('run_cost_usd') or 0.0)
-        if outcome == 'failed':
-            return 'failed'
-        return 'silent' if _SILENT_REPLY.match(self.last_reply or '') else 'spoke'
+        options = dict(effort=self.knob(slug, 'consider_effort', self.consider_effort), budget=self.consider_budget,
+                       model=self.knob(slug, 'model'))
+
+        def turn():
+            outcome, reply, cost = self.run_turn_for(slug, sessions[0], prompt, **options)
+            if outcome == 'failed':
+                return 'failed', cost
+            return ('silent' if _SILENT_REPLY.match(reply or '') else 'spoke'), cost
+
+        def settle(result):
+            outcome, cost = result if isinstance(result, tuple) else (result, 0.0)
+            self.spend(cost or 0.0)
+            if after:
+                after(outcome)
+
+        if not self.parallel:
+            outcome, cost = turn()
+            self.spend(cost or 0.0)
+            return outcome
+        return self.launch(slug, turn, after=settle)
 
     def within_budget(self, slug):
         hour_ago = self.now() - timedelta(hours=1)
@@ -994,7 +1085,9 @@ def main(argv=None):
     parser.add_argument('--state', default='~/.local/state/magenta/motion_poller.json')
     parser.add_argument('--interval', type=float, default=1.0, help='Seconds between looks (two cheap GETs)')
     parser.add_argument('--grace', type=int, default=600, help='Seconds to leave for a live session to answer')
-    parser.add_argument('--max-wakes-per-hour', type=int, default=4)
+    parser.add_argument('--max-wakes-per-hour', type=int, default=30)
+    parser.add_argument('--parallel', type=int, default=4,
+                        help='Turns at once, at most one per Motion (0: one at a time, each run to its end)')
     parser.add_argument('--model', default=None)
     parser.add_argument('--mention-effort', default='high', help='Effort for a turn woken by a mention')
     parser.add_argument('--full-timeout', type=int, default=None,
@@ -1030,7 +1123,7 @@ def main(argv=None):
     poller = MotionPoller(MotionAPI(args.base, key=key), ClaudeCodeWaker(model=args.model, full_timeout=args.full_timeout,
                                                                 quiet_limit=args.quiet_limit), agent=args.agent,
                           state_path=Path(args.state).expanduser(), grace=args.grace,
-                          max_wakes_per_hour=args.max_wakes_per_hour, dry_run=args.dry_run, streamer=streamer,
+                          max_wakes_per_hour=args.max_wakes_per_hour, parallel=args.parallel, dry_run=args.dry_run, streamer=streamer,
                           mention_effort=args.mention_effort, screen=screen, consider=not args.no_consider,
                           considers_per_hour=args.considers_per_hour,
                           consider_usd_per_day=args.consider_usd_per_day, consider_budget=args.consider_budget,
