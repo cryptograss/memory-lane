@@ -25,9 +25,14 @@ class FakeAPI:
         self._mentions = list(mentions)
         self._turns = turns or {}
         self._sessions = sessions or {}
+        self.holds = []
 
     def mentions(self, agent, since=None):
         return [m for m in self._mentions if since is None or m['turn']['created_at'] > since]
+
+    def held(self, slug, reason, until=None):
+        self.holds.append((slug, reason, until))
+        return True
 
     def turns_after(self, slug, message_id):
         everything = self._turns.get(slug, []) + [m['turn'] for m in self._mentions if m['motion'] == slug]
@@ -471,6 +476,128 @@ class RealProcessTest(TestCase):
         self.assertLess(time.time() - start, 10)
 
 
+class SideBySideTest(TestCase):
+    """Turns in different Motions run at once; one Motion waits for its own."""
+
+    def setUp(self):
+        import threading
+        self.gate = threading.Event()
+        gate = self.gate
+
+        class SlowWaker(FakeWaker):
+            def wake(inner, session_id, prompt, **kwargs):
+                inner.woken.append((session_id, prompt))
+                gate.wait(10)
+                return 'fork', 'done'
+
+        self.waker = SlowWaker(local=('s-a', 's-b'))
+        self.clock = [T0 + timedelta(minutes=15)]
+        self.state = Path(tempfile.mkdtemp()) / 'state.json'
+        self.state.write_text(json.dumps({'since': (T0 - timedelta(hours=1)).isoformat(), 'handled': [], 'wakes': []}))
+
+    def make(self, api, parallel):
+        return MotionPoller(api, self.waker, state_path=self.state, now=lambda: self.clock[0], parallel=parallel,
+                            consider=False)
+
+    def finish(self, poller):
+        self.gate.set()
+        for thread in list(poller.running.values()):
+            thread.join(5)
+
+    def test_two_motions_are_answered_at_once(self):
+        api = FakeAPI([mention('a', turn('1', 'justin', 0)), mention('b', turn('2', 'skyler', 1))],
+                      sessions={'a': ['s-a'], 'b': ['s-b']})
+        poller = self.make(api, parallel=4)
+        self.assertEqual(sorted(poller.poll_once()), ['a', 'b'])  # neither waited for the other
+        self.assertEqual(sorted(s for s, _ in self.waker.woken), ['s-a', 's-b'])
+        self.finish(poller)
+
+    def test_a_motion_with_a_turn_under_way_holds_its_next_mention(self):
+        first = mention('a', turn('1', 'justin', 0))
+        api = FakeAPI([first], sessions={'a': ['s-a']})
+        poller = self.make(api, parallel=4)
+        self.assertEqual(poller.poll_once(), ['a'])
+        api._mentions.append(mention('a', turn('3', 'justin', 2, '@magent and another thing')))
+        self.assertEqual(poller.poll_once(), [])  # held, not dropped
+        self.finish(poller)
+        poller.reap()
+        self.assertEqual(poller.poll_once(), ['a'])
+        self.assertIn('and another thing', self.waker.woken[-1][1])
+        self.finish(poller)
+
+    def test_slots_are_shared(self):
+        api = FakeAPI([mention('a', turn('1', 'justin', 0)), mention('b', turn('2', 'skyler', 1))],
+                      sessions={'a': ['s-a'], 'b': ['s-b']})
+        poller = self.make(api, parallel=1)
+        self.assertEqual(len(poller.poll_once()), 1)
+        self.finish(poller)
+
+
+class HoldTest(TestCase):
+    """A mention owed a turn that isn't starting yet is held, and the Motion is told why -- once."""
+
+    def make(self, api, **kwargs):
+        self.clock = [T0 + timedelta(minutes=15)]
+        self.state = Path(tempfile.mkdtemp()) / 'state.json'
+        self.state.write_text(json.dumps({'since': (T0 - timedelta(hours=1)).isoformat(), 'handled': [], 'wakes': []}))
+        self.waker = FakeWaker()
+        return MotionPoller(api, self.waker, state_path=self.state, now=lambda: self.clock[0], consider=False,
+                            **kwargs)
+
+    def test_at_the_hourly_cap_a_hold_is_said_once_renewed_then_lifted(self):
+        web = dict(turn('a', 'justin', 14), via='web')
+        api = FakeAPI([mention('m26', web)], sessions={'m26': ['s-local']})
+        poller = self.make(api, max_wakes_per_hour=2)
+        poller.state['wakes'] = [(T0 - timedelta(minutes=30)).isoformat(), (T0 - timedelta(minutes=20)).isoformat()]
+        with self.assertLogs('motion_poller', 'WARNING') as logs:
+            for _ in range(5):
+                poller.poll_once()
+        self.assertEqual(len(logs.output), 1)  # not once a second
+        self.assertIn('2 wakes this hour already', logs.output[0])
+        opens = (T0 + timedelta(minutes=30)).isoformat()  # when the older wake ages out
+        self.assertEqual(api.holds, [('m26', '2 wakes this hour already', opens)])
+
+        self.clock[0] += timedelta(minutes=6)  # renewed before it lapses on the server, quietly
+        poller.poll_once()
+        self.assertEqual(len(api.holds), 2)
+
+        self.clock[0] = T0 + timedelta(minutes=31)  # a slot opens: the wake runs and the hold is lifted
+        self.assertEqual(poller.poll_once(), ['m26'])
+        self.assertEqual(api.holds[-1], ('m26', '', None))
+        poller.poll_once()
+        self.assertEqual(len(api.holds), 3)  # lifted once
+
+    def test_hushed_held_until_the_hush_ends(self):
+        web = dict(turn('a', 'justin', 14), via='web')
+        api = FakeAPI([mention('m26', web)], sessions={'m26': ['s-local']})
+        poller = self.make(api)
+        poller.settings = {'m26': {'listening': {'mode': 'off', 'until': '2026-09-29T19:00:00+00:00'}}}
+        poller.poll_once()
+        self.assertEqual(api.holds, [('m26', 'hushed here', '2026-09-29T19:00:00+00:00')])
+        self.assertEqual(self.waker.woken, [])
+
+    def test_a_turn_under_way_holds_the_next_mention_and_says_so(self):
+        import threading
+        gate = threading.Event()
+
+        class SlowWaker(FakeWaker):
+            def wake(inner, session_id, prompt, **kwargs):
+                inner.woken.append((session_id, prompt))
+                gate.wait(10)
+                return 'fork', 'done'
+
+        api = FakeAPI([mention('m26', dict(turn('a', 'justin', 14), via='web'))], sessions={'m26': ['s-local']})
+        poller = self.make(api, parallel=4)
+        poller.waker = SlowWaker()
+        self.assertEqual(poller.poll_once(), ['m26'])
+        api._mentions.append(mention('m26', dict(turn('b', 'justin', 14.5, '@magent and also'), via='web')))
+        poller.poll_once()
+        self.assertEqual(api.holds, [('m26', 'a turn is under way here; this one is next', None)])
+        gate.set()
+        for thread in list(poller.running.values()):
+            thread.join(5)
+
+
 class ConsiderAPI:
     """One Motion, m26, as the pulse and the turns endpoint would show it."""
 
@@ -503,6 +630,10 @@ class ConsiderAPI:
 
     def quiet(self, slug, reason, by='screen'):
         self.quiets.append((slug, reason, by))
+        return True
+
+    def held(self, slug, reason, until=None):
+        self.holds = getattr(self, 'holds', []) + [(slug, reason, until)]
         return True
 
     def sessions(self, slug, sender):
@@ -584,6 +715,23 @@ class ConsiderLoopTest(TestCase):
         api.add(post('a', 1))
         self.at(minutes=2)
         self.assertEqual(poller.consider_once(), [('m26', 'spoke')])
+
+    def test_side_by_side_a_consider_is_settled_when_it_ends(self):
+        class CostlyWaker(FakeWaker):
+            def wake(inner, *args, **kwargs):
+                inner.last_result = {'run_cost_usd': 0.25}
+                return super().wake(*args, **kwargs)
+
+        api = ConsiderAPI()
+        poller = self.make(api, FakeScreen('pass'), waker=CostlyWaker(reply='It was Kuba, I think.'), parallel=2)
+        api.add(post('a', 1))
+        self.at(minutes=2)
+        self.assertEqual(poller.consider_once(), [('m26', 'started')])
+        poller.running['m26'].join(5)
+        self.assertEqual(poller.consider_once(), [])  # already seen
+        screened = poller.spent_today()  # the screen's look is counted at once; the turn when it's settled
+        poller.reap()
+        self.assertAlmostEqual(poller.spent_today(), screened + 0.25)
 
     def test_a_mention_is_left_to_the_mention_path(self):
         api = ConsiderAPI()

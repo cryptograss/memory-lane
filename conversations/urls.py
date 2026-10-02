@@ -27,6 +27,7 @@ urlpatterns = [
     path('api/motions/<slug:slug>/media/', views_auth.api_media, name='api_motion_media'),
     path('api/motions/<slug:slug>/stream/', views_runner.api_stream, name='api_motion_stream'),
     path('api/motions/<slug:slug>/quiet/', views_runner.api_quiet, name='api_motion_quiet'),
+    path('api/motions/<slug:slug>/held/', views_runner.api_held, name='api_motion_held'),
     path('motions/media/<str:sha256>.<str:ext>', views_motions.media_file, name='motion_media'),
     path('api/wikilinks/', views_motions.api_wikilinks, name='api_wikilinks'),
     path('api/mentions/<slug:name>/', views_motions.api_mentions, name='api_mentions'),

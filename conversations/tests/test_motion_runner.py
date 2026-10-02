@@ -179,6 +179,25 @@ class PulseAndQuietTest(TestCase):
         self.assertIsNone(stored.session_id)  # never a session anyone would resume
         self.assertIsNone(activity(self.motion))
 
+    def test_a_runner_says_why_a_mention_is_held(self):
+        from django.core.cache import cache
+        cache.delete('held:m26')
+
+        def post(body, auth=AUTH):
+            return self.client.post('/api/motions/m26/held/', json.dumps(body),
+                                    content_type='application/json', **auth)
+        Message.objects.create(id=uuid.uuid4(), sender=self.justin, motion=self.motion, content='@magent hello?',
+                               source_file='motion-web')
+        self.assertEqual(activity(self.motion)['doing'], 'waking')
+        self.assertEqual(post({'reason': 'x'}, auth={}).status_code, 401)
+        self.assertEqual(post({'reason': 'x', 'until': 'soonish'}).status_code, 400)
+        self.assertEqual(post({'reason': '30 wakes <i>this hour</i> already', 'until': '2026-10-02T23:15:00Z'}).status_code, 200)
+        shown = self.client.get('/api/motions/m26/turns/').json()['activity']
+        self.assertEqual((shown['doing'], shown['why'], shown['until']),
+                         ('held', '30 wakes this hour already', '2026-10-02T23:15:00+00:00'))
+        self.assertEqual(post({'reason': ''}).status_code, 200)  # lifted
+        self.assertEqual(activity(self.motion)['doing'], 'waking')
+
     def test_recent_context_only_when_asked(self):
         for i in range(5):
             Message.objects.create(id=uuid.uuid4(), sender=self.justin, motion=self.motion, content=f'line {i}',
