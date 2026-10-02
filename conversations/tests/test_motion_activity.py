@@ -83,6 +83,19 @@ class ActivityTest(TestCase):
                  tool_use_id='tb3', session_id=session)
         self.assertEqual([t['id'] for t in background_tasks(self.motion, now=NOW)], ['bx1'])
 
+    def test_a_task_whose_ending_was_never_heard_ages_out(self):
+        from conversations.services.motion_view import background_tasks
+        session = uuid.uuid4()
+        for tool_id, task, ago, text in [
+                ('to1', 'bold1', 3 * 3600, 'Command running in background with ID: bold1. Output is being written to: /tmp/x'),
+                ('to2', 'bnew2', 3600, 'Command running in background with ID: bnew2. Output is being written to: /tmp/y'),
+                ('to3', 'agold', 3 * 3600, 'Async agent launched successfully.\nagentId: agold (internal)')]:
+            self.add(self.magent, ago + 1, {'description': task}, model=ToolUse, tool_name='Bash', tool_id=tool_id,
+                     stop_reason='tool_use', session_id=session)
+            self.add(self.tool, ago, text, model=ToolResult, tool_use_id=tool_id, session_id=session)
+        # A command past Claude Code's two-hour cap is gone; a helper may still be at work.
+        self.assertEqual([t['id'] for t in background_tasks(self.motion, now=NOW)], ['bnew2', 'agold'])
+
     def test_a_queued_notice_that_a_task_finished_is_kept_and_ends_it(self):
         import json
         from conversations.models import Era

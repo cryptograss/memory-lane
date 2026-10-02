@@ -609,7 +609,12 @@ def activity(motion, now=None):
 _TASK_STARTED = re.compile(r'Command running in background with ID: (\w+)|Async agent launched successfully.*?agentId: (\w+)', re.S)
 _TASK_ENDED = re.compile(r'<task-id>(\w+)</task-id>.*?<status>(\w+)</status>', re.S)
 TASK_ENDINGS = {'completed', 'failed', 'stopped', 'killed', 'error', 'cancelled'}
-TASK_HORIZON = 24 * 3600  # a task older than this with no word is presumed gone
+# A task older than this with no word of its end is presumed gone: its notice
+# can be lost when the session that started it exits first. A background
+# command can't outlive Claude Code's two-hour cap on its timeout; a helper
+# agent has no cap, so it gets longer.
+TASK_HORIZONS = {'command': 2.5 * 3600, 'helper': 12 * 3600}
+TASK_HORIZON = max(TASK_HORIZONS.values())
 
 
 def background_tasks(motion, now=None):
@@ -654,7 +659,8 @@ def background_tasks(motion, now=None):
             'label': (args.get('description') or args.get('command') or args.get('prompt') or task_id)[:120],
             'since': _when(msg),
         }
-    return [task for task_id, task in started.items() if task_id not in ended]
+    return [task for task_id, task in started.items()
+            if task_id not in ended and task['since'] >= now - TASK_HORIZONS[task['kind']]]
 
 
 def models_q(**kwargs):

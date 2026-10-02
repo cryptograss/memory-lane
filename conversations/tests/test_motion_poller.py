@@ -48,9 +48,9 @@ class FakeWaker:
     def can_wake(self, session_id):
         return session_id in self.local
 
-    def wake(self, session_id, prompt, new_session_id=None, on_event=None, **options):
+    def wake(self, session_id, prompt, new_session_id=None, on_event=None, stop=None, **options):
         self.woken.append((session_id, prompt))
-        self.options = options
+        self.options, self.stop = options, stop
         if session_id in self.fail:
             raise RuntimeError('No conversation found')
         if on_event:  # what a real run prints, in order
@@ -419,9 +419,10 @@ class RealProcessTest(TestCase):
         script.chmod(0o755)
         return str(script)
 
-    def waker(self, body, timeout=30):
+    def waker(self, body, timeout=30, full_timeout=None, quiet_limit=60, check_every=15):
         from unittest import mock
-        waker = ClaudeCodeWaker(projects_dir=self.projects, claude=self.fake_claude(body), timeout=timeout)
+        waker = ClaudeCodeWaker(projects_dir=self.projects, claude=self.fake_claude(body), timeout=timeout,
+                                full_timeout=full_timeout, quiet_limit=quiet_limit, check_every=check_every)
         waker.command = mock.Mock(side_effect=lambda *a, **k: [waker.claude])
         return waker
 
@@ -446,6 +447,27 @@ class RealProcessTest(TestCase):
         start = time.time()
         with self.assertRaises(RuntimeError):
             self.waker('sleep 30', timeout=1).wake('s-old', 'prompt')
+        self.assertLess(time.time() - start, 10)
+
+    def test_a_turn_with_full_tools_runs_while_it_keeps_talking(self):
+        import time
+        result = json.dumps({'type': 'result', 'subtype': 'success', 'result': 'done', 'total_cost_usd': 0.1})
+        talk = json.dumps({'type': 'assistant', 'message': {'content': []}})
+        body = f"for i in 1 2 3 4; do echo '{talk}'; sleep 1; done; echo '{result}'\n"
+        # No clock: four seconds of work outlasts the 1 s limit others get, and 2 s of patience for silence.
+        self.assertEqual(self.waker(body, timeout=1, quiet_limit=2).wake('s-old', 'p', full=True)[1], 'done')
+        with self.assertRaises(RuntimeError):
+            self.waker(body, timeout=1).wake('s-old', 'p')
+        start = time.time()
+        with self.assertRaises(RuntimeError):  # but silence ends it
+            self.waker('sleep 30', quiet_limit=2).wake('s-old', 'p', full=True)
+        self.assertLess(time.time() - start, 10)
+
+    def test_an_az5_ends_a_running_turn(self):
+        import time
+        start = time.time()
+        with self.assertRaises(RuntimeError):
+            self.waker('sleep 30', check_every=1).wake('s-old', 'p', full=True, stop=lambda: True)
         self.assertLess(time.time() - start, 10)
 
 
