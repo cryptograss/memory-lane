@@ -1,6 +1,7 @@
 """A turn the runner launched streams into its Motion: claimed outright, live, ended exactly."""
 
 import base64
+from datetime import datetime, timezone
 import json
 import uuid
 
@@ -22,7 +23,7 @@ def event(kind, content, **extra):
         message.update({'model': 'claude-opus-5-5', 'id': 'msg_x', 'type': 'message', 'stop_reason': None,
                         'usage': {'input_tokens': 3, 'output_tokens': 40}})
     return {'type': kind, 'message': message, 'parent_tool_use_id': None, 'session_id': extra.pop('session_id'),
-            'uuid': str(uuid.uuid4()), 'timestamp': '2026-10-01T23:00:00.000Z', **extra}
+            'uuid': str(uuid.uuid4()), 'timestamp': datetime.now(timezone.utc).isoformat(), **extra}
 
 
 @override_settings(MOTION_RUNNER_KEYS={'magent': KEY}, TOOL_RESULT_CONTENT_CHARS=20000)

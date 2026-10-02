@@ -69,10 +69,13 @@ def api_motion_turns(request, slug):
         limit = max(1, min(int(request.GET['limit']), PAGE))
 
     names = known_names()
-    turns_out, step_msgs, quiet_out = [], [], []
+    turns_out, step_msgs, quiet_out, thoughts_out = [], [], [], []
     for kind, msg, text in timeline(motion, after=after, before=before, limit=limit):
         if kind == 'turn':
             turns_out.append(turn_payload(msg, text, names))
+        elif kind == 'thought':
+            thoughts_out.append({'id': str(msg.id), 'sender': msg.sender_id,
+                                 'created_at': msg.created_at.isoformat(), 'text': text})
         elif kind == 'quiet':
             quiet_out.append({'id': str(msg.id), 'sender': msg.sender_id,
                               'created_at': msg.created_at.isoformat(), **text})
@@ -80,7 +83,7 @@ def api_motion_turns(request, slug):
             step_msgs.append(msg)
     images = step_images(step_msgs)
     steps_out = [{**step_payload(m), 'images': images.get(str(m.id), [])} for m in step_msgs]
-    first = min([i['created_at'] for i in turns_out + steps_out + quiet_out], default=None)
+    first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out], default=None)
     return JsonResponse({
         'motion': motion_payload(motion),
         # Prose only: the poller reads an agent turn here as an answer, so a
@@ -89,6 +92,8 @@ def api_motion_turns(request, slug):
         'steps': steps_out,
         # Choices not to speak, shown as dots. Not turns: they answer nothing.
         'quiet': quiet_out,
+        # What the agent thought along the way, where the harness kept it.
+        'thoughts': thoughts_out,
         'has_earlier': bool(limit) and first is not None and motion.messages.filter(
             is_sidechain=False, created_at__lt=first).exists(),
         'activity': activity(motion),
