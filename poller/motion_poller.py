@@ -296,11 +296,17 @@ class ClaudeCodeWaker:
     """Starts one Claude Code turn by forking a session that exists on this machine."""
 
     def __init__(self, projects_dir='~/.claude/projects', claude='claude', timeout=900, model=None,
-                 full_timeout=3600):
+                 full_timeout=None, quiet_limit=1500, check_every=15):
         self.projects_dir = Path(projects_dir).expanduser()
         self.claude = claude
         self.timeout = timeout
-        self.full_timeout = full_timeout  # a turn with full tools is asked for real work, which takes longer
+        # A turn with full tools is asked for real work, which takes as long
+        # as it takes: no clock by default. What ends it is silence (no event
+        # for quiet_limit seconds: a hung pipe or a tool that never returns,
+        # not a long think) or a stop: an AZ5, checked every check_every s.
+        self.full_timeout = full_timeout
+        self.quiet_limit = quiet_limit
+        self.check_every = check_every
         self.model = model
 
     def find(self, session_id):
@@ -379,9 +385,10 @@ class ClaudeCodeWaker:
         return cmd + ['--', prompt]
 
     def wake(self, session_id, prompt, new_session_id=None, on_event=None, grant=(), budget=None, effort=None,
-             model=None, full=False):
+             model=None, full=False, stop=None):
         """Run one turn; (new session id, its reply). `on_event` sees every
-        stream event as it comes out. self.last_result keeps the run's
+        stream event as it comes out; `stop()`, if given, is asked now and
+        then whether to end the turn. self.last_result keeps the run's
         result event: its cost, its duration, how it ended."""
         cwd = self.cwd_for(session_id)
         if cwd is None:
@@ -397,12 +404,14 @@ class ClaudeCodeWaker:
         stderr = []
         drain = threading.Thread(target=lambda: stderr.append(proc.stderr.read()), daemon=True)
         drain.start()
-        timer = threading.Timer(self.full_timeout if full else self.timeout,  # a turn that never ends is ended
-                                end_process_group, args=(proc,))
-        timer.start()
+        heard = [time.monotonic()]
+        done = threading.Event()
+        watchdog = threading.Thread(target=self.watch, args=(proc, full, heard, done, stop), daemon=True)
+        watchdog.start()
         result = None
         try:
             for raw in proc.stdout:
+                heard[0] = time.monotonic()
                 try:
                     event = json.loads(raw)
                 except ValueError:
@@ -418,7 +427,7 @@ class ClaudeCodeWaker:
                         logger.warning(f'on_event failed: {e}')
             proc.wait()
         finally:
-            timer.cancel()
+            done.set()
         drain.join(5)
         self.last_result = dict(result or {})
         if result is not None:  # what this run cost, not the session's history
@@ -426,6 +435,29 @@ class ClaudeCodeWaker:
         if result is None:
             raise RuntimeError(f'claude exited {proc.returncode} without a result: {"".join(stderr).strip()[:500]}')
         return new_session_id, (result.get('result') or '').strip()
+
+
+    def watch(self, proc, full, heard, done, stop):
+        """End a turn that has gone silent, run past its clock, or been stopped."""
+        started = last_check = time.monotonic()
+        clock = self.full_timeout if full else self.timeout
+        while not done.wait(1):
+            now = time.monotonic()
+            why = None
+            if clock and now - started > clock:
+                why = f'ran past {clock}s'
+            elif full and now - heard[0] > self.quiet_limit:
+                why = f'silent for {self.quiet_limit}s'
+            elif stop and now - last_check >= self.check_every:
+                last_check = now
+                try:
+                    why = 'stopped' if stop() else None
+                except Exception as e:  # can't ask: carry on
+                    logger.warning(f'stop check failed: {e}')
+            if why:
+                logger.warning(f'ending turn: {why}')
+                end_process_group(proc)
+                return
 
 
 def wake_footer(full=False):
@@ -647,13 +679,18 @@ class MotionPoller:
                                 model=self.knob(slug, 'model'), full=full)
         return settled, outcome
 
+    def scram_now(self):
+        """Whether an AZ5 is in force: asked while a turn runs, so it ends that turn too."""
+        return bool((self.api.pulse(self.agent) or {}).get('scram'))
+
     def run_turn(self, slug, session_id, prompt, **options):
         """Wake one turn from `session_id` for `slug`; 'woken' or 'failed'."""
         new_session = str(uuid.uuid4())
         poster = self.streamer(slug, new_session) if self.streamer else None
         try:
             new_session, reply = self.waker.wake(session_id, prompt, new_session_id=new_session,
-                                                 on_event=poster.put if poster else None, **options)
+                                                 on_event=poster.put if poster else None, stop=self.scram_now,
+                                                 **options)
         except Exception as e:
             logger.error(f'{slug}: wake failed, not retrying: {e}')
             if poster:  # close the turn in the Motion, or it shows as working until it times out
@@ -960,8 +997,10 @@ def main(argv=None):
     parser.add_argument('--max-wakes-per-hour', type=int, default=4)
     parser.add_argument('--model', default=None)
     parser.add_argument('--mention-effort', default='high', help='Effort for a turn woken by a mention')
-    parser.add_argument('--full-timeout', type=int, default=3600,
-                        help='Seconds a turn with full tools may run before it is ended (others: 900)')
+    parser.add_argument('--full-timeout', type=int, default=None,
+                        help='Seconds a turn with full tools may run at most (default: no limit; others: 900)')
+    parser.add_argument('--quiet-limit', type=int, default=1500,
+                        help='Seconds of silence after which a turn with full tools is presumed hung and ended')
     parser.add_argument('--full-tools-for', default='justin',
                         help="Comma-separated: a mention wake gets full tools when every post that woke it is "
                              "from these people ('' for nobody)")
@@ -988,7 +1027,8 @@ def main(argv=None):
     logger.info('streaming woken turns straight to their Motions' if key else
                 'no MEMORY_LANE_RUNNER_KEY: woken turns reach Motions through the transcript watcher')
     screen = None if args.screen_model == 'none' else ClaudeCodeScreen(agent=args.agent, model=args.screen_model)
-    poller = MotionPoller(MotionAPI(args.base, key=key), ClaudeCodeWaker(model=args.model, full_timeout=args.full_timeout), agent=args.agent,
+    poller = MotionPoller(MotionAPI(args.base, key=key), ClaudeCodeWaker(model=args.model, full_timeout=args.full_timeout,
+                                                                quiet_limit=args.quiet_limit), agent=args.agent,
                           state_path=Path(args.state).expanduser(), grace=args.grace,
                           max_wakes_per_hour=args.max_wakes_per_hour, dry_run=args.dry_run, streamer=streamer,
                           mention_effort=args.mention_effort, screen=screen, consider=not args.no_consider,
