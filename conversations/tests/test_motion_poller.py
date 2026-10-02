@@ -100,6 +100,16 @@ class MotionPollerTest(TestCase):
         self.assertEqual(poller.poll_once(), [])
         self.assertEqual(self.waker.woken, [])
 
+    def test_a_web_mention_is_not_answered_by_a_reply_that_never_saw_it(self):
+        # A terminal session (or a woken turn about something else) replies
+        # after the web post, but never read it.
+        web = dict(turn('a', 'skyler', 0), via='web')
+        api = FakeAPI([mention('m26', web)], turns={'m26': [turn('b', 'magent', 1, 'about something else')]},
+                      sessions={'m26': ['s-local']})
+        poller = self.make(api, minutes_now=2)
+        self.assertEqual(poller.poll_once(), ['m26'])
+        self.assertIn('@magent are you there?', self.waker.woken[0][1])
+
     def test_a_follow_up_after_the_answer_is_still_owed(self):
         api = FakeAPI([mention('m26', turn('a', 'justin', 0)), mention('m26', turn('c', 'justin', 6, '@magent and?'))],
                       turns={'m26': [turn('b', 'magent', 5, 'here')]}, sessions={'m26': ['s-local']})
@@ -442,16 +452,18 @@ class RealProcessTest(TestCase):
 class ConsiderAPI:
     """One Motion, m26, as the pulse and the turns endpoint would show it."""
 
-    def __init__(self, turns=(), typing=(), activity=None, human_at=None):
+    def __init__(self, turns=(), typing=(), activity=None, human_at=None, settings=None, scram=None):
         self.turns = list(turns)
         self.typing, self.activity = list(typing), activity
         self.human_at = human_at
+        self.settings = settings or {}
+        self.scram = scram
         self.quiets = []
 
     def add(self, t):
         self.turns.append(t)
 
-    def pulse(self):
+    def pulse(self, agent='magent'):
         said = self.turns
         web = [t for t in said if t.get('via') == 'web']
         humans = [t for t in said if t.get('is_human')]
@@ -459,9 +471,10 @@ class ConsiderAPI:
         last_human = brief(humans[-1]) if humans else None
         if self.human_at:
             last_human = {'id': 'h', 'created_at': self.human_at, 'sender': 'justin'}
-        return [{'slug': 'm26', 'newest': brief(said[-1]) if said else None,
-                 'last_web_post': brief(web[-1]) if web else None, 'last_human': last_human,
-                 'typing': self.typing, 'activity': self.activity}]
+        return {'scram': self.scram, 'budget': {},
+                'motions': [{'slug': 'm26', 'newest': brief(said[-1]) if said else None,
+                             'last_web_post': brief(web[-1]) if web else None, 'last_human': last_human,
+                             'typing': self.typing, 'activity': self.activity, 'settings': self.settings}]}
 
     def recent(self, slug, limit=40):
         return {'motion': {'title': 'M26', 'description': 'testing'}, 'turns': self.turns[-limit:]}
@@ -541,7 +554,7 @@ class ConsiderLoopTest(TestCase):
         self.assertIn('reason="consider"', prompt)
         self.assertIn('Nobody asked you anything', prompt)
         self.assertIn('► [skyler', prompt)
-        self.assertEqual(self.waker.options, {'effort': 'medium', 'budget': 3.0})
+        self.assertEqual(self.waker.options, {'effort': 'medium', 'budget': 3.0, 'model': None})
 
     def test_speaking_up_is_an_outcome_too(self):
         api = ConsiderAPI()
@@ -655,3 +668,131 @@ class ScreenTest(TestCase):
     def test_in_doubt_or_in_trouble_the_agent_looks(self):
         self.assertEqual(self.run_screen(json.dumps({'result': 'Hmm, maybe?'}))[0][0], 'pass')
         self.assertEqual(self.run_screen('not json')[0][0], 'pass')
+
+
+class SettingsInTheRunnerTest(TestCase):
+    """The runner does as each Motion's settings say (memory-lane services/settings.py)."""
+
+    def make(self, api, screen=None, waker=None, **kwargs):
+        self.clock = [T0]
+        self.waker = waker or FakeWaker(reply='<silent>nothing to add</silent>')
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        poller = MotionPoller(api, self.waker, state_path=state, now=lambda: self.clock[0], screen=screen, **kwargs)
+        poller.cycle()
+        return poller
+
+    def at(self, minutes=0, seconds=0):
+        self.clock[0] = T0 + timedelta(minutes=minutes, seconds=seconds)
+
+    def test_hushed_off_a_mention_is_held_then_answered_when_listening_again(self):
+        api = MentionsAndPulse(settings={'listening': {'mode': 'off', 'until': None}})
+        poller = self.make(api, FakeScreen())
+        api.mention(post('a', 1, text='@magent you there?', mentions=['magent']))
+        self.at(minutes=2)
+        poller.cycle()
+        self.assertEqual(self.waker.woken, [])
+        api.settings = {'listening': {'mode': 'on', 'until': None}}
+        self.at(minutes=3)
+        poller.cycle()
+        self.assertEqual(len(self.waker.woken), 1)
+        self.assertIn('@magent you there?', self.waker.woken[0][1])
+
+    def test_mentions_only_answers_mentions_and_catches_up_on_the_rest_after(self):
+        api = MentionsAndPulse(settings={'listening': {'mode': 'mentions', 'until': None}})
+        screen = FakeScreen('pass')
+        poller = self.make(api, screen)
+        api.add(post('a', 1, text='a long deliberation begins'))
+        api.add(post('b', 2, text='point one'))
+        self.at(minutes=5)
+        poller.cycle()
+        self.assertEqual((self.waker.woken, screen.prompts), ([], []))  # hushed: nothing considered
+        api.settings = {'listening': {'mode': 'on', 'until': None}}
+        self.at(minutes=6)
+        self.assertEqual(poller.cycle()[1], [('m26', 'silent')])
+        prompt = self.waker.woken[0][1]
+        self.assertIn('► [skyler', prompt)
+        self.assertIn('a long deliberation begins', prompt)  # caught up on everything it missed
+
+    def test_a_big_backlog_is_digested_and_the_newest_kept_verbatim(self):
+        api = MentionsAndPulse()
+        screen = DigestingScreen('pass')
+        poller = self.make(api, screen)
+        for i in range(30):
+            api.add(post(f'p{i}', 1 + i * 0.01, text=f'chatter {i} ' + 'la ' * 300))
+        self.at(minutes=5)
+        poller.cycle()
+        prompt = self.waker.woken[0][1]
+        self.assertIn('While you were away, 22 earlier posts, in short:', prompt)
+        self.assertIn('THE GIST', prompt)
+        self.assertIn('chatter 29', prompt)
+        self.assertNotIn('chatter 3 ', prompt)
+
+    def test_knobs_reach_the_wake(self):
+        api = MentionsAndPulse(settings={'consider_effort': 'low', 'model': 'sonnet', 'consider_after': 60,
+                                         'rules': 'This is the casual channel: be light.'})
+        poller = self.make(api, FakeScreen('pass'))
+        api.add(post('a', 1))
+        self.at(minutes=1, seconds=30)
+        self.assertEqual(poller.cycle()[1], [])  # its own pause here is 60 s
+        self.at(minutes=2, seconds=30)
+        self.assertEqual(poller.cycle()[1], [('m26', 'silent')])
+        self.assertEqual(self.waker.options, {'effort': 'low', 'budget': 3.0, 'model': 'sonnet'})
+        self.assertIn('This is the casual channel: be light.', self.waker.woken[0][1])
+
+    def test_no_long_quiet_looks_where_they_are_turned_off(self):
+        api = MentionsAndPulse([post('a', -10)], human_at=(T0 - timedelta(minutes=10)).isoformat(),
+                               settings={'idle_after': 0})
+        poller = self.make(api, FakeScreen())
+        self.at(minutes=500)
+        self.assertEqual(poller.cycle()[1], [])
+
+    def test_posts_up_to_a_mention_are_left_to_the_mention_path(self):
+        api = MentionsAndPulse()
+        screen = FakeScreen('pass')
+        poller = self.make(api, screen)
+        api.add(post('a', 1, text='before'))
+        api.mention(post('b', 1.1, text='@magent what do you think?', mentions=['magent']))
+        api.add(post('c', 1.2, text='after the question'))
+        self.at(minutes=3)
+        woken, considered = poller.cycle()
+        self.assertEqual(woken, ['m26'])  # the mention, with 'before' around it
+        self.assertIn('before', self.waker.woken[0][1])
+        self.assertEqual(considered, [('m26', 'silent')])  # then only what came after
+        self.assertIn('after the question', self.waker.woken[1][1])
+        self.assertNotIn('► [skyler, 2026-09-29T18:01Z] before', self.waker.woken[1][1])
+
+    def test_a_scram_wakes_nothing_until_lifted(self):
+        api = MentionsAndPulse(scram={'by': 'justin', 'at': T0.isoformat()})
+        poller = self.make(api, FakeScreen('pass'))
+        api.mention(post('a', 1, text='@magent hello', mentions=['magent']))
+        api.add(post('b', 1.5))
+        self.at(minutes=5)
+        self.assertEqual(poller.cycle(), ([], []))
+        self.assertEqual(self.waker.woken, [])
+        api.scram = None
+        self.at(minutes=6)
+        self.assertEqual(poller.cycle()[0], ['m26'])
+
+
+class MentionsAndPulse(ConsiderAPI):
+    """ConsiderAPI, plus mentions as the mentions endpoint would list them."""
+
+    def __init__(self, turns=(), **kwargs):
+        super().__init__(turns, **kwargs)
+        self.mentioned = []
+
+    def mention(self, t):
+        self.add(t)
+        self.mentioned.append({'motion': 'm26', 'turn': t})
+
+    def mentions(self, agent, since=None):
+        return list(self.mentioned)
+
+    def turns_after(self, slug, message_id):
+        ids = [t['id'] for t in self.turns]
+        return self.turns[ids.index(message_id) + 1:] if message_id in ids else []
+
+
+class DigestingScreen(FakeScreen):
+    def digest(self, text):
+        return 'THE GIST: they agreed on the bus time.', 0.002

@@ -212,6 +212,10 @@ TOOL_RESULT_CONTENT_CHARS = int(os.getenv('TOOL_RESULT_CONTENT_CHARS', '0'))
 MOTION_RUNNER_KEYS = dict(
     pair.split(':', 1) for pair in os.getenv('MOTION_RUNNER_KEYS', '').split(',') if ':' in pair)
 
+# Who may kick, ban, scram (AZ5) and lift, with their SSH key
+# (conversations/views_admin.py): "justin,skyler". Unset, nobody can.
+MOTION_ADMINS = tuple(n.strip().lower() for n in os.getenv('MOTION_ADMINS', '').split(',') if n.strip())
+
 # Hosts a Motion may embed images from by URL, besides its own stored media.
 MOTION_IMAGE_HOSTS = {'pickipedia.xyz', 'www.pickipedia.xyz', 'raw.githubusercontent.com',
                       'user-images.githubusercontent.com', 'private-user-images.githubusercontent.com'}

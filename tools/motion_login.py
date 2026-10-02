@@ -32,10 +32,10 @@ DEFAULT_BASE = 'https://memory-lane.maybelle.cryptograss.live'
 NAMESPACE = 'magenta-motions'
 
 
-def signed_message(challenge, base):
+def signed_message(challenge, base, purpose='login'):
     """The challenge bound to the server it came from (motion_auth.signed_message)."""
     parts = urllib.parse.urlsplit(base)
-    return f'{NAMESPACE} login\n{parts.scheme}://{parts.netloc}'.lower() + f'\n{challenge}'
+    return f'{NAMESPACE} {purpose}\n{parts.scheme}://{parts.netloc}'.lower() + f'\n{challenge}'
 
 
 def call(url, payload=None):

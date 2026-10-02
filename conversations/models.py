@@ -1343,6 +1343,34 @@ class Media(models.Model):
         return f'/motions/media/{self.sha256}.{self.EXTENSIONS[self.mime]}'
 
 
+class Setting(models.Model):
+    """
+    One change to a knob: what was set, for which agent in which Motion, by whom.
+
+    The newest row for a (motion, agent, key) is in force; the rest are its
+    history, and so the audit trail -- rows are only ever added. A null
+    motion means every Motion; a null agent means every agent (or, for a
+    moderation key like 'banned', the person it names is in `agent`). See
+    conversations/services/settings.py for the knobs and how they resolve.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    motion = models.ForeignKey('Motion', models.CASCADE, null=True, blank=True, related_name='settings')
+    agent = models.ForeignKey(ThinkingEntity, models.CASCADE, null=True, blank=True, related_name='settings')
+    key = models.CharField(max_length=40)
+    value = models.JSONField()
+    set_by = models.ForeignKey(ThinkingEntity, models.SET_NULL, null=True, blank=True, related_name='settings_set')
+    note = models.CharField(max_length=200, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'settings'
+        indexes = [models.Index(fields=['key', 'motion', 'agent', 'created_at'])]
+
+    def __str__(self):
+        return f"{self.key}={self.value!r} ({self.motion_id or '*'}/{self.agent_id or '*'})"
+
+
 # ============================================================================
 # Import Tracking Constants
 # ============================================================================

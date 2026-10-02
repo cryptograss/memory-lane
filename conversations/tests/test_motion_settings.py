@@ -1,0 +1,106 @@
+"""Knobs: how each agent carries itself in each Motion; most specific wins; every change kept."""
+
+import json
+from datetime import datetime, timedelta, timezone
+from unittest import mock
+
+from django.test import TestCase
+
+from conversations.models import Motion, Setting, ThinkingEntity
+from conversations.services import settings as knobs
+
+
+class ResolveTest(TestCase):
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        cls.magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+        cls.m26 = Motion.objects.create(slug='m26')
+        cls.general = Motion.objects.create(slug='general')
+
+    def test_defaults_until_something_is_set(self):
+        got = knobs.resolve('m26', 'magent')
+        self.assertEqual(got['listening'], {'mode': 'on', 'until': None})
+        self.assertEqual((got['consider_after'], got['mention_effort'], got['rules']), (10, 'high', ''))
+
+    def test_the_most_specific_setting_wins_whatever_its_age(self):
+        knobs.change('consider_effort', 'high', motion=self.m26, agent=self.magent, by=self.justin)
+        knobs.change('consider_effort', 'low', by=self.justin)  # newer, but for everyone everywhere
+        knobs.change('consider_effort', 'max', agent=self.magent, by=self.justin)
+        self.assertEqual(knobs.resolve('m26', 'magent')['consider_effort'], 'high')
+        self.assertEqual(knobs.resolve('general', 'magent')['consider_effort'], 'max')
+        self.assertEqual(knobs.resolve('general', 'otheragent')['consider_effort'], 'low')
+
+    def test_a_change_is_a_new_row_and_the_newest_is_in_force(self):
+        knobs.change('rules', 'Be brief.', motion=self.general, agent=self.magent, by=self.justin)
+        knobs.change('rules', 'Be brief and playful.', motion=self.general, agent=self.magent, by=self.justin,
+                     note='casual channel')
+        self.assertEqual(knobs.resolve('general', 'magent')['rules'], 'Be brief and playful.')
+        self.assertEqual(Setting.objects.filter(key='rules').count(), 2)
+
+    def test_a_hush_with_an_end_lifts_itself(self):
+        soon = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+        knobs.change('listening', {'mode': 'off', 'until': soon}, motion=self.m26, by=self.justin)
+        self.assertEqual(knobs.resolve('m26', 'magent')['listening']['mode'], 'off')
+        later = datetime.now(timezone.utc) + timedelta(hours=3)
+        self.assertEqual(knobs.resolve('m26', 'magent', now=later)['listening'], {'mode': 'on', 'until': None})
+
+    def test_values_are_checked(self):
+        for key, value in (('listening', 'asleep'), ('consider_after', 'soon'), ('consider_after', 99999),
+                           ('mention_effort', 'huge'), ('model', 'Opus 5.5!'), ('rules', 'x' * 5000),
+                           ('nonsense', 1)):
+            with self.subTest(key=key):
+                with self.assertRaises(knobs.Invalid):
+                    knobs.change(key, value)
+
+    def test_moderation_is_not_a_setting_anyone_can_change(self):
+        with self.assertRaises(knobs.Invalid):
+            knobs.change('scram', True)
+        with self.assertRaises(knobs.Invalid):
+            knobs.change('consider_usd_per_day', 5, motion=self.m26)
+
+
+class SettingsAPITest(TestCase):
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        cls.magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+        cls.m26 = Motion.objects.create(slug='m26')
+
+    def as_(self, entity):
+        return mock.patch('conversations.services.motion_auth.device_for',
+                          return_value=mock.Mock(entity=entity, entity_id=entity.name))
+
+    def post(self, body):
+        return self.client.post('/api/settings/', json.dumps(body), content_type='application/json')
+
+    def test_anyone_can_read_only_people_signed_in_can_change(self):
+        self.assertEqual(self.client.get('/api/settings/').status_code, 200)
+        self.assertEqual(self.post({'key': 'rules', 'value': 'x'}).status_code, 401)
+        with self.as_(self.magent):
+            self.assertEqual(self.post({'key': 'rules', 'value': 'x'}).status_code, 403)
+        with self.as_(self.justin):
+            made = self.post({'key': 'rules', 'value': 'Keep it light.', 'motion': 'm26', 'agent': 'magent',
+                              'note': 'casual'})
+        self.assertEqual(made.status_code, 201)
+        state = self.client.get('/api/settings/').json()
+        self.assertEqual(state['resolved']['m26']['magent']['rules'], 'Keep it light.')
+        self.assertEqual(state['history'][0]['set_by'], 'justin')
+
+    def test_bad_requests_say_why(self):
+        with self.as_(self.justin):
+            self.assertEqual(self.post({'key': 'consider_after', 'value': -1}).status_code, 400)
+            self.assertEqual(self.post({'key': 'rules', 'value': 'x', 'motion': 'nowhere'}).status_code, 400)
+            self.assertEqual(self.post({'key': 'rules', 'value': 'x', 'agent': 'justin'}).status_code, 400)
+            self.assertEqual(self.post({'key': 'scram', 'value': True}).status_code, 400)
+
+    def test_the_pulse_and_the_motion_carry_the_settings(self):
+        knobs.change('listening', 'mentions', motion=self.m26, by=self.justin)
+        pulse = self.client.get('/api/motions/pulse/?agent=magent').json()
+        self.assertEqual(pulse['motions'][0]['settings']['listening']['mode'], 'mentions')
+        self.assertIsNone(pulse['scram'])
+        self.assertEqual(pulse['budget'], {'consider_usd_per_day': 10.0})
+        turns = self.client.get('/api/motions/m26/turns/').json()
+        self.assertEqual(turns['listening']['magent']['mode'], 'mentions')
