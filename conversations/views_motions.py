@@ -18,7 +18,7 @@ from .models import Message, Motion, ThinkingEntity
 from .services import motion_auth
 from .services.motion_view import (
     MACHINERY_SENDERS, activity, background_tasks, is_wrapper, known_names, mentions_in, motion_payload,
-    prose, step_detail, step_images, step_payload, timeline, turn_payload, turns, wiki_title, wikilinks_in,
+    prose, render_html, step_detail, step_images, step_payload, timeline, turn_payload, turns, wiki_title, wikilinks_in,
 )
 
 
@@ -71,13 +71,16 @@ def api_motion_turns(request, slug):
         limit = max(1, min(int(request.GET['limit']), PAGE))
 
     names = known_names()
-    turns_out, step_msgs, quiet_out, thoughts_out = [], [], [], []
+    turns_out, step_msgs, quiet_out, thoughts_out, compactions_out = [], [], [], [], []
     for kind, msg, text in timeline(motion, after=after, before=before, limit=limit):
         if kind == 'turn':
             turns_out.append(turn_payload(msg, text, names))
         elif kind == 'thought':
             thoughts_out.append({'id': str(msg.id), 'sender': msg.sender_id,
                                  'created_at': msg.created_at.isoformat(), 'text': text})
+        elif kind == 'compaction':
+            compactions_out.append({'id': str(msg.id), 'session_id': str(msg.session_id or ''),
+                                    'created_at': msg.created_at.isoformat(), 'html': render_html(text)})
         elif kind == 'quiet':
             quiet_out.append({'id': str(msg.id), 'sender': msg.sender_id,
                               'created_at': msg.created_at.isoformat(), **text})
@@ -85,7 +88,8 @@ def api_motion_turns(request, slug):
             step_msgs.append(msg)
     images = step_images(step_msgs)
     steps_out = [{**step_payload(m), 'images': images.get(str(m.id), [])} for m in step_msgs]
-    first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out], default=None)
+    first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out + compactions_out],
+                default=None)
     return JsonResponse({
         'motion': motion_payload(motion),
         # Prose only: the poller reads an agent turn here as an answer, so a
@@ -96,6 +100,8 @@ def api_motion_turns(request, slug):
         'quiet': quiet_out,
         # What the agent thought along the way, where the harness kept it.
         'thoughts': thoughts_out,
+        # Where a session's context was compacted, and the summary it went on from.
+        'compactions': compactions_out,
         'has_earlier': bool(limit) and first is not None and motion.messages.filter(
             is_sidechain=False, created_at__lt=first).exists(),
         'activity': activity(motion),

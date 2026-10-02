@@ -20,7 +20,11 @@ MACHINERY_SENDERS = {'tool-result', 'system'}
 
 # Command scaffolding, system reminders and interruption markers are text,
 # but they are not conversation.
-_WRAPPER_PREFIXES = ('<', '[Request interrupted')
+# The summary Claude Code starts a session with after compacting it. Not
+# anyone's words -- the harness writes it, as a prompt -- so never a turn or
+# a mention; the Motion shows it folded, as the moment a context was compacted.
+COMPACTION_PREFIX = 'This session is being continued from a previous conversation'
+_WRAPPER_PREFIXES = ('<', '[Request interrupted', COMPACTION_PREFIX)
 
 
 def pickipedia_url():
@@ -73,6 +77,10 @@ def thought_text(content):
 
 def is_wrapper(text):
     return text.startswith(_WRAPPER_PREFIXES)
+
+
+def is_compaction(text):
+    return text.startswith(COMPACTION_PREFIX)
 
 
 def turns(motion, after=None):
@@ -367,7 +375,8 @@ def timeline(motion, after=None, before=None, limit=None):
 
     Yields ('turn', message, text), ('quiet', message, reason) for an
     agent's choice not to speak, ('thought', message, text) for thinking the
-    harness kept, and ('step', message, None). A step is
+    harness kept, ('compaction', message, summary) where a session was
+    compacted, and ('step', message, None). A step is
     one tool call; its result is fetched on demand (step_detail), so the
     thread stays light. `limit` keeps the newest that many items -- a first
     load, or a page further back with `before`.
@@ -395,6 +404,8 @@ def timeline(motion, after=None, before=None, limit=None):
         reason = quiet_reason(text)
         if reason is not None:
             return ('quiet', msg, reason)
+        if is_compaction(text):
+            return ('compaction', msg, text)
         if is_wrapper(text):
             return None
         return ('turn', msg, text)

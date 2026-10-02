@@ -598,6 +598,14 @@ class HoldTest(TestCase):
             thread.join(5)
 
 
+class DefaultsTest(TestCase):
+
+    def test_eight_turns_at_once_by_default(self):
+        import inspect
+        from poller import motion_poller
+        self.assertIn("'--parallel', type=int, default=8", inspect.getsource(motion_poller.main))
+
+
 class ConsiderAPI:
     """One Motion, m26, as the pulse and the turns endpoint would show it."""
 

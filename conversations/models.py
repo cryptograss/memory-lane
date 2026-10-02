@@ -557,7 +557,11 @@ class Message(models.Model):
             # Check if content is a string (command messages, uncertain messages)
             if type(content) == str:
                 # Check if it's a command pattern
-                if content.startswith("<command"):
+                if event.get('isCompactSummary') or content.startswith("This session is being continued"):
+                    # The summary a compacted session goes on from: newer
+                    # clients write it as a plain string, and flag it.
+                    event_type = "continuation"
+                elif content.startswith("<command"):
                     event_type = "command"
                 elif content.startswith("<local-command-stdout"):
                     event_type = "command result - success"

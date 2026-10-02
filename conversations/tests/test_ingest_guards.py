@@ -33,6 +33,17 @@ class MetadataDetectionTest(TestCase):
                 self.assertIs(event_type, EVENT_TYPE_WE_DO_NOT_HANDLE_YET)
 
 
+class CompactSummaryTest(TestCase):
+
+    def test_a_summary_written_as_a_string_is_a_continuation(self):
+        line = {'type': 'user', 'uuid': '00000000-0000-0000-0000-00000000000c', 'isCompactSummary': True,
+                'isVisibleInTranscriptOnly': True, 'sessionId': 's',
+                'message': {'role': 'user', 'content': 'This session is being continued from a previous '
+                                                       'conversation that ran out of context.'}}
+        event_type, _ = Message.detect_event_type_claude_code_v2(json.dumps(line))
+        self.assertEqual(event_type, 'continuation')
+
+
 class IngestGuardTest(TestCase):
 
     def post(self, lines, key=KEY, env_key=KEY):

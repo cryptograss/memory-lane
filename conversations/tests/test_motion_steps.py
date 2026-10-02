@@ -54,6 +54,21 @@ class StepsTest(TestCase):
         self.assertEqual([t['text'] for t in body['thoughts']], ['That resonates. Planning the work.'])
         self.assertEqual(body['turns'], [])  # a thought is never an answer
 
+    def test_a_compaction_summary_is_folded_never_a_turn_or_a_mention(self):
+        # As stored before the importer knew the string form: under the
+        # container's person, which made it look like their words.
+        summary = ('This session is being continued from a previous conversation that ran out of context.\n\n'
+                   'Summary:\n- **Goal:** make the Motion home; @magent to build it.')
+        self.add(self.justin, summary)
+        self.add(self.magent, summary)  # as stored from now on
+        self.add(self.justin, '@magent and now?')
+        body = self.get()
+        self.assertEqual([t['text'] for t in body['turns']], ['@magent and now?'])
+        self.assertEqual(len(body['compactions']), 2)
+        self.assertIn('<strong>Goal:</strong>', body['compactions'][0]['html'])
+        mentions = self.client.get('/api/mentions/magent/').json()['mentions']
+        self.assertEqual([m['turn']['text'] for m in mentions], ['@magent and now?'])
+
     def test_a_step_opens_to_its_input_and_result(self):
         step = self.add(self.magent, {'command': 'false'}, model=ToolUse, tool_name='Bash', tool_id='t9')
         self.add(self.tool, 'exit 1', model=ToolResult, tool_use_id='t9', is_error=True)

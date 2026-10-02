@@ -15,7 +15,7 @@ A mention is owed a turn when all of these hold:
     one poller, the one holding that session, ever answers;
   - fewer than --max-wakes-per-hour attempts were made in the last hour.
 
-Turns in different Motions run side by side (--parallel, default 4 at
+Turns in different Motions run side by side (--parallel, default 8 at
 once), at most one per Motion: a Motion with a turn under way holds its
 next mention until that turn ends.
 
@@ -1140,7 +1140,7 @@ def main(argv=None):
     parser.add_argument('--interval', type=float, default=1.0, help='Seconds between looks (two cheap GETs)')
     parser.add_argument('--grace', type=int, default=600, help='Seconds to leave for a live session to answer')
     parser.add_argument('--max-wakes-per-hour', type=int, default=30)
-    parser.add_argument('--parallel', type=int, default=4,
+    parser.add_argument('--parallel', type=int, default=8,
                         help='Turns at once, at most one per Motion (0: one at a time, each run to its end)')
     parser.add_argument('--model', default=None)
     parser.add_argument('--mention-effort', default='high', help='Effort for a turn woken by a mention')

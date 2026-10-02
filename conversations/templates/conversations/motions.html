@@ -103,6 +103,18 @@
   header .preview { font-size: 12px; font-weight: 600; color: #7a4b00; background: #ffe9b0; border-radius: 4px; padding: 1px 8px; }
   header .auth a { color: var(--muted); }
   #footer { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); }
+  /* Up and down a message at a time, at the right of the thread. */
+  #jump { position: absolute; right: 16px; bottom: calc(100% + 12px); display: flex; flex-direction: column; gap: 6px; }
+  #jump button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel);
+                 color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  #jump button:hover { color: var(--accent); border-color: var(--accent); }
+  /* Where a session's context was compacted: one line, its summary on demand. */
+  .compaction { margin: 10px 0; font-size: 13px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
+  .compaction summary { cursor: pointer; list-style: none; }
+  .compaction summary::before { content: '⟲ '; }
+  .compaction[open] summary { margin-bottom: 6px; }
+  .compaction .body { font-size: 13px; color: var(--ink); background: var(--code); border-radius: 6px; padding: 8px 12px;
+                      max-height: 60vh; overflow-y: auto; }
   #activity, #composer { max-width: 760px; margin: 0 auto; }  /* the reading column's width */
   #composer { display: none; position: relative; padding: 10px 16px 14px; }
   body.writer #composer { display: flex; gap: 8px; align-items: flex-end; }
@@ -253,6 +265,7 @@
   <div id="grip" title="Drag to resize; double-click to reset"></div>
   <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div>
     <div id="footer">
+    <div id="jump"><button type="button" id="jumpUp" title="previous message" aria-label="previous message">↑</button><button type="button" id="jumpDown" title="next message" aria-label="next message">↓</button></div>
     <div id="typing"></div>
     <div id="tasks"></div>
     <div id="activity"><span class="dot"></span><span id="activityText"></span></div>
@@ -510,6 +523,33 @@
     prev = { sender: t.sender, at: new Date(t.created_at).getTime() };
   }
 
+  function addCompaction(c, container) {
+    const el = document.createElement('details');
+    el.className = 'compaction';
+    // The summary is the server's own rendering of the harness's text (render_html).
+    el.innerHTML = `<summary>context compacted · ${esc(stamp(c.created_at))} · the summary it went on from</summary>`
+      + `<div class="body">${c.html}</div>`;
+    container.appendChild(el);
+    prev = null;  // whoever speaks next starts afresh
+  }
+
+  // --- up and down a message at a time --------------------------------------
+  function jump(dir) {
+    const top = main.getBoundingClientRect().top;
+    const turns = [...document.querySelectorAll('#turns .turn')];
+    const at = t => t.getBoundingClientRect().top - top;
+    const target = dir > 0 ? turns.find(t => at(t) > 16) : turns.reverse().find(t => at(t) < -16);
+    if (target) main.scrollTo({ top: main.scrollTop + at(target) - 8, behavior: 'smooth' });
+    else if (dir > 0) main.scrollTo({ top: main.scrollHeight, behavior: 'smooth' });
+    else {
+      const earlier = document.getElementById('earlier');
+      if (earlier && !earlier.hidden) earlier.click();  // past the top: bring in the page before
+      else main.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }
+  document.getElementById('jumpUp').addEventListener('click', () => jump(-1));
+  document.getElementById('jumpDown').addEventListener('click', () => jump(1));
+
   function addQuiet(q, container) {
     let row = container.lastElementChild;
     if (!row || !row.classList.contains('quiet')) {
@@ -541,7 +581,8 @@
   function itemsOf(data) {
     return [...(data.turns || []).map(t => ({ kind: 'turn', v: t })), ...(data.steps || []).map(s => ({ kind: 'step', v: s })),
             ...(data.quiet || []).map(q => ({ kind: 'quiet', v: q })),
-            ...(data.thoughts || []).map(t => ({ kind: 'thought', v: t }))]
+            ...(data.thoughts || []).map(t => ({ kind: 'thought', v: t })),
+            ...(data.compactions || []).map(c => ({ kind: 'compaction', v: c }))]
       .sort((a, b) => a.v.created_at < b.v.created_at ? -1 : a.v.created_at > b.v.created_at ? 1 : 0);
   }
   function renderItems(items, container, isNew) {
@@ -549,6 +590,7 @@
       if (it.kind === 'turn') container.appendChild(turnEl(it.v, isNew));
       else if (it.kind === 'quiet') addQuiet(it.v, container);
       else if (it.kind === 'thought') addThought(it.v, container);
+      else if (it.kind === 'compaction') addCompaction(it.v, container);
       else addStep(it.v, container);
     }
   }
