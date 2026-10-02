@@ -17,7 +17,7 @@ from django.views.decorators.http import require_GET, require_POST
 from .models import Message, Motion, ThinkingEntity
 from .services import motion_auth
 from .services.motion_view import (
-    MACHINERY_SENDERS, activity, is_wrapper, known_names, mentions_in, motion_payload,
+    MACHINERY_SENDERS, activity, background_tasks, is_wrapper, known_names, mentions_in, motion_payload,
     prose, step_detail, step_images, step_payload, timeline, turn_payload, turns, wiki_title, wikilinks_in,
 )
 
@@ -90,6 +90,8 @@ def api_motion_turns(request, slug):
         'has_earlier': bool(limit) and first is not None and motion.messages.filter(
             is_sidechain=False, created_at__lt=first).exists(),
         'activity': activity(motion),
+        # What an agent started in the background here and is still running.
+        'tasks': background_tasks(motion),
         'typing': typing_in(motion.slug),
     })
 

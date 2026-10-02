@@ -117,6 +117,12 @@
   /* Who is a person and who is an agent, wherever a name appears. */
   .ico { width: 13px; height: 13px; fill: currentColor; vertical-align: -1px; margin-right: 4px; flex: none; }
   .people .who.typing::after { content: ' typing…'; color: var(--muted); animation: pulse 1.2s ease-in-out infinite; }
+  #tasks { display: none; flex-wrap: wrap; gap: 6px; padding: 6px 16px 0; font-size: 12.5px; color: var(--muted);
+           max-width: 760px; margin: 0 auto; }
+  #tasks.on { display: flex; }
+  #tasks .task { background: var(--code); border-radius: 10px; padding: 1px 9px; }
+  #tasks .task::before { content: '⚙ '; }
+  #tasks .task.helper::before { content: '✦ '; }
   #typing { display: none; padding: 6px 16px 0; font-size: 13px; color: var(--muted); }
   #typing.on { display: block; }
 
@@ -214,6 +220,7 @@
   <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div>
     <div id="footer">
     <div id="typing"></div>
+    <div id="tasks"></div>
     <div id="activity"><span class="dot"></span><span id="activityText"></span></div>
     <form id="composer" autocomplete="off">
       <div id="suggest"></div>
@@ -561,6 +568,8 @@
     }
     act = data.activity || null;
     renderActivity();
+    tasks = data.tasks || [];
+    renderTasks();
     typingNow = (data.typing || []).filter(n => n !== viewer);
     renderTyping();
     const turnsEl = document.getElementById('turns');
@@ -591,6 +600,16 @@
     const s = Math.max(0, Math.floor(Date.now() / 1000 - since));
     return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
   }
+  // What an agent left running in the background, as in its terminal.
+  let tasks = [];
+  const tasksEl = document.getElementById('tasks');
+  function renderTasks() {
+    tasksEl.classList.toggle('on', tasks.length > 0);
+    tasksEl.innerHTML = tasks.length ? 'running: ' + tasks.map(t =>
+      `<span class="task ${t.kind === 'helper' ? 'helper' : ''}" title="${esc(t.kind)} ${esc(t.id)}">${esc(t.label)} · ${elapsed(t.since)}</span>`).join('') : '';
+  }
+  setInterval(renderTasks, 1000);
+
   let typingNow = [];
   const typingEl = document.getElementById('typing');
   function renderTyping() {
