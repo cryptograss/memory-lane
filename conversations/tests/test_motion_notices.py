@@ -90,3 +90,47 @@ class WakeFramesTest(TestCase):
         self.assertTrue(frames['mention-look'].endswith('\n'.join(wake_footer(full=False))))
         self.assertIn(CONSIDER_ASK, frames['consider'])
         self.assertIn('\n'.join(rules_block('Be brief.')), frames['quiet'])
+
+
+class OpenWorkTest(TestCase):
+    """Open work: what the forge has open, and who asked for it, from the record."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        cls.skyler = ThinkingEntity.objects.create(name='skyler', is_biological_human=True)
+        cls.magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+        cls.m26 = Motion.objects.create(slug='m26', title='Magenta 26 Million')
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.delete('work:forge')
+        cache.delete('work:open')
+
+    def test_who_asked_and_where(self):
+        from unittest import mock
+
+        def add(sender, text, seconds):
+            Message.objects.create(id=uuid.uuid4(), sender=sender, motion=self.m26, content=text,
+                                   timestamp=int((time.time() + seconds) * 1000))
+        add(self.justin, '@magent can you add dark mode?', 1)
+        add(self.magent, [{'type': 'text', 'text': 'Done in https://github.com/jMyles/memory-lane/pull/64.'}], 2)
+        add(self.skyler, 'nice, see github.com/jMyles/memory-lane/pull/64', 3)
+        forge = {'repository_url': 'https://api.github.com/repos/jMyles/memory-lane', 'number': 64,
+                 'title': 'Dark mode', 'html_url': 'https://github.com/jMyles/memory-lane/pull/64',
+                 'user': {'login': 'magent-cryptograss'}, 'created_at': '2026-10-03T02:00:00Z',
+                 'updated_at': '2026-10-03T02:30:00Z'}
+        with mock.patch('conversations.services.work._search', side_effect=[[forge], []]):
+            items = self.client.get('/api/work/').json()['items']
+        self.assertEqual(len(items), 1)
+        item = items[0]
+        self.assertEqual((item['author'], item['asked_by']), ('magent', 'justin'))
+        self.assertEqual(item['people'], ['justin', 'skyler'])
+        self.assertEqual([m['slug'] for m in item['moods']], ['m26'])
+
+    def test_the_forge_unreachable_is_said_not_raised(self):
+        from unittest import mock
+        with mock.patch('conversations.services.work._search', side_effect=OSError('down')):
+            body = self.client.get('/api/work/').json()
+        self.assertEqual(body['items'], [])
+        self.assertIn('could not ask the forge', body['error'])

@@ -45,6 +45,7 @@ urlpatterns = [
     path('api/notices/<slug:name>/', views_motions.api_notices, name='api_notices'),
     path('api/motions/recent/', views_motions.api_recent, name='api_motions_recent'),
     path('api/search/', views_motions.api_search, name='api_search'),
+    path('api/work/', views_motions.api_work, name='api_work'),
     path('memory_lane/', views.memory_lane, name='memory_lane'),
     path('spy/', views.stream, name='spy'),
     path('api/recent_messages/', views.recent_messages, name='recent_messages'),

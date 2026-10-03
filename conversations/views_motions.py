@@ -637,3 +637,19 @@ def app_service_worker(request):
     response['Service-Worker-Allowed'] = '/motions/'
     response['Cache-Control'] = 'no-cache'
     return response
+
+
+@require_GET
+def api_work(request):
+    """Open pull requests and new issues across our repositories, with the people
+    and Moods each involves (services/work.py)."""
+    from django.core.cache import cache
+    from .services import work
+    items = cache.get('work:open')
+    if items is None:
+        try:
+            items = work.open_work()
+        except Exception as e:  # the forge unreachable, or rate-limited: say so, don't fail the page
+            return JsonResponse({'items': [], 'error': f'could not ask the forge: {type(e).__name__}'})
+        cache.set('work:open', items, 120)
+    return JsonResponse({'items': items})

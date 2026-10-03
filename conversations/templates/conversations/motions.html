@@ -115,16 +115,20 @@
   nav a.motion.active .people-line { display: block; }
   /* Someone typing or an agent at work: their name pulses where the Motion is listed. */
   /* What's been happening everywhere, under the list; folds away. */
-  #recent { border-top: 1px solid var(--line); margin-top: 8px; padding: 6px 0 12px; font-size: 12.5px; }
-  #recent summary { padding: 4px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+  #recent, #work { border-top: 1px solid var(--line); margin-top: 8px; padding: 6px 0 12px; font-size: 12.5px; }
+  #work .ev .repo { color: var(--muted); }
+  #work .older summary { padding: 4px 16px; font-size: 11.5px; color: var(--muted); cursor: pointer; text-transform: none; letter-spacing: 0; }
+  #work .older summary::before { content: ''; }
+  #recent summary, #work > summary { padding: 4px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
                     color: var(--muted); cursor: pointer; list-style: none; }
-  #recent summary::before { content: '▸ '; }
-  #recent[open] summary::before { content: '▾ '; }
-  #recent .ev { display: block; padding: 4px 16px; color: var(--muted); text-decoration: none; line-height: 1.35; }
-  #recent .ev:hover { background: var(--hover); }
-  #recent .ev b { color: var(--ink); font-weight: 600; }
-  #recent .ev .txt { display: block; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #recent .ev time { float: right; margin-left: 6px; }
+  #recent summary::before, #work > summary::before { content: '▸ '; }
+  #recent[open] summary::before, #work[open] > summary::before { content: '▾ '; }
+  #recent .ev, #work .ev { display: block; padding: 4px 16px; color: var(--muted); text-decoration: none; line-height: 1.35; }
+  #recent .ev:hover, #work .ev:hover { background: var(--hover); }
+  #recent .ev b, #work .ev b { color: var(--ink); font-weight: 600; }
+  #recent .ev .txt, #work .ev .txt { display: block; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #recent .ev time, #work .ev time { float: right; margin-left: 6px; }
+  #work .ev .mood { color: var(--accent); cursor: pointer; }
   nav .nm.live { color: var(--ink); font-weight: 600; animation: pulse 1.2s ease-in-out infinite; }
   /* Drag the pane's edge to size it; the width is remembered in this browser. */
   #grip { width: 5px; margin-left: -3px; flex: none; cursor: col-resize; position: relative; z-index: 1; }
@@ -430,7 +434,8 @@
 </div>
 <div class="layout">
   <nav id="nav"><div id="moodList"><div class="label">Moods</div></div>
-    <details id="recent"><summary>Recent changes</summary><div id="recentList"></div></details></nav>
+    <details id="recent"><summary>Recent changes</summary><div id="recentList"></div></details>
+    <details id="work"><summary>Open work</summary><div id="workList"></div></details></nav>
   <div id="grip" title="Drag to resize; double-click to reset"></div>
   <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div>
     <div id="footer">
@@ -1071,6 +1076,43 @@
       }).join('') || '<div class="ev">Nothing in the last day.</div>';
     } catch (e) {}
   }
+  // --- open work: pull requests and new issues, with who asked, and where -------
+  const workBox = document.getElementById('work');
+  const workList = document.getElementById('workList');
+  let workAt = 0;
+  workBox.open = store.get('workOpen', false);
+  workBox.addEventListener('toggle', () => { store.set('workOpen', workBox.open); if (workBox.open) refreshWork(true); });
+  function workRow(i) {
+    const who = i.asked_by ? `asked by <b>${esc(i.asked_by)}</b>` : (i.people.length ? esc(i.people.join(', ')) : esc(i.author));
+    const where = i.moods.slice(0, 2).map(m => ` · <span class="mood" data-slug="${esc(m.slug)}" data-id="${esc(m.id)}">${esc(m.title)}</span>`).join('');
+    const kind = i.kind === 'pr' ? (i.draft ? 'draft' : 'PR') : 'issue';
+    return `<a class="ev" href="${esc(i.url)}" target="_blank" rel="noopener"><time datetime="${esc(i.updated_at)}">${esc(ago(i.updated_at))}</time>`
+      + `<span class="repo">${esc(i.repo.split('/')[1])}#${i.number} · ${kind}</span>`
+      + `<span class="txt">${esc(i.title)}</span>${who}${where}</a>`;
+  }
+  async function refreshWork(force) {
+    if (!workBox.open || (!force && Date.now() - workAt < 300000)) return;
+    workAt = Date.now();
+    workList.innerHTML = workList.innerHTML || '<div class="ev">Asking…</div>';
+    try {
+      const d = await (await fetch('/api/work/')).json();
+      if (d.error) { workList.innerHTML = `<div class="ev">${esc(d.error)}</div>`; return; }
+      const fortnight = Date.now() - 14 * 86400 * 1000;
+      const fresh = d.items.filter(i => new Date(i.updated_at) > fortnight);
+      const older = d.items.filter(i => new Date(i.updated_at) <= fortnight);
+      workList.innerHTML = (fresh.map(workRow).join('') || '<div class="ev">Nothing touched in two weeks.</div>')
+        + (older.length ? `<details class="older"><summary>${older.length} quieter for two weeks or more</summary>${older.map(workRow).join('')}</details>` : '');
+    } catch (e) { workList.innerHTML = '<div class="ev">Could not load open work.</div>'; }
+  }
+  workList.addEventListener('click', e => {
+    const mood = e.target.closest('.mood');
+    if (!mood) return;
+    e.preventDefault();
+    document.body.classList.remove('menu-open');
+    openAndReveal(mood.dataset.slug, mood.dataset.id);
+  });
+  setInterval(() => refreshWork(false), 300000);
+
   recentList.addEventListener('click', e => {
     const a = e.target.closest('a.ev');
     if (!a || !a.dataset.slug) return;
