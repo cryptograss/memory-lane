@@ -83,11 +83,18 @@ def api_enroll(request):
 @ensure_csrf_cookie
 @require_http_methods(['GET', 'POST'])
 def login_page(request, code):
-    """GET asks; POST enrolls this browser. A link preview only ever GETs."""
-    login = motion_auth.code_is_live(code)
+    """GET asks; POST enrolls this browser. A link preview only ever GETs.
+
+    A link that can't be used says why: spent (when, for which device, and
+    whether this very browser is the one it signed in), expired, or unknown.
+    """
     if request.method == 'GET':
-        return render(request, 'conversations/motion_login.html',
-                      {'name': login.entity_id if login else None}, status=200 if login else 410)
+        state, detail = motion_auth.code_state(code)
+        here = motion_auth.device_for(request)
+        context = {'state': state, 'name': detail.entity_id if state == 'live' else None,
+                   'used': detail if state == 'used' else None,
+                   'signed_in_here': here.entity_id if here else None}
+        return render(request, 'conversations/motion_login.html', context, status=200 if state == 'live' else 410)
 
     from .views_admin import locked_response
     if locked_response():
@@ -95,7 +102,9 @@ def login_page(request, code):
     label = getattr(settings, 'DEVICE_LABEL_PREFIX', '') + request.POST.get('label', '')
     device, token = motion_auth.redeem_login_code(code, label=label)
     if device is None:
-        return render(request, 'conversations/motion_login.html', {'name': None}, status=410)
+        state, detail = motion_auth.code_state(code)
+        return render(request, 'conversations/motion_login.html',
+                      {'state': state, 'used': detail if state == 'used' else None}, status=410)
     response = HttpResponseRedirect('/motions/')
     response.set_cookie(motion_auth.COOKIE, token, max_age=motion_auth.COOKIE_AGE,
                         httponly=True, secure=not settings.DEBUG, samesite='Lax')

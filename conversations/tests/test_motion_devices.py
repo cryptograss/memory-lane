@@ -253,3 +253,40 @@ class NewAndArchivedMoodsTest(SignedInCase):
         from conversations.models import Setting
         self.assertEqual([(r.value, r.set_by_id) for r in Setting.objects.filter(key='archived').order_by('created_at')],
                          [(True, 'justin'), (False, 'justin')])
+
+
+@skipUnless(HAS_SSH_KEYGEN, 'needs ssh-keygen')
+class LoginLinkStatesTest(SignedInCase):
+    """A link that can't be used says why: spent (and where), expired, or never ours."""
+
+    def link(self):
+        challenge = self.client.get('/api/auth/challenge/').json()['challenge']
+        message = motion_auth.signed_message(challenge, 'http://testserver')
+        url = Client().post('/api/auth/enroll/', json.dumps({'challenge': challenge, 'signature': sign(self.justin_key, message)}),
+                            content_type='application/json').json()['url']
+        return url.split('testserver', 1)[1]
+
+    def test_spent_says_when_and_for_which_device_and_knows_this_browser(self):
+        path = self.link()
+        phone = Client()
+        phone.get(path)
+        phone.post(path, {'label': 'Justin’s phone ', 'csrfmiddlewaretoken': phone.cookies['csrftoken'].value})
+        again = phone.get(path)  # the same browser, a second look
+        self.assertEqual(again.status_code, 410)
+        self.assertContains(again, "You're signed in here", status_code=410)
+        elsewhere = Client().get(path)  # another browser: the home-screen app, say
+        self.assertContains(elsewhere, 'This link was already used', status_code=410)
+        self.assertContains(elsewhere, '“Justin’s phone”', status_code=410)
+        self.assertContains(elsewhere, 'Have a sign-in link?', status_code=410)
+
+    def test_expired_and_unknown_are_told_apart(self):
+        from conversations.models import LoginCode
+        path = self.link()
+        LoginCode.objects.update(expires_at=timezone.now() - timedelta(minutes=1))
+        self.assertContains(Client().get(path), 'This link has expired', status_code=410)
+        cut = path.rstrip('/')[:-6] + '/'  # a link that lost its end when copied
+        self.assertContains(Client().get(cut), "isn't a sign-in link we know", status_code=410)
+
+    def test_a_live_link_still_asks_first(self):
+        response = Client().get(self.link())
+        self.assertContains(response, 'Write as justin on this device?')

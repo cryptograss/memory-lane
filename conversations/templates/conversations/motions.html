@@ -60,6 +60,13 @@
   #userMenu[hidden] { display: none; }
   #userMenu > * { padding: 6px 14px; color: var(--ink); text-decoration: none; text-align: left; }
   #userMenu > a:hover, #userMenu > button:hover { background: var(--hover); }
+  #userMenu #pasteLink { margin-top: 8px; color: var(--muted); }
+  #userMenu #pasteLink label { display: block; font-size: 12.5px; margin-bottom: 3px; }
+  #userMenu #pasteLink span { display: flex; gap: 6px; }
+  #userMenu #pasteLink input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--line);
+                               border-radius: 5px; background: var(--bg); color: var(--ink); }
+  #userMenu #pasteLink button { font: inherit; font-size: 13px; border: 0; border-radius: 5px; padding: 3px 10px;
+                                background: var(--accent); color: #fff; cursor: pointer; }
   #userMenu .textsize { display: flex; align-items: center; gap: 6px; color: var(--ink); }
   #userMenu .textsize button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px;
                                background: var(--panel); color: var(--ink); cursor: pointer; padding: 1px 7px; }
@@ -2016,7 +2023,17 @@
     });
   } else {
     userBtn.textContent = 'read-only ▾';
-    auth.innerHTML = 'To write, run <code>magenta.sh login</code> on a machine with your SSH key.';
+    auth.innerHTML = 'To write, run <code>magenta.sh login</code> on a machine with your SSH key.'
+      + '<form id="pasteLink"><label for="pasted">Have a sign-in link? Paste it here:</label>'
+      + '<span><input id="pasted" type="url" autocomplete="off" placeholder="…/motions/login/…/"><button type="submit">Go</button></span></form>';
+    // A home-screen app has no address bar, and keeps its own sign-in apart
+    // from the browser's: here it can open a link it was handed.
+    document.getElementById('pasteLink').addEventListener('submit', e => {
+      e.preventDefault();
+      const m = document.getElementById('pasted').value.trim().match(/\/motions\/login\/([\w-]+)\/?/);
+      if (!m) { showError('That isn\'t a sign-in link: it should contain /motions/login/…'); return; }
+      location.href = '/motions/login/' + m[1] + '/';  // this app's own origin, whatever host was pasted
+    });
   }
   // Your devices: when each signed in, last wrote, and times out; revoke any.
   const devicesBox = document.getElementById('devicesBox');

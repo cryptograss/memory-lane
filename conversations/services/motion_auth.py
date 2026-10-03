@@ -149,10 +149,22 @@ def redeem_login_code(code, label=''):
     return device, token
 
 
-def code_is_live(code):
-    from conversations.models import LoginCode
-    return LoginCode.objects.filter(code_hash=digest(code), used_at__isnull=True,
-                                    expires_at__gt=timezone.now()).select_related('entity').first()
+def code_state(code):
+    """What became of a login link: ('live', LoginCode), ('used', {'at', 'name',
+    'label'}), ('expired', None), or ('unknown', None) -- never issued, or cut
+    short when it was copied. The page says which, so someone whose second
+    look at a link finds it spent can tell they're already in."""
+    from conversations.models import Device, LoginCode
+    login = LoginCode.objects.filter(code_hash=digest(code)).select_related('entity').first()
+    if login is None:
+        return 'unknown', None
+    if login.used_at is None:
+        return ('live', login) if login.expires_at > timezone.now() else ('expired', None)
+    # The device it made was created as it was spent (redeem_login_code).
+    device = (Device.objects.filter(entity=login.entity, created_at__gte=login.used_at - timedelta(seconds=5),
+                                    created_at__lte=login.used_at + timedelta(seconds=5))
+              .order_by('created_at').first())
+    return 'used', {'at': login.used_at, 'name': login.entity_id, 'label': (device.label if device else '').strip()}
 
 
 def device_state(device, now=None):
