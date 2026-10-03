@@ -508,6 +508,64 @@ def wake_footer(full=False):
             '</motion-wake>']
 
 
+# What each kind of wake says around its content. One place, so the rules
+# page (memory-lane's /motions/<slug>/rules/) shows exactly what is sent.
+CONSIDER_ASK = ('If you have something that would genuinely help -- a fact, a connection, a question, a '
+                'kind word -- say it, briefly. Most of the time the right answer is to stay quiet.')
+QUIET_ASK = ('You might pick up a loose end, offer something you have been turning over, or just let it '
+             'rest. Nobody is waiting on you.')
+
+
+def mention_opening(slug, why):
+    return [f'<motion-wake motion="{slug}">', f'You were woken by the Motion poller: {why}', '']
+
+
+def consider_opening(slug):
+    return [f'<motion-wake motion="{slug}" reason="consider">',
+            'Nobody asked you anything. This is the Motion lately, newest last; ► marks what was '
+            'posted since you last looked:', '']
+
+
+def quiet_opening(slug, minutes):
+    return [f'<motion-wake motion="{slug}" reason="quiet">',
+            f'Nothing has been said in this Motion for about {minutes} minutes. Its last turns, newest last:', '']
+
+
+def rules_block(rules):
+    """The Motion's own rules for the agent, as every wake carries them."""
+    return ['', "This Motion's people asked you to keep this in mind here:", rules] if rules else []
+
+
+def wake_frames(slug, rules='', agent='magent', trusted='the people its runner trusts with real work'):
+    """Every kind of wake, as the agent receives it, with its content shown as
+    placeholders. What memory-lane's rules page shows."""
+    posts = '[the posts that woke it, each as "[name, time] text"]'
+    context = '[up to 20 recent turns around them]'
+    recent = '[the recent turns, newest last; ► marks the new ones]'
+    return [
+        {'kind': 'mention-full', 'title': 'When someone @mentions it: full tools',
+         'when': f'Every post that woke it is from someone trusted with real work here ({trusted}).',
+         'text': '\n'.join(mention_opening(slug, 'this was posted from the web, where no session is listening.')
+                           + [posts, '', 'The Motion lately, for context (newest last):', context]
+                           + rules_block(rules) + wake_footer(full=True))},
+        {'kind': 'mention-look', 'title': 'When someone @mentions it: look, not touch',
+         'when': 'Any post that woke it is from someone else.',
+         'text': '\n'.join(mention_opening(slug, 'this was posted from the web, where no session is listening.')
+                           + [posts, '', 'The Motion lately, for context (newest last):', context]
+                           + rules_block(rules) + wake_footer(full=False))},
+        {'kind': 'consider', 'title': 'When people talk and nobody asks it',
+         'when': 'New posts from the web, after a quiet moment, if the screen lets them through.',
+         'text': '\n'.join(consider_opening(slug) + [recent, '', CONSIDER_ASK] + rules_block(rules) + wake_footer())},
+        {'kind': 'quiet', 'title': 'When it has been quiet a long while',
+         'when': 'No word for the idle wait (doubling after each silence), and a person spoke in the last 12 hours.',
+         'text': '\n'.join(quiet_opening(slug, '[N]') + ['[its last turns]', '', QUIET_ASK] + rules_block(rules)
+                           + wake_footer())},
+        {'kind': 'screen', 'title': 'The screen, before a consider (a small model, no tools)',
+         'when': 'Before every consider: it may only let pass what is plainly not for the agent.',
+         'text': ClaudeCodeScreen.SYSTEM.format(agent=agent)},
+    ]
+
+
 def transcript_of(turns, new_ids=(), limit=20_000, each=1500):
     """Turns as prompt lines, newest last; ► marks the new ones. Clipped to fit."""
     lines = []
@@ -851,7 +909,7 @@ class MotionPoller:
             why = 'this was posted from the web, where no session is listening.'
         else:
             why = f'nobody answered this in {int(self.grace.total_seconds() // 60)} minutes.'
-        lines = [f'<motion-wake motion="{slug}">', f'You were woken by the Motion poller: {why}', '']
+        lines = mention_opening(slug, why)
         budget = MAX_PROMPT_CHARS
         for turn in owed:
             text = _WRAPPER_TAG.sub(r'‹\1\2', turn['text'])
@@ -873,10 +931,7 @@ class MotionPoller:
         return '\n'.join(lines + self.rules_lines(slug) + wake_footer(full))
 
     def rules_lines(self, slug):
-        rules = self.knob(slug, 'rules')
-        if not rules:
-            return []
-        return ['', f"This Motion's people asked you to keep this in mind here:", rules]
+        return rules_block(self.knob(slug, 'rules'))
 
     # --- the consider loop ------------------------------------------------------
     #
@@ -1052,11 +1107,7 @@ class MotionPoller:
                     logger.info(f'{slug}: screened (no runner key, so no dot): {reason}')
                 logger.info(f'{slug}: screened: {reason}')
                 return 'screened'
-        prompt_lines = [f'<motion-wake motion="{slug}" reason="consider">',
-                        'Nobody asked you anything. This is the Motion lately, newest last; ► marks what was '
-                        'posted since you last looked:', '', *lines, '',
-                        'If you have something that would genuinely help -- a fact, a connection, a question, a '
-                        'kind word -- say it, briefly. Most of the time the right answer is to stay quiet.']
+        prompt_lines = consider_opening(slug) + [*lines, '', CONSIDER_ASK]
         return self.consider_wake(slug, '\n'.join(prompt_lines + self.rules_lines(slug) + wake_footer()))
 
     def consider_quiet(self, slug, quiet_for, after=None):
@@ -1064,11 +1115,7 @@ class MotionPoller:
             return 'over budget'
         recent = self.api.recent(slug, limit=12)
         minutes = int(quiet_for.total_seconds() // 60)
-        lines = [f'<motion-wake motion="{slug}" reason="quiet">',
-                 f'Nothing has been said in this Motion for about {minutes} minutes. Its last turns, newest last:',
-                 '', *transcript_of(recent['turns']), '',
-                 'You might pick up a loose end, offer something you have been turning over, or just let it '
-                 'rest. Nobody is waiting on you.']
+        lines = quiet_opening(slug, minutes) + [*transcript_of(recent['turns']), '', QUIET_ASK]
         return self.consider_wake(slug, '\n'.join(lines + self.rules_lines(slug) + wake_footer()), after=after)
 
     def consider_wake(self, slug, prompt, after=None):

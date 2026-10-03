@@ -9,6 +9,7 @@ from . import views_admin
 urlpatterns = [
     path('motions/', views_motions.motions_page, name='motions'),
     path('motions/settings/', views_settings.settings_page, name='motion_settings'),
+    path('motions/<slug:slug>/rules/', views_settings.rules_page, name='motion_rules'),
     path('motions/manifest.webmanifest', views_motions.app_manifest, name='motion_app_manifest'),
     path('motions/sw.js', views_motions.app_service_worker, name='motion_app_sw'),
     path('motions/icon-<int:size>.png', views_motions.app_icon, name='motion_app_icon'),
@@ -35,6 +36,9 @@ urlpatterns = [
     path('motions/media/<str:sha256>.<str:ext>', views_motions.media_file, name='motion_media'),
     path('api/wikilinks/', views_motions.api_wikilinks, name='api_wikilinks'),
     path('api/mentions/<slug:name>/', views_motions.api_mentions, name='api_mentions'),
+    path('api/notices/<slug:name>/', views_motions.api_notices, name='api_notices'),
+    path('api/motions/recent/', views_motions.api_recent, name='api_motions_recent'),
+    path('api/search/', views_motions.api_search, name='api_search'),
     path('memory_lane/', views.memory_lane, name='memory_lane'),
     path('spy/', views.stream, name='spy'),
     path('api/recent_messages/', views.recent_messages, name='recent_messages'),

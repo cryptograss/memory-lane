@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>pickipedia chat</title>
 <link rel="manifest" href="/motions/manifest.webmanifest">
-<meta name="theme-color" content="#b8106b">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#b8106b" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1f1c20" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/png" sizes="192x192" href="/motions/icon-192.png">
 <link rel="apple-touch-icon" href="/motions/icon-180.png">
 <style>
@@ -13,6 +15,16 @@
     --bg: #fbfaf7; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b6560;
     --line: #e6e1d8; --accent: #b8106b; --accent-soft: #fbe7f1;
     --human: #2a5d9f; --agent: #b8106b; --code: #f3efe8; --mention: #fff3c4;
+    --hover: #f6f3ee; --warn-ink: #7a4b00; --warn-bg: #ffe9b0; --dot-edge: #d6cfc2; --err: #b3261e;
+  }
+  /* Dark, when the system is: the same tokens, night colours. */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161417; --panel: #1f1c20; --ink: #ece7e1; --muted: #a39b93;
+      --line: #36313a; --accent: #ef5aa6; --accent-soft: #3a1a2b;
+      --human: #86b4f0; --agent: #ef5aa6; --code: #29252c; --mention: #4a3f12;
+      --hover: #262228; --warn-ink: #ffd27a; --warn-bg: #3b2c08; --dot-edge: #4d4652; --err: #ff8a80;
+    }
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -47,11 +59,22 @@
     display: block; padding: 9px 16px; text-decoration: none; color: inherit;
     border-left: 3px solid transparent;
   }
-  nav a.motion:hover { background: #f6f3ee; }
+  nav a.motion:hover { background: var(--hover); }
   nav a.motion.active { background: var(--accent-soft); border-left-color: var(--accent); }
   nav a.motion .title { font-weight: 600; display: flex; align-items: center; gap: 8px; }
   nav a.motion .meta { font-size: 12px; color: var(--muted); }
   /* Someone typing or an agent at work: their name pulses where the Motion is listed. */
+  /* What's been happening everywhere, under the list; folds away. */
+  #recent { border-top: 1px solid var(--line); margin-top: 8px; padding: 6px 0 12px; font-size: 12.5px; }
+  #recent summary { padding: 4px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+                    color: var(--muted); cursor: pointer; list-style: none; }
+  #recent summary::before { content: '▸ '; }
+  #recent[open] summary::before { content: '▾ '; }
+  #recent .ev { display: block; padding: 4px 16px; color: var(--muted); text-decoration: none; line-height: 1.35; }
+  #recent .ev:hover { background: var(--hover); }
+  #recent .ev b { color: var(--ink); font-weight: 600; }
+  #recent .ev .txt { display: block; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #recent .ev time { float: right; margin-left: 6px; }
   nav .nm.live { color: var(--ink); font-weight: 600; animation: pulse 1.2s ease-in-out infinite; }
   /* Drag the pane's edge to size it; the width is remembered in this browser. */
   #grip { width: 5px; margin-left: -3px; flex: none; cursor: col-resize; position: relative; z-index: 1; }
@@ -76,6 +99,7 @@
   #renameForm input { font-size: 18px; font-weight: 600; }
   .motion-head .desc { color: var(--muted); margin: 0 0 6px; }
   .motion-head .meta { font-size: 12px; color: var(--muted); }
+  .motion-head .meta a { color: var(--muted); }
   .motion-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
 
   .turn { padding: 12px 0 12px 10px; margin-left: -10px; border-top: 1px solid var(--line); border-left: 3px solid transparent; }
@@ -111,7 +135,7 @@
 
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
   header .auth { font-size: 13px; color: var(--muted); }
-  header .preview { font-size: 12px; font-weight: 600; color: #7a4b00; background: #ffe9b0; border-radius: 4px; padding: 1px 8px; }
+  header .preview { font-size: 12px; font-weight: 600; color: var(--warn-ink); background: var(--warn-bg); border-radius: 4px; padding: 1px 8px; }
   header .auth a { color: var(--muted); }
   #footer { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); }
   /* Up and down a message at a time, at the right of the thread. */
@@ -121,6 +145,42 @@
                  color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08);
                  display: inline-flex; align-items: center; justify-content: center; padding: 0; }
   #jump button.human { color: var(--human); font-size: 12px; gap: 1px; }
+  /* A third pair, for what's for you (mentions of you, answers to you), once you're someone. */
+  #jump button.forme { display: none; color: var(--accent); font-size: 12px; }
+  body.has-me #jump { grid-template-columns: auto auto auto; }
+  body.has-me #jump button.forme { display: inline-flex; }
+  #toBottom { display: none; position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% + 12px);
+              border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 16px;
+              padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  #toBottom.on { display: block; }
+  #toBottom:hover { color: var(--accent); border-color: var(--accent); }
+  .turn.for-me { border-left-color: var(--accent); }
+  .turn.flash { animation: flash 2.4s ease-out; }
+  @keyframes flash { from { background: var(--mention); } to { background: transparent; } }
+  /* Search: a panel over the thread, at the right. */
+  #searchBtn { border: 1px solid var(--line); background: var(--panel); color: var(--muted); border-radius: 14px;
+               padding: 1px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+  #searchBtn:hover { color: var(--accent); border-color: var(--accent); }
+  #search { position: fixed; top: 41px; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--panel);
+            border-left: 1px solid var(--line); box-shadow: -4px 0 18px rgba(0,0,0,.12); z-index: 20;
+            display: flex; flex-direction: column; }
+  #search[hidden] { display: none; }
+  #search .bar { display: flex; gap: 6px; padding: 10px; border-bottom: 1px solid var(--line); }
+  #search input { flex: 1; min-width: 0; font: inherit; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px;
+                  background: var(--bg); color: var(--ink); }
+  #search select, #search button { font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 6px;
+                                   background: var(--panel); color: var(--ink); }
+  #search button { cursor: pointer; padding: 0 9px; }
+  #qresults { overflow-y: auto; flex: 1; }
+  #qresults .hit { display: block; padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--muted);
+                   text-decoration: none; font-size: 12.5px; }
+  #qresults .hit:hover { background: var(--hover); }
+  #qresults .hit b { color: var(--ink); }
+  #qresults .hit .txt { display: block; color: var(--ink); font-size: 13.5px; margin-top: 2px; }
+  #qresults mark { background: var(--mention); color: inherit; border-radius: 2px; }
+  #qresults .note { padding: 12px; color: var(--muted); font-size: 13px; }
+  #notify { border: 0; background: none; cursor: pointer; font-size: 15px; padding: 0 2px; color: var(--muted); }
+  #notify[hidden] { display: none; }
   #jump button.human svg { width: 11px; height: 11px; }
   #jump button:hover { color: var(--accent); border-color: var(--accent); }
   /* Where a session's context was compacted: one line, its summary on demand. */
@@ -182,7 +242,7 @@
                text-align: left; color: var(--ink); display: flex; gap: 8px; width: 100%; align-items: baseline; }
   .step-head code { font-size: 12px; background: var(--code); padding: 0 5px; border-radius: 4px; color: var(--muted); flex: none; }
   .step-head .sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .step.err .step-head code { color: #b3261e; }
+  .step.err .step-head code { color: var(--err); }
   .step-detail { display: none; margin: 4px 0 10px; }
   .step.open .step-detail { display: block; }
   .step-detail .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 6px 0 2px; }
@@ -198,7 +258,7 @@
   body.only-mine .work { display: none; }
   /* An agent's choices not to speak: small dots, side by side. */
   .quiet { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 4px -10px; padding: 4px 13px; }
-  .quiet .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); border: 1px solid #d6cfc2;
+  .quiet .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); border: 1px solid var(--dot-edge);
                 cursor: pointer; padding: 0; }
   .quiet .dot:hover, .quiet .dot.on { background: var(--agent); border-color: var(--agent); }
   /* The runner's quick screen let this pass; the agent itself never looked. */
@@ -283,17 +343,29 @@
   {% if preview_label %}<span class="preview" title="A branch's code, not production; see the label for which record">{{ preview_label }}</span>{% endif %}
   <span class="me">viewing as <select id="me"><option value="">nobody</option></select></span>
   <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
+  <button id="searchBtn" type="button" title="Search what was said (/)">⌕ search</button>
+  <button id="notify" type="button" hidden aria-label="Notifications"></button>
   <span class="auth" id="auth"></span>
   <span class="status" id="status">connecting…</span>
   <button id="menu" type="button" aria-label="Menu" aria-expanded="false">☰</button>
 </header>
 <div id="locked"></div>
+<div id="search" hidden role="search">
+  <div class="bar">
+    <input id="q" type="search" placeholder="Search what was said" aria-label="Search what was said" autocomplete="off">
+    <select id="qscope" aria-label="Where"><option value="here">this Mood</option><option value="all">all Moods</option></select>
+    <button type="button" id="qclose" aria-label="Close search">close</button>
+  </div>
+  <div id="qresults"></div>
+</div>
 <div class="layout">
-  <nav id="nav"><div class="label">Moods</div></nav>
+  <nav id="nav"><div id="moodList"><div class="label">Moods</div></div>
+    <details id="recent"><summary>Recent changes</summary><div id="recentList"></div></details></nav>
   <div id="grip" title="Drag to resize; double-click to reset"></div>
   <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div>
     <div id="footer">
-    <div id="jump"><button type="button" class="human" id="jumpHumanUp" title="previous message from a person" aria-label="previous message from a person">↑</button><button type="button" id="jumpUp" title="previous message" aria-label="previous message">↑</button><button type="button" class="human" id="jumpHumanDown" title="next message from a person" aria-label="next message from a person">↓</button><button type="button" id="jumpDown" title="next message" aria-label="next message">↓</button></div>
+    <div id="jump"><button type="button" class="human" id="jumpHumanUp" title="previous message from a person" aria-label="previous message from a person">↑</button><button type="button" id="jumpUp" title="previous message" aria-label="previous message">↑</button><button type="button" class="forme" id="jumpMeUp" title="previous message for you: a mention, or an answer" aria-label="previous message for you">@↑</button><button type="button" class="human" id="jumpHumanDown" title="next message from a person" aria-label="next message from a person">↓</button><button type="button" id="jumpDown" title="next message" aria-label="next message">↓</button><button type="button" class="forme" id="jumpMeDown" title="next message for you: a mention, or an answer" aria-label="next message for you">@↓</button></div>
+    <button type="button" id="toBottom">↓ newest</button>
     <div id="typing"></div>
     <div id="tasks"></div>
     <div id="activity"><span class="dot"></span><span id="activityText"></span></div>
@@ -378,6 +450,8 @@
   function setTitle() {
     const n = Object.values(badges).reduce((a, b) => a + b, 0);
     document.title = (n ? '(' + n + ') ' : '') + baseTitle;
+    // The installed app's icon carries the count too, where the system allows.
+    try { if (navigator.setAppBadge) (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()); } catch (e) {}
   }
 
   function renderNav() {
@@ -386,7 +460,7 @@
         <div class="title">${esc(m.title)}${badges[m.slug] ? `<span class="badge">${badges[m.slug]}</span>` : ''}</div>
         <div class="meta">${m.participants.map(n => `<span class="nm" data-who="${esc(n)}">${esc(n)}</span>`).join(', ') || '—'} · ${m.message_count} · ${ago(m.last_at)}</div>
       </a>`).join('');
-    nav.innerHTML = '<div class="label">Moods</div>' + items;
+    document.getElementById('moodList').innerHTML = '<div class="label">Moods</div>' + items;
     markLive();
   }
 
@@ -423,6 +497,7 @@
       [...names].sort().map(n => `<option value="${esc(n)}" ${n === me ? 'selected' : ''}>${esc(n)}</option>`));
     meSelect.innerHTML = opts.join('');
     document.body.classList.toggle('has-me', !!me);
+    renderBell();
     if (!me) { onlyMine.checked = false; document.body.classList.remove('only-mine'); }
   }
 
@@ -439,7 +514,8 @@
       <form id="renameForm" hidden><input id="renameTitle" maxlength="200" aria-label="Title">
         <textarea id="renameDesc" rows="2" maxlength="2000" aria-label="Description" placeholder="What it's about (optional)"></textarea>
         <span><button type="submit">Rename</button> <button type="button" id="renameCancel">Cancel</button></span></form>
-      <div class="meta">${block ? block + ' · ' : ''}${m.message_count} messages in the record</div>
+      <div class="meta">${block ? block + ' · ' : ''}${m.message_count} messages in the record ·
+        <a href="/motions/${encodeURIComponent(m.slug)}/rules/" title="What magent is told here: this Mood's rules, its settings, what each wake says">rules</a></div>
       <div class="people" id="people">${m.participants.map(n =>
         `<span class="who ${human[n] ? 'human' : 'agent'}" data-who="${esc(n)}">${icon(n)}${esc(n)}</span>`).join('')}</div>
     </div><button id="earlier" type="button" hidden>Load earlier</button><div id="turns"></div>`;
@@ -456,6 +532,9 @@
     el.className = 'turn ' + (t.is_human ? 'human' : 'agent') + (cont ? ' cont' : '') + (isNew ? ' new' : '');
     if (cont) el.title = t.sender + ' · ' + stamp(t.created_at);
     el.dataset.mentions = JSON.stringify(t.mentions || []);
+    el.dataset.id = t.id;
+    el.id = 'm-' + t.id;
+    if (forMe.has(t.id)) el.classList.add('for-me');
     el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${esc(t.sender)}</span><time datetime="${t.created_at}">${stamp(t.created_at)}</time>${how(t)}</div><div class="body">${t.html}</div>`;
     markTurn(el, t.mentions || []);
     return el;
@@ -567,7 +646,8 @@
   // --- up and down a message at a time --------------------------------------
   function jump(dir, only = '') {
     const top = main.getBoundingClientRect().top;
-    const turns = [...document.querySelectorAll('#turns .turn' + only)];
+    const sel = only ? only.split(',').map(c => '#turns .turn' + c.trim()).join(', ') : '#turns .turn';
+    const turns = [...document.querySelectorAll(sel)];
     const at = t => t.getBoundingClientRect().top - top;
     const target = dir > 0 ? turns.find(t => at(t) > 16) : turns.reverse().find(t => at(t) < -16);
     if (target) main.scrollTo({ top: main.scrollTop + at(target) - 8, behavior: 'smooth' });
@@ -580,6 +660,8 @@
   }
   document.getElementById('jumpUp').addEventListener('click', () => jump(-1));
   document.getElementById('jumpDown').addEventListener('click', () => jump(1));
+  document.getElementById('jumpMeUp').addEventListener('click', () => jump(-1, '.mentions-me, .for-me'));
+  document.getElementById('jumpMeDown').addEventListener('click', () => jump(1, '.mentions-me, .for-me'));
   for (const [id, dir] of [['jumpHumanUp', -1], ['jumpHumanDown', 1]]) {
     const b = document.getElementById(id);
     b.innerHTML = ICONS.human + b.textContent;
@@ -675,16 +757,25 @@
     renderNav();
   }
 
-  // Unread mentions of `me` in other Moods. Asked every 30 s, not every poll,
-  // and only for what's new since the last ask: the first ask looks back to
-  // the oldest Mood seen (else a week), which costs the server a scan.
-  const BADGE_MS = 30000;
+  // --- notices: mentions of `me`, and agents' answers to `me` ---------------
+  // Badges on each Mood count what's unread there; with notifications on, a
+  // new one also notifies (when this page is hidden, or it's in another Mood).
+  // Asked every 15 s, and only for what's new since the last ask: the first
+  // ask looks back to the oldest Mood seen (else a week), a scan on the server.
+  const NOTICE_MS = 15000;
+  const pageOpened = new Date().toISOString();
   let badgeCursor = null, badgeAt = 0;
-  const counted = new Set();  // mentions already counted, by id
-  function resetBadges() { badges = {}; badgeCursor = null; badgeAt = 0; counted.clear(); }
+  const counted = new Set();  // notices already seen, by turn id
+  const forMe = new Set();    // answers to me, marked in the thread
+  let unread = {};            // slug -> Map(turn id -> created_at)
+  function resetBadges() { badges = {}; unread = {}; badgeCursor = null; badgeAt = 0; counted.clear(); forMe.clear(); }
+  function countBadges() {
+    badges = {};
+    for (const [slug, ids] of Object.entries(unread)) if (ids.size) badges[slug] = ids.size;
+  }
   async function refreshBadges(force) {
     if (!me) { badges = {}; renderNav(); setTitle(); return; }
-    if (!force && Date.now() - badgeAt < BADGE_MS) return;
+    if (!force && Date.now() - badgeAt < NOTICE_MS) return;
     badgeAt = Date.now();
     const seen = Object.values(lastSeen).sort();
     const since = badgeCursor || seen[0] || new Date(Date.now() - 7 * 86400 * 1000).toISOString();
@@ -692,24 +783,179 @@
     // and a clock a few minutes off still misses nothing.
     const next = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     try {
-      const r = await fetch('/api/mentions/' + encodeURIComponent(me) + '/?since=' + encodeURIComponent(since) + '&limit=200');
+      const r = await fetch('/api/notices/' + encodeURIComponent(me) + '/?since=' + encodeURIComponent(since));
       if (!r.ok) return;
-      for (const m of (await r.json()).mentions) {
-        if (counted.has(m.turn.id)) continue;
-        counted.add(m.turn.id);
-        if (m.motion === current) continue;
-        const floor = lastSeen[m.motion];
-        if (!floor || m.turn.created_at > floor) badges[m.motion] = (badges[m.motion] || 0) + 1;
+      const notices = (await r.json()).notices;
+      // A Mood opened since this page loaded: list it first, so its badge
+      // has somewhere to go and its notification its title.
+      if (notices.some(n => !motions.some(m => m.slug === n.motion))) await loadMotions();
+      for (const n of notices) {
+        if (counted.has(n.turn.id)) continue;
+        counted.add(n.turn.id);
+        if (n.kind === 'answer') {
+          forMe.add(n.turn.id);
+          const el = document.getElementById('m-' + n.turn.id);
+          if (el) el.classList.add('for-me');
+        }
+        const floor = lastSeen[n.motion];
+        if (floor && n.turn.created_at <= floor) continue;  // seen already
+        const looking = n.motion === current && !document.hidden;
+        if (!looking) (unread[n.motion] = unread[n.motion] || new Map()).set(n.turn.id, n.turn.created_at);
+        if (!looking && n.turn.created_at > pageOpened) notify(n);
       }
       badgeCursor = next;
     } catch (e) {}
-    renderNav(); setTitle();
+    countBadges(); renderNav(); setTitle();
   }
+
+  // Notifications: off until asked for, here, by this browser.
+  const bell = document.getElementById('notify');
+  let granted = false;  // what the browser said when asked (some report permission late)
+  function notifying() {
+    return 'Notification' in window && (granted || Notification.permission === 'granted') && store.get('notify', false);
+  }
+  function renderBell() {
+    bell.hidden = !me || !('Notification' in window);
+    bell.textContent = notifying() ? '🔔' : '🔕';
+    bell.title = notifying() ? 'Notifying you of mentions and answers (click to stop)'
+      : 'Notify me of mentions, and when an agent answers me';
+  }
+  bell.addEventListener('click', async () => {
+    if (notifying()) store.set('notify', false);
+    else if ((await Notification.requestPermission()) === 'granted') { granted = true; store.set('notify', true); }
+    renderBell();
+  });
+  async function notify(n) {
+    if (!notifying()) return;
+    const mood = motions.find(m => m.slug === n.motion);
+    const title = n.kind === 'answer' ? `${n.turn.sender} answered you` : `${n.turn.sender} mentioned you`;
+    const options = { body: (mood ? mood.title + ': ' : '') + n.turn.text.slice(0, 160), tag: n.turn.id,
+                      icon: '/motions/icon-192.png', data: { slug: n.motion, id: n.turn.id } };
+    try {
+      // Through the service worker: Android allows no other way.
+      const reg = await navigator.serviceWorker.getRegistration('/motions/');
+      if (reg) { await reg.showNotification(title, options); return; }
+    } catch (e) {}
+    try { new Notification(title, options); } catch (e) {}
+  }
+
+  // --- search: what was said, here or everywhere ------------------------------
+  const searchBox = document.getElementById('search');
+  const qInput = document.getElementById('q');
+  const qScope = document.getElementById('qscope');
+  const qResults = document.getElementById('qresults');
+  let qTimer = null, qSeq = 0;
+  function openSearch() {
+    searchBox.style.top = document.querySelector('header').getBoundingClientRect().bottom + 'px';  // just below it
+    searchBox.hidden = false;
+    qInput.focus(); qInput.select();
+    if (qInput.value.trim().length >= 2) runSearch();
+  }
+  function closeSearch() { searchBox.hidden = true; }
+  function marked(text, q) {
+    const safe = esc(text), needle = esc(q);
+    const at = safe.toLowerCase().indexOf(needle.toLowerCase());
+    return at < 0 ? safe : safe.slice(0, at) + '<mark>' + safe.slice(at, at + needle.length) + '</mark>' + safe.slice(at + needle.length);
+  }
+  async function runSearch() {
+    const q = qInput.value.trim(), seq = ++qSeq;
+    if (q.length < 2) { qResults.innerHTML = '<div class="note">Two letters at least.</div>'; return; }
+    qResults.innerHTML = '<div class="note">Searching…</div>';
+    const here = qScope.value === 'here' && current;
+    try {
+      const r = await fetch('/api/search/?q=' + encodeURIComponent(q) + (here ? '&motion=' + encodeURIComponent(current) : ''));
+      const { hits } = await r.json();
+      if (seq !== qSeq) return;  // a newer search is under way
+      qResults.innerHTML = hits.map(h => `<a class="hit" href="/motions/${encodeURIComponent(h.motion)}/#m-${esc(h.id)}" data-slug="${esc(h.motion)}" data-id="${esc(h.id)}">`
+        + `<b>${esc(h.sender)}</b>${here ? '' : ' in ' + esc(h.title)} · ${esc(stamp(h.created_at))}<span class="txt">${marked(h.text, q)}</span></a>`).join('')
+        || `<div class="note">Nothing said ${here ? 'in this Mood' : 'in any Mood'} contains “${esc(q)}”.</div>`;
+    } catch (e) { if (seq === qSeq) qResults.innerHTML = '<div class="note">Search failed; try again.</div>'; }
+  }
+  qInput.addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(runSearch, 300); });
+  qScope.addEventListener('change', runSearch);
+  document.getElementById('searchBtn').addEventListener('click', () => (searchBox.hidden ? openSearch() : closeSearch()));
+  document.getElementById('qclose').addEventListener('click', closeSearch);
+  document.addEventListener('keydown', e => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+    if (e.key === '/' && !typing) { e.preventDefault(); openSearch(); }
+    else if (e.key === 'Escape' && !searchBox.hidden) closeSearch();
+  });
+  qResults.addEventListener('click', async e => {
+    const a = e.target.closest('a.hit');
+    if (!a) return;
+    e.preventDefault();
+    if (matchMedia('(max-width: 720px)').matches) closeSearch();
+    if (a.dataset.slug !== current) await open(a.dataset.slug, true);
+    if (!(await reveal(a.dataset.id))) showError('That message is further back than this page reaches.');
+  });
+
+  // --- recent changes, under the Moods list ---------------------------------
+  const RECENT_MS = 30000;
+  const recentBox = document.getElementById('recent');
+  const recentList = document.getElementById('recentList');
+  let recentAt = 0;
+  recentBox.open = store.get('recentOpen', false);
+  recentBox.addEventListener('toggle', () => { store.set('recentOpen', recentBox.open); if (recentBox.open) refreshRecent(true); });
+  const VERBS = { said: '', answered: '', renamed: 'renamed', set: 'changed', opened: 'opened' };
+  async function refreshRecent(force) {
+    if (!recentBox.open || (!force && Date.now() - recentAt < RECENT_MS)) return;
+    recentAt = Date.now();
+    try {
+      const r = await fetch('/api/motions/recent/');
+      if (!r.ok) return;
+      const { events } = await r.json();
+      recentList.innerHTML = events.map(e => {
+        const head = e.kind === 'opened'
+          ? `<b>${esc(e.title)}</b> opened`
+          : `${e.who ? `<b>${esc(e.who)}</b> ` : ''}${VERBS[e.kind] ? esc(VERBS[e.kind]) + ' ' : ''}in ${esc(e.title)}`;
+        return `<a class="ev" href="/motions/${encodeURIComponent(e.motion || '')}/" data-slug="${esc(e.motion || '')}" data-id="${esc(e.id || '')}">`
+          + `<time datetime="${esc(e.at)}">${esc(ago(e.at))}</time>${head}`
+          + (e.kind === 'opened' ? '' : `<span class="txt">${esc(e.text)}</span>`) + '</a>';
+      }).join('') || '<div class="ev">Nothing in the last day.</div>';
+    } catch (e) {}
+  }
+  recentList.addEventListener('click', e => {
+    const a = e.target.closest('a.ev');
+    if (!a || !a.dataset.slug) return;
+    e.preventDefault();
+    document.body.classList.remove('menu-open');
+    openAndReveal(a.dataset.slug, a.dataset.id || null);
+  });
 
   function touch(slug) {
     lastSeen[slug] = new Date().toISOString();
     store.set('lastSeen', lastSeen);
+    if (unread[slug]) delete unread[slug];
     if (badges[slug]) { delete badges[slug]; renderNav(); setTitle(); }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && current) { touch(current); refreshBadges(true); }
+  });
+
+  // Bring a message into view, reaching back a few pages if need be.
+  async function reveal(id) {
+    if (!id) return false;
+    for (let i = 0; i < 12; i++) {
+      const el = document.getElementById('m-' + id);
+      if (el) {
+        el.scrollIntoView({ block: 'center' });
+        el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+        return true;
+      }
+      const earlier = document.getElementById('earlier');
+      if (!earlier || earlier.hidden) return false;
+      await loadEarlier();
+    }
+    return false;
+  }
+  async function openAndReveal(slug, id) {
+    if (slug !== current) await open(slug, true);
+    await reveal(id);
+  }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', e => {
+      if (e.data && e.data.open) openAndReveal(e.data.open, e.data.id);
+    });
   }
 
   // What's been drawn for each Mood this visit: switching back puts it back at
@@ -734,6 +980,9 @@
     gen++;
     current = slug;
     if (push) history.pushState({ slug }, '', '/motions/' + encodeURIComponent(slug) + '/');
+    // What was waiting for me here, to bring into view once it's drawn.
+    const waiting = [...(unread[slug] || new Map()).entries()].sort((a, b) => (a[1] < b[1] ? -1 : 1))[0];
+    newBelow = 0;
     touch(slug);
     renderNav();
     // Nothing of the Mood just left may linger: not its agent's work, its
@@ -756,6 +1005,8 @@
       inner.innerHTML = '<div class="empty">Loading…</div>';
       await poll(true);
     }
+    renderToBottom();
+    if (waiting) await reveal(waiting[0]);
   }
 
   let firstId = null;      // the oldest item shown, for ?before=
@@ -843,11 +1094,32 @@
       renderItems(items, turnsEl, !full);
       lastId = items[items.length - 1].v.id;
       if (full || nearBottom) main.scrollTop = main.scrollHeight;
-      touch(current);
+      else if (!full) { newBelow += data.turns.length; }
+      renderToBottom();
+      // Seen only if someone's looking: an answer that lands while this page is
+      // hidden is still news, and is told as a notice.
+      if (!document.hidden) touch(current);
       if (!full && data.turns.length) { await loadMotions(); }
     }
-    await refreshBadges();
+    // An agent just finished here: ask now, not in 15 s, whether it answered me.
+    const finished = wasBusy && !act;
+    wasBusy = !!act;
+    await refreshBadges(finished);
+    refreshRecent(false);
   }
+  let wasBusy = false;
+
+  // --- back to the newest -----------------------------------------------------
+  const toBottom = document.getElementById('toBottom');
+  let newBelow = 0;  // turns that arrived while scrolled up
+  function renderToBottom() {
+    const far = main.scrollHeight - main.scrollTop - main.clientHeight > 400;
+    if (!far) newBelow = 0;
+    toBottom.classList.toggle('on', far);
+    toBottom.textContent = newBelow ? `↓ ${newBelow} new` : '↓ newest';
+  }
+  main.addEventListener('scroll', renderToBottom, { passive: true });
+  toBottom.addEventListener('click', () => main.scrollTo({ top: main.scrollHeight, behavior: 'smooth' }));
 
   // --- what an agent is doing: read from the record, ticking locally ----------
   const activityEl = document.getElementById('activity');
@@ -1249,6 +1521,8 @@
     const slug = initialSlug || (motions[0] && motions[0].slug);
     if (!slug) { inner.innerHTML = '<div class="empty">No Moods yet.</div>'; setStatus('live', 'live'); return; }
     await open(slug, false);
+    const linked = location.hash.match(/^#m-([0-9a-f-]{36})$/);  // from a notification
+    if (linked) await reveal(linked[1]);
     setInterval(() => poll(false), POLL_MS);
   })();
   // Installable as an app: the browser wants a service worker (it keeps nothing).
