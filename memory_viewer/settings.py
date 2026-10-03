@@ -219,6 +219,10 @@ MOTION_RUNNER_KEYS = dict(
 # Moods when a server is being redeployed, with this key from the vault
 # (memory_lane_deploy_key). Unset, nobody can.
 MOTION_DEPLOY_KEY = os.getenv('MOTION_DEPLOY_KEY', '')
+# Voice (conversations/services/voice.py): ElevenLabs, for voice memos
+# (speech to text) and reading messages aloud. Unset: no voice, and the
+# page offers none.
+ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY', '')
 
 # Who may kick, ban, scram (AZ5) and lift, with their SSH key
 # (conversations/views_admin.py): "justin,skyler". Unset, nobody can.

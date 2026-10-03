@@ -13,7 +13,9 @@ text, an image pasted twice is stored once, and every view already knows
 how to show a link.
 
 Only PNG, JPEG, GIF and WebP, decided by their first bytes. SVG is never
-accepted: it can carry script.
+accepted: it can carry script. Audio -- voice memos, messages read aloud --
+only where it's asked for (store(..., audio=True)), never lifted from a
+transcript.
 """
 
 import base64
@@ -23,6 +25,7 @@ import json
 import re
 
 MAX_BYTES = 8 * 1024 * 1024
+MAX_AUDIO_BYTES = 25 * 1024 * 1024
 
 _SIGNATURES = (
     (b'\x89PNG\r\n\x1a\n', 'image/png'),
@@ -31,6 +34,23 @@ _SIGNATURES = (
     (b'GIF89a', 'image/gif'),
 )
 MEDIA_PATH = re.compile(r'/motions/media/([0-9a-f]{64})\.(png|jpg|gif|webp)')
+AUDIO_PATH = re.compile(r'/motions/media/([0-9a-f]{64})\.(webm|ogg|m4a|mp3|wav)')
+
+
+def sniff_audio(data):
+    """The audio type these bytes really are, or None: what browsers record
+    (WebM, Ogg, MP4/AAC on Safari) and what a voice comes back as (MP3)."""
+    if data.startswith(b'\x1a\x45\xdf\xa3'):
+        return 'audio/webm'
+    if data.startswith(b'OggS'):
+        return 'audio/ogg'
+    if data[4:8] == b'ftyp':
+        return 'audio/mp4'
+    if data.startswith(b'ID3') or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0):
+        return 'audio/mpeg'
+    if data[:4] == b'RIFF' and data[8:12] == b'WAVE':
+        return 'audio/wav'
+    return None
 
 
 def sniff(data):
@@ -43,13 +63,14 @@ def sniff(data):
     return None
 
 
-def store(data, added_by=None):
-    """The Media for these bytes, stored if new; None if not an image we take."""
+def store(data, added_by=None, audio=False):
+    """The Media for these bytes, stored if new; None if not an image (or,
+    with audio=True, a sound) we take."""
     from conversations.models import Media
 
-    if not data or len(data) > MAX_BYTES:
+    if not data or len(data) > (MAX_AUDIO_BYTES if audio else MAX_BYTES):
         return None
-    mime = sniff(data)
+    mime = sniff_audio(data) if audio else sniff(data)
     if mime is None:
         return None
     sha = hashlib.sha256(data).hexdigest()

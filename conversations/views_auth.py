@@ -469,3 +469,86 @@ def api_archive(request, slug):
         return JsonResponse({'error': str(e) or 'expected {"archived": true|false}'}, status=400)
     return JsonResponse({'slug': motion.slug, 'archived': archived})
 
+
+VOICE_PER_MINUTE = 6
+
+
+@require_POST
+def api_memo(request, slug):
+    """A voice memo, as the device's person: the body is the recording.
+
+    Stored like an image (by its bytes' hash), then transcribed. Answers
+    with the audio's URL and the transcript, for the person to look over
+    and send -- nothing is posted until they do.
+    """
+    from .services import media, voice
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = motion_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to write'}, status=401)
+    motion = get_object_or_404(Motion, slug=slug)
+    if not voice.enabled():
+        return JsonResponse({'error': "voice isn't set up here (no ElevenLabs key)"}, status=503)
+    if len(request.body) > media.MAX_AUDIO_BYTES:
+        return JsonResponse({'error': f'larger than {media.MAX_AUDIO_BYTES // (1024 * 1024)} MB'}, status=413)
+    if not _under_limit(f'voice:{device.pk}', VOICE_PER_MINUTE):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    stored = media.store(request.body, added_by=device.entity, audio=True)
+    if stored is None:
+        return JsonResponse({'error': 'not a recording this understands (WebM, Ogg, MP4, MP3 or WAV)'}, status=400)
+    try:
+        heard = voice.transcribe(stored, motion, device.entity_id)
+    except voice.VoiceError as e:
+        return JsonResponse({'error': str(e), 'url': stored.url}, status=e.status)
+    return JsonResponse({'url': stored.url, **heard}, status=201)
+
+
+@require_POST
+def api_speak(request, slug, message_id):
+    """One message read aloud, for the device's person: {"url"} of the audio.
+
+    Made the first time anyone asks and kept, so a message is paid for once
+    per voice and direction. See services/voice.py for how agents direct it.
+    """
+    from .services import voice
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = motion_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to hear messages read aloud'}, status=401)
+    message = Message.objects.filter(id=_uuid_or_none(message_id), motion_id=slug).first()
+    if message is None:
+        return JsonResponse({'error': 'no such message in this Mood'}, status=404)
+    if not _under_limit(f'voice:{device.pk}', VOICE_PER_MINUTE):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    try:
+        return JsonResponse({'url': voice.speak(message, device.entity_id)})
+    except voice.VoiceError as e:
+        return JsonResponse({'error': str(e)}, status=e.status)
+
+
+@require_GET
+def api_voices(request):
+    """The voices there are to choose from (for a ```voice block, or the house voice), and today's spend."""
+    from .services import settings as knobs
+    from .services import voice
+    if not voice.enabled():
+        return JsonResponse({'enabled': False, 'voices': []})
+    try:
+        listed = voice.voices()
+    except voice.VoiceError as e:
+        return JsonResponse({'error': str(e)}, status=e.status)
+    return JsonResponse({'enabled': True, 'model': voice.TTS_MODEL, 'house_voice': knobs.global_value('voice'),
+                         'spent_today_usd': voice.spent_today(),
+                         'usd_per_day': knobs.global_value('voice_usd_per_day'), 'voices': listed})
+
+
+def _uuid_or_none(value):
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        return None
+
