@@ -31,7 +31,7 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 from .models import ConversationParticipant, Message, Motion, MotionSession
 
@@ -220,3 +220,40 @@ def api_held(request, slug):
         return JsonResponse({'error': 'expected {"reason": ..., "until": <iso> or null}'}, status=400)
     holds = set_held(slug, agent, reason, until)
     return JsonResponse({'held': holds.get(agent)})
+
+
+# --- servers: whether each answers, and their redeploys -------------------------
+
+@csrf_exempt  # authenticated by the deploy key, not a browser session
+@require_POST
+def api_deploys(request):
+    """A deploy script says a server's redeploy started, finished or failed.
+
+    Body: {"server": "hunter", "state": "started"|"finished"|"failed",
+           "commit": "<sha>", "by": "<who ran it>", "note": "..."}.
+    Announced in the Moods it concerns (services/servers.py).
+    """
+    from .services import servers
+
+    key = getattr(settings, 'MOTION_DEPLOY_KEY', '')
+    if not key:
+        return JsonResponse({'error': 'no deploy key is configured'}, status=503)
+    if not hmac.compare_digest(request.headers.get('Authorization', '').encode(), f'Bearer {key}'.encode()):
+        return JsonResponse({'error': 'unauthorized'}, status=401)
+    try:
+        body = json.loads(request.body)
+        name, state = str(body['server']), str(body['state'])
+    except (ValueError, KeyError, TypeError):
+        return JsonResponse({'error': 'expected {"server": ..., "state": ...}'}, status=400)
+    if name not in servers.NAMES or state not in servers.STATES:
+        return JsonResponse({'error': f'server: one of {servers.NAMES}; state: one of {servers.STATES}'}, status=400)
+    told = servers.record_deploy(name, state, commit=str(body.get('commit') or ''), by=str(body.get('by') or ''),
+                                 note=str(body.get('note') or ''))
+    return JsonResponse({'server': name, 'state': state, 'moods': told}, status=201)
+
+
+@require_GET
+def api_servers(request):
+    """Every server: whether it answers (checked at most once a minute), and its newest redeploy."""
+    from .services import servers
+    return JsonResponse({'servers': servers.status()})

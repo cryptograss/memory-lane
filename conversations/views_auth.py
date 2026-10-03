@@ -226,3 +226,133 @@ def api_rename(request, slug):
                  'to': {'title': motion.title, 'description': motion.description}},
     )
     return JsonResponse({'title': motion.title, 'description': motion.description})
+
+
+# --- your devices: a list, revoking one, renewing one by name -------------------
+
+def _device_payload(device, this):
+    state = motion_auth.device_state(device)
+    used = device.last_used_at or device.created_at
+    return {'id': str(device.id), 'label': device.label or '(unnamed)', 'signed_in_at': device.created_at.isoformat(),
+            'last_used_at': used.isoformat(), 'state': state,
+            'times_out_at': (used + motion_auth.DEVICE_IDLE_LIMIT).isoformat() if state == 'live' else None,
+            'this': this}
+
+
+@require_GET
+def api_devices(request):
+    """The signed-in person's devices: when each signed in, last wrote, and times out."""
+    from .models import Device
+    device = motion_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to see your devices'}, status=401)
+    mine = Device.objects.filter(entity=device.entity).order_by('-created_at')
+    return JsonResponse({'name': device.entity_id, 'idle_days': motion_auth.DEVICE_IDLE_LIMIT.days,
+                         'devices': [_device_payload(d, d.pk == device.pk) for d in mine]})
+
+
+@require_POST
+def api_device_revoke(request, device_id):
+    """Sign one of your own devices out, for good (a new login makes a new one)."""
+    from .models import Device
+    device = motion_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in first'}, status=401)
+    done = Device.objects.filter(pk=device_id, entity=device.entity, revoked_at__isnull=True).update(
+        revoked_at=timezone.now())
+    if not done:
+        return JsonResponse({'error': 'no such device of yours'}, status=404)
+    return JsonResponse({'revoked': str(device_id)})
+
+
+@csrf_exempt  # authenticated by the SSH signature, like enrolling
+@require_POST
+def api_renew(request):
+    """Bring a device back by its name, signed with your SSH key: `magenta.sh renew <name>`.
+
+    Body: {"challenge", "signature", "label"}; the signature is over the
+    challenge with purpose 'renew <label>', so it renews that one and no other.
+    """
+    import re
+    if len(request.body) > ENROLL_MAX_BYTES:
+        return JsonResponse({'error': 'too large'}, status=413)
+    if not _under_limit('enroll', ENROLL_PER_MINUTE):
+        return JsonResponse({'error': 'too many attempts; wait a minute'}, status=429)
+    try:
+        body = json.loads(request.body)
+        challenge, signature, label = body['challenge'], body['signature'], str(body['label']).strip()
+    except (ValueError, KeyError, AttributeError, TypeError):
+        return JsonResponse({'error': 'expected challenge, signature and label'}, status=400)
+    if not re.fullmatch(r'[^\n\r]{1,100}', label):
+        return JsonResponse({'error': 'a device name, on one line'}, status=400)
+    if not motion_auth.challenge_is_fresh(challenge):
+        return JsonResponse({'error': 'challenge expired; fetch a new one'}, status=400)
+    message = motion_auth.signed_message(challenge, motion_auth.origin_of(request), purpose=f'renew {label}')
+    name = motion_auth.signer_of(message, signature) or ''
+    entity = ThinkingEntity.objects.filter(name=name).first() if name else None
+    if entity is None:
+        return JsonResponse({'error': 'signature not accepted'}, status=403)
+    from .views_admin import locked_response
+    from .services import settings as knobs
+    if locked_response():
+        return locked_response()
+    if knobs.banned(name):
+        return JsonResponse({'error': 'barred for this name; ask an admin'}, status=403)
+    device = motion_auth.renew_device(entity, label)
+    if device is None:
+        return JsonResponse({'error': f'no device of yours named "{label}"; sign in with magenta.sh login'}, status=404)
+    return JsonResponse({'name': name, **_device_payload(device, False)})
+
+
+# --- attesting: a statement signed with your SSH key, in #general --------------
+
+GENERAL = 'general'
+ATTEST_MAX = 2000
+
+
+@csrf_exempt  # authenticated by the SSH signature
+@require_POST
+def api_attest(request):
+    """Post a statement signed with your SSH key into #general: `magenta.sh attest "<words>"`.
+
+    Body: {"challenge", "signature", "text"}; the signature is over
+    attest_message(challenge, origin, text). The record keeps exactly what
+    was signed, the signature and the key, so anyone can check it later with
+    ssh-keygen -Y verify, without memory-lane.
+    """
+    if len(request.body) > ENROLL_MAX_BYTES:
+        return JsonResponse({'error': 'too large'}, status=413)
+    if not _under_limit('enroll', ENROLL_PER_MINUTE):
+        return JsonResponse({'error': 'too many attempts; wait a minute'}, status=429)
+    try:
+        body = json.loads(request.body)
+        challenge, signature, text = body['challenge'], body['signature'], str(body['text'])
+    except (ValueError, KeyError, AttributeError, TypeError):
+        return JsonResponse({'error': 'expected challenge, signature and text'}, status=400)
+    text = text.replace('\x00', '').strip()
+    if not text or len(text) > ATTEST_MAX:
+        return JsonResponse({'error': f'a statement of 1 to {ATTEST_MAX} characters'}, status=400)
+    if not motion_auth.challenge_is_fresh(challenge):
+        return JsonResponse({'error': 'challenge expired; fetch a new one'}, status=400)
+    origin = motion_auth.origin_of(request).lower().rstrip('/')
+    message = motion_auth.attest_message(challenge, origin, text)
+    name = motion_auth.signer_of(message, signature) or ''
+    entity = ThinkingEntity.objects.filter(name=name).first() if name else None
+    if entity is None:
+        return JsonResponse({'error': 'signature not accepted'}, status=403)
+    from .views_admin import locked_response
+    from .services import settings as knobs
+    if locked_response():
+        return locked_response()
+    if knobs.banned(name):
+        return JsonResponse({'error': 'barred for this name; ask an admin'}, status=403)
+    general, _ = Motion.objects.get_or_create(slug=GENERAL, defaults={
+        'title': '#general', 'description': 'For everyone: what concerns us all, and statements signed with our keys.'})
+    if Message.objects.filter(motion=general, source_file='motion-attest', content__signature=signature).exists():
+        return JsonResponse({'error': 'already attested'}, status=409)
+    message_row = Message.objects.create(
+        id=uuid.uuid4(), sender=entity, motion=general, timestamp=int(time.time() * 1000), source_file='motion-attest',
+        content={'type': 'attestation', 'text': text, 'signed': message, 'signature': signature,
+                 'namespace': motion_auth.NAMESPACE, 'key': motion_auth.public_key_of(name)})
+    return JsonResponse({'id': str(message_row.id), 'motion': GENERAL,
+                         'url': request.build_absolute_uri(f'/motions/{GENERAL}/#m-{message_row.id}')}, status=201)

@@ -71,13 +71,16 @@ def api_motion_turns(request, slug):
         limit = max(1, min(int(request.GET['limit']), PAGE))
 
     names = known_names()
-    turns_out, step_msgs, quiet_out, thoughts_out, compactions_out = [], [], [], [], []
+    turns_out, step_msgs, quiet_out, thoughts_out, compactions_out, events_out = [], [], [], [], [], []
     for kind, msg, text in timeline(motion, after=after, before=before, limit=limit):
         if kind == 'turn':
             turns_out.append(turn_payload(msg, text, names))
         elif kind == 'thought':
             thoughts_out.append({'id': str(msg.id), 'sender': msg.sender_id,
                                  'created_at': msg.created_at.isoformat(), 'text': text})
+        elif kind == 'event':
+            events_out.append({'id': str(msg.id), 'created_at': msg.created_at.isoformat(),
+                               **{k: text.get(k) for k in ('type', 'server', 'state', 'commit', 'by', 'note', 'took')}})
         elif kind == 'compaction':
             compactions_out.append({'id': str(msg.id), 'session_id': str(msg.session_id or ''),
                                     'created_at': msg.created_at.isoformat(), 'html': render_html(text)})
@@ -88,8 +91,8 @@ def api_motion_turns(request, slug):
             step_msgs.append(msg)
     images = step_images(step_msgs)
     steps_out = [{**step_payload(m), 'images': images.get(str(m.id), [])} for m in step_msgs]
-    first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out + compactions_out],
-                default=None)
+    first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out + compactions_out
+                 + events_out], default=None)
     agents = agents_in(motion)
     return JsonResponse({
         'motion': motion_payload(motion),
@@ -103,6 +106,8 @@ def api_motion_turns(request, slug):
         'thoughts': thoughts_out,
         # Where a session's context was compacted, and the summary it went on from.
         'compactions': compactions_out,
+        # Things that happened around the conversation: a server redeployed.
+        'events': events_out,
         'has_earlier': bool(limit) and first is not None and motion.messages.filter(
             is_sidechain=False, created_at__lt=first).exists(),
         'activity': activity(motion),
@@ -336,6 +341,193 @@ def api_wikilinks(request):
     return JsonResponse({'links': links, 'next_since': next_since})
 
 
+SEARCH_MAX = 40
+SEARCH_SCAN = 300  # candidates read, newest first, before keeping only what people and agents said
+
+
+def snippet(text, q, width=160):
+    """`text` around the first place `q` occurs, with its ends marked if cut."""
+    at = text.lower().find(q.lower())
+    if at < 0:
+        return text[:width]
+    start = max(0, at - width // 3)
+    end = min(len(text), start + width)
+    return ('…' if start else '') + text[start:end] + ('…' if end < len(text) else '')
+
+
+@require_GET
+def api_search(request):
+    """What was said, in one Motion (?motion=<slug>) or all of them, that contains ?q=.
+
+    Newest first, at most SEARCH_MAX. Only what people and agents said --
+    not tool calls, their results or the harness's wrappers. A plain
+    case-insensitive match on the stored text: about 0.15 s in one Motion,
+    1.2 s across all of them, at 25k messages.
+    """
+    from django.db.models import TextField
+    from django.db.models.functions import Cast
+
+    q = (request.GET.get('q') or '').strip()
+    if len(q) < 2:
+        return JsonResponse({'error': 'two characters at least'}, status=400)
+    q = q[:200]
+    names = known_names()
+    rows = (Message.objects.filter(motion__isnull=False, is_sidechain=False)
+            .exclude(sender_id__in=MACHINERY_SENDERS)
+            .annotate(text=Cast('content', TextField())).filter(text__icontains=q))
+    motion = request.GET.get('motion')
+    if motion:
+        rows = rows.filter(motion_id=motion)
+    titles = dict(Motion.objects.values_list('slug', 'title'))
+    hits = []
+    for msg in rows.select_related('sender').order_by('-created_at')[:SEARCH_SCAN]:
+        if msg.sender_id not in names:
+            continue
+        text = prose(msg.content)
+        if not text or is_wrapper(text) or q.lower() not in text.lower():
+            continue
+        hits.append({'id': str(msg.id), 'motion': msg.motion_id, 'title': titles.get(msg.motion_id, msg.motion_id),
+                     'sender': msg.sender_id, 'created_at': msg.created_at.isoformat(), 'text': snippet(text, q)})
+        if len(hits) >= SEARCH_MAX:
+            break
+    return JsonResponse({'q': q, 'motion': motion, 'hits': hits})
+
+
+RECENT_MAX = 30
+RECENT_SCAN = 800  # rows read for what was said, newest first
+
+
+@require_GET
+def api_recent(request):
+    """What's been happening across every Motion, newest first: what people said,
+    agents' finished answers, renames, settings changed, Motions opened.
+
+    ?since=<iso> (default: a day ago), ?limit= (at most RECENT_MAX). Read
+    from the record; agents' progress lines between tool calls are left
+    out, or they would be all there is.
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from .models import Setting
+    from .services.motion_view import quiet_reason
+
+    since = parse_datetime(request.GET.get('since') or '') or timezone.now() - timedelta(days=1)
+    try:
+        limit = min(max(int(request.GET.get('limit', RECENT_MAX)), 1), RECENT_MAX)
+    except ValueError:
+        limit = RECENT_MAX
+    names = known_names()
+    agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
+    titles = dict(Motion.objects.values_list('slug', 'title'))
+    events = []
+
+    said = (Message.objects.filter(motion__isnull=False, is_sidechain=False, created_at__gt=since)
+            .exclude(sender_id__in=MACHINERY_SENDERS).order_by('-created_at')[:RECENT_SCAN])
+    for msg in said:
+        if msg.sender_id not in names:
+            continue
+        text = prose(msg.content)
+        if not text or is_wrapper(text) or quiet_reason(text) is not None:
+            continue
+        if msg.sender_id in agents and msg.stop_reason != 'end_turn':
+            continue
+        events.append({'kind': 'answered' if msg.sender_id in agents else 'said', 'at': msg.created_at.isoformat(),
+                       'motion': msg.motion_id, 'who': msg.sender_id, 'id': str(msg.id), 'text': text[:140]})
+        if len(events) >= limit:
+            break
+
+    for msg in (Message.objects.filter(source_file='motion-rename', created_at__gt=since)
+                .order_by('-created_at')[:limit]):
+        content = msg.content if isinstance(msg.content, dict) else {}
+        events.append({'kind': 'renamed', 'at': msg.created_at.isoformat(), 'motion': msg.motion_id,
+                       'who': content.get('by', ''), 'text': f"{(content.get('from') or {}).get('title', '')} → "
+                                                             f"{(content.get('to') or {}).get('title', '')}"})
+
+    for row in Setting.objects.filter(created_at__gt=since).order_by('-created_at')[:limit]:
+        value = row.value if not isinstance(row.value, dict) else (row.value.get('mode') or row.value)
+        events.append({'kind': 'set', 'at': row.created_at.isoformat(), 'motion': row.motion_id,
+                       'who': row.set_by_id or '', 'text': f"{row.key} for {row.agent_id or 'every agent'}: {value}"[:140]})
+
+    told = set()  # a redeploy is announced in several Moods; list it once
+    for row in (Message.objects.filter(source_file='deploy', created_at__gt=since).order_by('-created_at')
+                .values('content', 'created_at')[:limit * 10]):
+        c = row['content'] if isinstance(row['content'], dict) else {}
+        key = (c.get('server'), c.get('state'), row['created_at'].replace(microsecond=0).isoformat()[:18])
+        if key in told:
+            continue
+        told.add(key)
+        verb = {'started': 'redeploy started', 'finished': 'redeployed', 'failed': 'redeploy failed'}.get(c.get('state'), '')
+        events.append({'kind': 'deploy', 'at': row['created_at'].isoformat(), 'motion': None, 'who': c.get('by', ''),
+                       'text': f"{c.get('server')} {verb}" + (f" · {c['commit'][:8]}" if c.get('commit') else '')})
+
+    for motion in Motion.objects.filter(created_at__gt=since).order_by('-created_at')[:limit]:
+        events.append({'kind': 'opened', 'at': motion.created_at.isoformat(), 'motion': motion.slug, 'who': '',
+                       'text': motion.title or motion.slug})
+
+    events.sort(key=lambda e: e['at'], reverse=True)
+    for e in events:
+        e['title'] = titles.get(e['motion'], e['motion'] or 'every Motion')
+    return JsonResponse({'events': events[:limit]})
+
+
+NOTICES_MAX = 100
+
+
+def answered_by(msg, humans):
+    """Who an agent's finished turn was answering: the person whose words were
+    the last a person said in that Motion before it, or None."""
+    earlier = (Message.objects.filter(motion_id=msg.motion_id, is_sidechain=False, created_at__lt=msg.created_at,
+                                      sender_id__in=humans)
+               .order_by('-created_at').only('content', 'sender_id')[:5])
+    for m in earlier:  # the latest that is someone's words, not a harness wrapper
+        text = prose(m.content)
+        if text and not is_wrapper(text):
+            return m.sender_id
+    return None
+
+
+@require_GET
+def api_notices(request, name):
+    """What `name` would want to hear about, across every Motion, since a moment.
+
+    Two kinds, newest first: a 'mention' of them by someone else, and an
+    'answer' -- an agent's turn that ended (end_turn) in a Motion where they
+    were the last person to speak before it. That second kind is how someone
+    who asked something and went elsewhere learns the agent is done, without
+    the agent having to @mention them back.
+
+    ?since=<iso> (default: an hour ago). At most NOTICES_MAX.
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from .services.motion_view import quiet_reason
+
+    name = name.lower()
+    if not ThinkingEntity.objects.filter(name=name).exists():
+        raise Http404
+    since = parse_datetime(request.GET.get('since') or '') or timezone.now() - timedelta(hours=1)
+    names = known_names()
+    agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
+    humans = set(ThinkingEntity.objects.filter(is_biological_human=True).values_list('name', flat=True))
+    messages = (Message.objects.filter(motion__isnull=False, is_sidechain=False, created_at__gt=since)
+                .exclude(sender_id__in=MACHINERY_SENDERS).select_related('sender').order_by('-created_at'))
+    found = []
+    for msg in messages.iterator():
+        if msg.sender_id not in names or msg.sender_id == name:
+            continue
+        text = prose(msg.content)
+        if not text or is_wrapper(text):
+            continue
+        if name in mentions_in(text, names):
+            found.append({'kind': 'mention', 'motion': msg.motion_id, 'turn': turn_payload(msg, text, names)})
+        elif (msg.sender_id in agents and msg.stop_reason == 'end_turn' and quiet_reason(text) is None
+              and answered_by(msg, humans) == name):
+            found.append({'kind': 'answer', 'motion': msg.motion_id, 'turn': turn_payload(msg, text, names)})
+        if len(found) >= NOTICES_MAX:
+            break
+    return JsonResponse({'name': name, 'notices': found})
+
+
 @require_GET
 def api_mentions(request, name):
     """Recent turns, across all Motions, that mention one thinking entity.
@@ -423,6 +615,18 @@ self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', e => {
   if (e.request.mode === 'navigate') e.respondWith(fetch(e.request));
 });
+// A notification (a mention, an answer) opens its Mood at that message: in a
+// window already open on pickipedia chat if there is one, else a new one.
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const { slug, id } = e.notification.data || {};
+  const url = '/motions/' + encodeURIComponent(slug || '') + '/' + (id ? '#m-' + id : '');
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    const open = list.find(c => new URL(c.url).pathname.startsWith('/motions/'));
+    if (open) { open.postMessage({ open: slug, id }); return open.focus(); }
+    return self.clients.openWindow(url);
+  }));
+});
 """
 
 
@@ -433,3 +637,19 @@ def app_service_worker(request):
     response['Service-Worker-Allowed'] = '/motions/'
     response['Cache-Control'] = 'no-cache'
     return response
+
+
+@require_GET
+def api_work(request):
+    """Open pull requests and new issues across our repositories, with the people
+    and Moods each involves (services/work.py)."""
+    from django.core.cache import cache
+    from .services import work
+    items = cache.get('work:open')
+    if items is None:
+        try:
+            items = work.open_work()
+        except Exception as e:  # the forge unreachable, or rate-limited: say so, don't fail the page
+            return JsonResponse({'items': [], 'error': f'could not ask the forge: {type(e).__name__}'})
+        cache.set('work:open', items, 120)
+    return JsonResponse({'items': items})

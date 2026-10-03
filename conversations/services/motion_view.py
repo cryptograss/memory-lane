@@ -24,6 +24,9 @@ MACHINERY_SENDERS = {'tool-result', 'system'}
 # anyone's words -- the harness writes it, as a prompt -- so never a turn or
 # a mention; the Motion shows it folded, as the moment a context was compacted.
 COMPACTION_PREFIX = 'This session is being continued from a previous conversation'
+# Words posted into a Motion directly, not typed into a session: from the
+# composer, or attested with a key (magenta.sh attest).
+POSTED = ('motion-web', 'motion-attest')
 _WRAPPER_PREFIXES = ('<', '[Request interrupted', COMPACTION_PREFIX)
 
 
@@ -36,6 +39,8 @@ def prose(content):
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, dict):
+        if content.get('type') == 'attestation':
+            return str(content.get('text', '')).strip()  # a statement signed with someone's key
         return ''  # a tool call
     if isinstance(content, list):
         parts = []
@@ -391,6 +396,8 @@ def timeline(motion, after=None, before=None, limit=None):
         rows = rows.filter(created_at__lt=before.created_at)
 
     def item(msg):
+        if msg.source_file == 'deploy' and isinstance(msg.content, dict):
+            return ('event', msg, msg.content)  # a server redeployed: a line in the thread
         if msg.sender_id in MACHINERY_SENDERS or msg.sender_id not in speakers:
             return None
         if hasattr(msg, 'tooluse'):
@@ -505,8 +512,18 @@ def how_payload(msg):
     return {'model': model_label(msg.model_backend), 'effort': msg.effort or ''}
 
 
+def attestation_of(msg):
+    """What makes a turn an attestation -- exactly what was signed, the
+    signature, the key -- or None."""
+    c = msg.content
+    if msg.source_file != 'motion-attest' or not isinstance(c, dict) or c.get('type') != 'attestation':
+        return None
+    return {k: c.get(k, '') for k in ('signed', 'signature', 'key', 'namespace')}
+
+
 def turn_payload(msg, text, mentionable=()):
     return {
+        'attested': attestation_of(msg),
         **how_payload(msg),
         'id': str(msg.id),
         'sender': msg.sender_id,
@@ -515,7 +532,7 @@ def turn_payload(msg, text, mentionable=()):
         'created_at': msg.created_at.isoformat(),
         # Typed into the web composer rather than a runtime session: nobody
         # live is listening for it, so the poller need not wait.
-        'via': 'web' if msg.source_file == 'motion-web' else 'session',
+        'via': 'web' if msg.source_file in POSTED else 'session',
         'text': text,
         'mentions': mentions_in(text, mentionable),
         'html': render_html(text, mentionable),
@@ -645,7 +662,7 @@ def activity(motion, now=None):
         return None
     newest = recent[0]
 
-    if newest.source_file == 'motion-web':
+    if newest.source_file in POSTED:
         named = [n for n in mentions_in(prose(newest.content), agents)]
         if not named:
             return None
@@ -675,7 +692,7 @@ def activity(motion, now=None):
     for msg in recent:
         if msg.sender_id in agents and msg.stop_reason in TURN_ENDS:
             break
-        if msg.source_file == 'motion-web':
+        if msg.source_file in POSTED:
             break
         streak.append(msg)
     agent = next((m.sender_id for m in streak if m.sender_id in agents), None) or sorted(agents or {'magent'})[0]
@@ -686,7 +703,7 @@ def activity(motion, now=None):
         from django.db.models import Q
         mine = motion.messages.filter(is_sidechain=False)
         boundary = (mine.filter(created_at__lt=start.created_at)
-                    .filter(Q(sender_id__in=agents, stop_reason__in=TURN_ENDS) | Q(source_file='motion-web'))
+                    .filter(Q(sender_id__in=agents, stop_reason__in=TURN_ENDS) | Q(source_file__in=POSTED))
                     .order_by('-created_at').first())
         if boundary is not None:
             start = mine.filter(created_at__gt=boundary.created_at).order_by('created_at').first() or start

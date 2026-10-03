@@ -80,3 +80,53 @@ def api_settings(request):
     except knobs.Invalid as e:
         return JsonResponse({'error': str(e)}, status=400)
     return JsonResponse(knobs.describe(row), status=201)
+
+
+# --- how an agent sees a Motion: its rules, as they reach it --------------------
+
+STANDING_URL = 'https://raw.githubusercontent.com/magent-cryptograss/magenta/main/CLAUDE.md'
+STANDING_SOURCE = 'https://github.com/magent-cryptograss/magenta/blob/main/CLAUDE.md'
+
+
+def standing_instructions():
+    """The agent's standing instructions (magenta's CLAUDE.md, public), cached an hour; '' if unreachable."""
+    from django.core.cache import cache
+    text = cache.get('standing-instructions')
+    if text is None:
+        try:
+            import requests
+            response = requests.get(STANDING_URL, timeout=5)
+            text = response.text if response.ok else ''
+        except Exception:
+            text = ''
+        cache.set('standing-instructions', text, 3600 if text else 120)
+    return text
+
+
+@require_GET
+def rules_page(request, slug):
+    """What an agent is told in this Motion, as it reaches it: the Motion's own
+    rules, the settings in force, what each kind of wake says, and its standing
+    instructions. Read from the code that sends them (poller/motion_poller.py),
+    so it cannot drift from what is sent."""
+    from django.shortcuts import get_object_or_404
+    from poller.motion_poller import wake_frames
+
+    motion = get_object_or_404(Motion, slug=slug)
+    agent = request.GET.get('agent', 'magent').lower()
+    resolved = knobs.resolve(slug, agent)
+    frames = wake_frames(slug, rules=resolved.get('rules') or '', agent=agent,
+                         trusted="Justin, from his container; and, in a Mood with its own container, that Mood's people")
+    def plain(key, value):
+        if key == 'listening':
+            return value.get('mode', 'on') + (f" until {value['until']}" if value.get('until') else '')
+        if isinstance(value, bool):
+            return 'on' if value else 'off'
+        if key == 'model' and not value:
+            return "(the harness's default)"
+        return value
+    shown = [(knobs.KNOBS[k][1], k, plain(k, resolved[k])) for k in knobs.KNOBS if k != 'rules']
+    return render(request, 'conversations/motion_rules.html', {
+        'motion': motion, 'agent': agent, 'rules': resolved.get('rules') or '', 'settings': shown,
+        'frames': frames, 'standing': standing_instructions(), 'standing_source': STANDING_SOURCE,
+    })

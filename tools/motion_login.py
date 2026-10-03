@@ -10,8 +10,10 @@ works, by its camera -- and confirm.
 Your key must be the one hunter's inventory lists for you; it also tells
 memory-lane who you are, so there is no name to type.
 
-    python3 motion_login.py
+    python3 motion_login.py                      # a link for a new device
     python3 motion_login.py --key ~/.ssh/id_rsa
+    python3 motion_login.py renew phone          # bring a timed-out device back, by its name
+    python3 motion_login.py attest "I'll bring the PA Saturday."   # signed, into #general
 
 Standard library only, so it runs anywhere Python and OpenSSH do.
 """
@@ -319,6 +321,10 @@ def qr_terminal(text, border=2):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    parser.add_argument('action', nargs='?', default='login', choices=('login', 'renew', 'attest'),
+                        help='login (default): a link for a new device; renew NAME: bring a timed-out device '
+                             'back; attest "WORDS": post a statement signed with your key into #general')
+    parser.add_argument('words', nargs='*', help="renew: the device's name; attest: the statement")
     parser.add_argument('--name', default=os.environ.get('MOTION_NAME'),
                         help='Only needed if one key is listed for several people; the key names you')
     parser.add_argument('--key', default=default_key(), help='SSH private key (default: ~/.ssh/id_ed25519, …)')
@@ -329,14 +335,36 @@ def main():
         sys.exit('No SSH key found; pass --key.')
     if not shutil.which('ssh-keygen'):
         sys.exit('ssh-keygen not found; install OpenSSH.')
+    words = ' '.join(args.words).strip()
+    if args.action in ('renew', 'attest') and not words:
+        sys.exit(f'{args.action}: say ' + ("which device (its name, as you gave it at sign-in)" if args.action == 'renew'
+                                           else 'what to attest, in quotes'))
 
     base = args.base.rstrip('/')
     offer = call(f'{base}/api/auth/challenge/')
+    challenge = offer['challenge']
+    if args.action == 'renew':
+        text = signed_message(challenge, base, purpose=f'renew {words}')
+    elif args.action == 'attest':
+        text = signed_message(challenge, base, purpose='attest') + '\n' + words
+    else:
+        text = signed_message(challenge, base)
     try:
-        signature = sign(signed_message(offer['challenge'], base), args.key)
+        signature = sign(text, args.key)
     except subprocess.CalledProcessError:
         sys.exit('ssh-keygen could not sign with that key.')
-    payload = {'challenge': offer['challenge'], 'signature': signature}
+
+    if args.action == 'renew':
+        result = call(f'{base}/api/auth/renew/', {'challenge': challenge, 'signature': signature, 'label': words})
+        print(f"\n{result['name']}'s {result['label']} is signed in again"
+              + (f" (until {result['times_out_at'][:10]}, if unused)." if result.get('times_out_at') else '.') + '\n')
+        return
+    if args.action == 'attest':
+        result = call(f'{base}/api/attest/', {'challenge': challenge, 'signature': signature, 'text': words})
+        print(f"\nAttested, in #general: {result['url']}\n")
+        return
+
+    payload = {'challenge': challenge, 'signature': signature}
     if args.name:
         payload['name'] = args.name
     result = call(f'{base}/api/auth/enroll/', payload)
@@ -350,7 +378,6 @@ def main():
         else:
             print(qr_terminal(url) + '\n')
     print(url + '\n')
-
 
 if __name__ == '__main__':
     main()

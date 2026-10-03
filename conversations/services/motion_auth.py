@@ -36,6 +36,10 @@ CHALLENGE_MAX_AGE = 300
 CODE_LIFETIME = timedelta(minutes=15)
 COOKIE = 'motion_device'
 COOKIE_AGE = 365 * 24 * 3600
+# A device unused this long has timed out: it writes nothing until it's
+# renewed (`magenta.sh renew <its name>`, signed with the person's key) or
+# replaced. Used, it never times out; lost, it does on its own.
+DEVICE_IDLE_LIMIT = timedelta(days=30)
 
 
 def digest(secret):
@@ -151,14 +155,57 @@ def code_is_live(code):
                                     expires_at__gt=timezone.now()).select_related('entity').first()
 
 
+def device_state(device, now=None):
+    """'live', 'timed out' or 'revoked'."""
+    now = now or timezone.now()
+    if device.revoked_at:
+        return 'revoked'
+    return 'timed out' if now - (device.last_used_at or device.created_at) > DEVICE_IDLE_LIMIT else 'live'
+
+
 def device_for(request):
-    """The live Device behind this request's cookie, or None."""
+    """The live Device behind this request's cookie, or None (none, revoked, or timed out)."""
     from conversations.models import Device
     token = request.COOKIES.get(COOKIE)
     if not token:
         return None
     device = (Device.objects.select_related('entity')
               .filter(token_hash=digest(token), revoked_at__isnull=True).first())
-    if device and (device.last_used_at is None or timezone.now() - device.last_used_at > timedelta(hours=1)):
+    if device is None or device_state(device) != 'live':
+        return None
+    if device.last_used_at is None or timezone.now() - device.last_used_at > timedelta(hours=1):
         Device.objects.filter(pk=device.pk).update(last_used_at=timezone.now())
     return device
+
+
+def renew_device(entity, label):
+    """Bring `entity`'s device of that name back (a timed-out one included); it or None."""
+    from conversations.models import Device
+    device = (Device.objects.filter(entity=entity, label=label, revoked_at__isnull=True)
+              .order_by('-created_at').first())
+    if device is None:
+        return None
+    Device.objects.filter(pk=device.pk).update(last_used_at=timezone.now())
+    device.refresh_from_db()
+    return device
+
+
+def attest_message(challenge, origin, text):
+    """What `magenta.sh attest` signs: the challenge, its origin, and the statement."""
+    return signed_message(challenge, origin, purpose='attest') + '\n' + text
+
+
+def public_key_of(name):
+    """The key line allowed_signers holds for `name` (to show beside what it signed)."""
+    path = allowed_signers_path()
+    if not path or not os.path.exists(path):
+        return ''
+    with open(path) as f:
+        for line in f:
+            parts = line.split()
+            if parts and parts[0] == name:
+                keys = [p for p in parts if p.startswith(('ssh-', 'ecdsa-', 'sk-'))]
+                if keys:
+                    i = parts.index(keys[0])
+                    return ' '.join(parts[i:i + 2])
+    return ''

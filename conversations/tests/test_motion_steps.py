@@ -69,6 +69,14 @@ class StepsTest(TestCase):
         mentions = self.client.get('/api/mentions/magent/').json()['mentions']
         self.assertEqual([m['turn']['text'] for m in mentions], ['@magent and now?'])
 
+    def test_answers_are_compressed_for_a_browser_that_asks(self):
+        for i in range(40):
+            self.add(self.justin, f'line {i}: what time do we load the bus, and who has the capo?')
+        plain = self.client.get('/api/motions/m26/turns/')
+        packed = self.client.get('/api/motions/m26/turns/', HTTP_ACCEPT_ENCODING='gzip')
+        self.assertEqual(packed['Content-Encoding'], 'gzip')
+        self.assertLess(len(packed.content), len(plain.content) / 3)
+
     def test_a_step_opens_to_its_input_and_result(self):
         step = self.add(self.magent, {'command': 'false'}, model=ToolUse, tool_name='Bash', tool_id='t9')
         self.add(self.tool, 'exit 1', model=ToolResult, tool_use_id='t9', is_error=True)
