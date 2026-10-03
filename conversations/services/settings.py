@@ -47,6 +47,11 @@ GLOBAL_KNOBS = {
     'consider_usd_per_day': (10.0, 'Dollars a day across screens and considerations (mentions not counted).'),
 }
 MODERATION_KEYS = ('scram', 'banned')
+# A Mood's own state, not how an agent carries itself there: set for the
+# Mood alone (no agent), from the Mood's page, and kept apart from the knobs.
+MOOD_KEYS = {
+    'archived': (False, 'Out of the Moods list, into "Archived"; still readable, and still answers mentions.'),
+}
 
 
 class Invalid(ValueError):
@@ -54,7 +59,7 @@ class Invalid(ValueError):
 
 
 def default(key):
-    return (KNOBS.get(key) or GLOBAL_KNOBS.get(key) or (None,))[0]
+    return (KNOBS.get(key) or GLOBAL_KNOBS.get(key) or MOOD_KEYS.get(key) or (None,))[0]
 
 
 def clean(key, value):
@@ -106,6 +111,10 @@ def clean(key, value):
         if len(value) > 4000:
             raise Invalid('rules: at most 4000 characters')
         return value
+    if key == 'archived':
+        if isinstance(value, bool):
+            return value
+        raise Invalid('archived: true or false')
     if key == 'consider_usd_per_day':
         try:
             value = round(float(value), 2)
@@ -151,6 +160,13 @@ def resolve(motion, agent, now=None, rows=None):
     return resolved
 
 
+def archived_slugs():
+    """The Moods archived now: the newest 'archived' row for each says so."""
+    from conversations.models import Setting
+    rows = Setting.objects.filter(key='archived', agent=None, motion__isnull=False)
+    return {slug for (slug, _, _), row in latest(rows).items() if row.value}
+
+
 def global_value(key):
     from conversations.models import Setting
     row = Setting.objects.filter(key=key, motion=None, agent=None).order_by('-created_at').first()
@@ -179,6 +195,8 @@ def change(key, value, motion=None, agent=None, by=None, note=''):
         raise Invalid(f'{key} is set only by an admin, with their key')
     if key in GLOBAL_KNOBS and (motion is not None or agent is not None):
         raise Invalid(f'{key} applies everywhere at once')
+    if key in MOOD_KEYS and (motion is None or agent is not None):
+        raise Invalid(f'{key} is set for one Mood, not for an agent')
     return Setting.objects.create(motion=motion, agent=agent, key=key, value=clean(key, value), set_by=by,
                                   note=str(note or '')[:200])
 

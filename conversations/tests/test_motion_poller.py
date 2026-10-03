@@ -1312,6 +1312,66 @@ class StopTest(TestCase):
         self.assertTrue(self.waker.stop())
 
 
+class SinceLastWordTest(TestCase):
+    """A wake reads what was said since the agent last spoke -- or last stayed silent, having read it."""
+
+    def test_a_silence_of_its_own_counts_as_having_read(self):
+        from poller.motion_poller import since_last_word
+        turns = [turn('a', 'magent', 0, 'Done.'), turn('b', 'justin', 5, 'nice'), turn('c', 'skyler', 6, 'agreed'),
+                 turn('d', 'justin', 20, '@magent one more thing')]
+        self.assertEqual([t['id'] for t in since_last_word(turns, 'magent')], ['b', 'c', 'd'])
+        mine = {'sender': 'magent', 'by': '', 'created_at': (T0 + timedelta(minutes=10)).isoformat()}
+        self.assertEqual([t['id'] for t in since_last_word(turns, 'magent', silences=[mine])], ['d'])
+        # The screen's dot is not the agent's: it read nothing.
+        screen = dict(mine, by='screen')
+        self.assertEqual([t['id'] for t in since_last_word(turns, 'magent', silences=[screen])], ['b', 'c', 'd'])
+
+
+class NewMoodTest(TestCase):
+    """A Mood with no session anywhere: a runner answering every Mood starts one, briefed by the letter."""
+
+    def run_for(self, sessions, **kwargs):
+        api = FakeAPI([mention('fresh', dict(turn('a', 'justin', 10, '@magent hello, new place'), via='web'))],
+                      sessions={'fresh': sessions})
+        self.waker = FakeWaker()
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        state.write_text(json.dumps({'since': (T0 - timedelta(hours=1)).isoformat(), 'handled': [], 'wakes': []}))
+        poller = MotionPoller(api, self.waker, state_path=state, now=lambda: T0 + timedelta(minutes=30), **kwargs)
+        return poller.poll_once()
+
+    def test_its_first_mention_starts_a_session_with_the_letter(self):
+        self.assertEqual(self.run_for([]), ['fresh'])
+        session, prompt = self.waker.woken[0]
+        self.assertIsNone(session)  # nothing to resume: a new one
+        self.assertTrue(prompt.startswith('<new-mood motion="fresh">'))
+        self.assertIn('Dear me,', prompt)  # poller/letter.md, beside the poller
+        self.assertIn('[justin, 2026-09-29T18:10Z] @magent hello, new place', prompt)
+
+    def test_a_moods_own_container_never_starts_one_unless_told(self):
+        self.assertEqual(self.run_for([], motions=['fresh']), [])
+        self.assertEqual(self.waker.woken, [])
+        self.assertEqual(self.run_for([], motions=['fresh'], start_new=True), ['fresh'])
+
+    def test_a_mood_with_a_session_elsewhere_is_left_to_its_runner(self):
+        self.assertEqual(self.run_for(['s-remote']), [])
+        self.assertEqual(self.waker.woken, [])
+
+    def test_the_command_for_a_new_session_resumes_nothing(self):
+        cmd = ClaudeCodeWaker(claude='claude').command(None, 'n-1', 'hi')
+        self.assertNotIn('--resume', cmd)
+        self.assertNotIn('--fork-session', cmd)
+        self.assertEqual(cmd[cmd.index('--session-id') + 1], 'n-1')
+
+    def test_an_archived_mood_gets_no_unprompted_look(self):
+        poller = MotionPoller(FakeAPI(), FakeWaker(), state_path=Path(tempfile.mkdtemp()) / 's.json',
+                              now=lambda: T0)
+        looked = []
+        poller.ours = lambda slug: True
+        poller.consider_motion = lambda m: looked.append(m['slug']) or 'quiet'
+        poller.consider_once({'motions': [{'slug': 'old', 'archived': True}, {'slug': 'live', 'archived': False}]})
+        self.assertEqual(looked, ['live'])
+
+
 class RunCostTest(TestCase):
     """A fork inherits its session's running total; a run's cost is what it added."""
 

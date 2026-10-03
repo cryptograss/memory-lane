@@ -396,3 +396,67 @@ def api_interrupt(request, slug):
                            timestamp=int(time.time() * 1000))
     return JsonResponse({'interrupt': latest_interrupt(motion, agent)})
 
+
+@require_POST
+def api_new_motion(request):
+    """Start a Mood, as the device's person: POST {"title", "description"}.
+
+    Its slug comes from the title (made unique), and never changes. Nothing
+    else is needed here: the first @mention there wakes an agent in a new
+    session (a runner that starts new ones; see poller/letter.md for what
+    that session is told). A system row says who started it.
+    """
+    from django.utils.text import slugify
+    from .models import ConversationParticipant
+    from .services.motion_view import NEW_MOOD_SOURCE
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = motion_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to start a Mood'}, status=401)
+    try:
+        body = json.loads(request.body or b'{}')
+        title = str(body.get('title') or '').replace('\x00', '').strip()
+        description = str(body.get('description') or '').replace('\x00', '').strip()
+    except (ValueError, AttributeError):
+        return JsonResponse({'error': 'expected {"title": ...}'}, status=400)
+    if not title:
+        return JsonResponse({'error': 'a title, please'}, status=400)
+    if len(title) > 200 or len(description) > 2000:
+        return JsonResponse({'error': 'at most 200 characters for a title, 2000 for a description'}, status=400)
+    base = slugify(title)[:60].strip('-') or 'mood'
+    slug, n = base, 2
+    while Motion.objects.filter(slug=slug).exists():
+        slug, n = f'{base}-{n}', n + 1
+    motion = Motion.objects.create(slug=slug, title=title, description=description)
+    system, _ = ConversationParticipant.objects.get_or_create(name='system', defaults={'participant_type': 'system'})
+    Message.objects.create(id=uuid.uuid4(), sender=system, motion=motion, source_file=NEW_MOOD_SOURCE,
+                           content={'type': 'created', 'by': device.entity_id, 'title': title},
+                           timestamp=int(time.time() * 1000))
+    return JsonResponse({'slug': motion.slug, 'title': motion.title, 'description': motion.description}, status=201)
+
+
+@require_POST
+def api_archive(request, slug):
+    """Archive a Mood, or bring it back: POST {"archived": true|false}.
+
+    Archiving only takes it out of the Moods list, into "Archived": it stays
+    readable, its containers and sessions are untouched, and a mention there
+    is still answered. Recorded as a setting row: who, and when.
+    """
+    from .services import settings as knobs
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = motion_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to archive a Mood'}, status=401)
+    motion = get_object_or_404(Motion, slug=slug)
+    try:
+        archived = json.loads(request.body or b'{}').get('archived', True)
+        knobs.change('archived', archived, motion=motion, by=device.entity, note='from the Mood')
+    except (ValueError, AttributeError, knobs.Invalid) as e:
+        return JsonResponse({'error': str(e) or 'expected {"archived": true|false}'}, status=400)
+    return JsonResponse({'slug': motion.slug, 'archived': archived})
+

@@ -317,8 +317,9 @@ class ClaudeCodeWaker:
     """Starts one Claude Code turn by forking a session that exists on this machine."""
 
     def __init__(self, projects_dir='~/.claude/projects', claude='claude', timeout=900, model=None,
-                 full_timeout=None, quiet_limit=1500, check_every=3):
+                 full_timeout=None, quiet_limit=1500, check_every=3, new_cwd='~/workspace'):
         self.projects_dir = Path(projects_dir).expanduser()
+        self.new_cwd = new_cwd  # where a new Mood's first session starts
         self.claude = claude
         self.timeout = timeout
         # A turn with full tools is asked for real work, which takes as long
@@ -422,7 +423,9 @@ class ClaudeCodeWaker:
 
     def command(self, session_id, new_session_id, prompt, grant=(), budget=None, effort=None, model=None,
                 full=False, ultracode=False):
-        cmd = [self.claude, '-p', '--resume', session_id, '--fork-session',
+        # No session to resume (a new Mood's first turn): start one.
+        resume = ['--resume', session_id, '--fork-session'] if session_id else []
+        cmd = [self.claude, '-p', *resume,
                '--session-id', new_session_id,
                # Every event on stdout as it happens: what the runner posts to
                # the Motion, and the turn's exact end (the result event).
@@ -458,11 +461,15 @@ class ClaudeCodeWaker:
         stream event as it comes out; `stop()`, if given, is asked now and
         then whether to end the turn. self.last_result keeps the run's
         result event: its cost, its duration, how it ended."""
-        cwd = self.cwd_for(session_id)
-        if cwd is None:
-            raise RuntimeError(f'session {session_id} cannot be resumed from here')
+        if session_id is None:  # a new session, where new ones start
+            cwd = str(Path(self.new_cwd).expanduser())
+            spent_before = 0.0
+        else:
+            cwd = self.cwd_for(session_id)
+            if cwd is None:
+                raise RuntimeError(f'session {session_id} cannot be resumed from here')
+            spent_before = self.session_cost(session_id)
         new_session_id = new_session_id or str(uuid.uuid4())
-        spent_before = self.session_cost(session_id)
         cmd = self.command(session_id, new_session_id, prompt, grant=grant, budget=budget, effort=effort, model=model,
                            full=full, ultracode=ultracode)
         # Its own process group, so ending it ends everything it started: a
@@ -534,6 +541,25 @@ class ClaudeCodeWaker:
                 logger.warning(f'ending turn: {why}')
                 end_process_group(proc)
                 return
+
+
+LETTER = Path(__file__).with_name('letter.md')
+
+
+def new_mood_opening(slug):
+    """What a new Mood's first session is told before the mention: where it
+    is, and the letter it left itself for coming to a Mood fresh."""
+    try:
+        letter = LETTER.read_text().strip()
+    except OSError:
+        letter = ('(The letter is missing. You are magent; your memory tools -- list_moods, read_mood, '
+                  'search_messages -- bring you up to speed, and the magenta-26-million Mood is where '
+                  'the work on this place happens.)')
+    return [f'<new-mood motion="{slug}">',
+            'This Mood is new: no session of yours has been here, so this one has just started, '
+            'with none of your history in it. Before you answer, read the letter you left yourself '
+            'for exactly this, below. Then answer what was asked.', '',
+            letter, '</new-mood>', '']
 
 
 def wake_footer(full=False):
@@ -672,14 +698,20 @@ def command_request(text, agent):
     return f'/{name} {args}'.strip()
 
 
-def since_last_word(turns, agent, before_id=None):
-    """The turns after `agent` last spoke, up to (not including) `before_id`; turns oldest first."""
+def since_last_word(turns, agent, before_id=None, silences=()):
+    """The turns after `agent` last spoke, up to (not including) `before_id`; turns oldest first.
+
+    `silences` are the agent's own <silent> answers (the quiet list's, not
+    the screen's): a turn that stayed silent read everything before it, and
+    the next wake resumes that very session, so they count as a word."""
     if before_id is not None:
         ids = [t['id'] for t in turns]
         if before_id in ids:
             turns = turns[:ids.index(before_id)]
+    last = max((parse_time(q['created_at']) for q in silences if q.get('sender') == agent and q.get('by') != 'screen'),
+               default=None)
     for i in range(len(turns) - 1, -1, -1):
-        if turns[i]['sender'] == agent:
+        if turns[i]['sender'] == agent or (last and parse_time(turns[i]['created_at']) <= last):
             return turns[i + 1:]
     return turns
 
@@ -690,7 +722,7 @@ class MotionPoller:
                  max_wakes_per_hour=30, dry_run=False, now=None, streamer=None, mention_effort='high',
                  screen=None, consider=True, considers_per_hour=6, consider_usd_per_day=10.0,
                  consider_budget=3.0, consider_effort='medium', debounce=10, idle_first=3000,
-                 full_tools_for=('justin',), parallel=0, motions=None, catch_up_tokens=10_000):
+                 full_tools_for=('justin',), parallel=0, motions=None, catch_up_tokens=10_000, start_new=None):
         self.api = api
         self.waker = waker
         self.agent = agent.lower()
@@ -716,6 +748,9 @@ class MotionPoller:
         # Only these Motions, if given: a Motion's own container answers
         # only that Motion (its sessions live there and nowhere else).
         self.motions = set(motions) if motions else None
+        # Start a session in a Mood that has none (a new one): by default only
+        # a runner answering every Mood, never a Mood's own container's.
+        self.start_new = (self.motions is None) if start_new is None else start_new
         self.resumable = {}  # slug -> (whether its newest session is ours to wake, when we asked)
         # The consider loop (see the comment above consider_once).
         self.screen = screen
@@ -932,7 +967,8 @@ class MotionPoller:
             owed = commands[:1]
         sessions = self.api.sessions(slug, self.agent)
         settled += [t['id'] for t in owed]
-        if not sessions or not self.waker.can_wake(sessions[0]):
+        fresh = not sessions and self.start_new and not commands  # a new Mood: start its first session
+        if not fresh and (not sessions or not self.waker.can_wake(sessions[0])):
             # The newest session is another machine's (its poller answers),
             # or gone from disk. Either way, not this poller's to wake.
             logger.info(f'{slug}: owed a turn; the latest session is not resumable here')
@@ -944,8 +980,11 @@ class MotionPoller:
             prompt = command_request(commands[0]['text'], self.agent)
         else:
             prompt = self.prompt(slug, owed, full=full)
+        if fresh:
+            prompt = '\n'.join(new_mood_opening(slug)) + prompt
+        session = None if fresh else sessions[0]
         if self.dry_run:
-            logger.info(f'{slug}: would wake {sessions[0]} {"with full tools " if full else ""}with:\n{prompt}')
+            logger.info(f'{slug}: would wake {session or "a new session"} {"with full tools " if full else ""}with:\n{prompt}')
             return settled, 'woken'
 
         # Recorded before the turn runs: a restart mid-turn must not wake again.
@@ -960,7 +999,7 @@ class MotionPoller:
         options['since'] = owed[-1]['created_at']
         if full and self.knob(slug, 'ultracode'):
             options['ultracode'] = True
-        outcome = self.launch(slug, lambda: self.run_turn(slug, sessions[0], prompt, **options))
+        outcome = self.launch(slug, lambda: self.run_turn(slug, session, prompt, **options))
         return settled, outcome
 
     # --- turns side by side ----------------------------------------------------
@@ -1065,7 +1104,8 @@ class MotionPoller:
         command = (getattr(self.waker, 'last_result', None) or {}).get('local_command')
         said = ('stayed silent' if _SILENT_REPLY.match(reply or '') else f'ran /{command}' if command
                 else f'replied {len(reply)} chars' if reply else f'ended without a word ({ending or "no reply"})')
-        logger.info(f'{slug}: woke {session_id} as {new_session}; {said}'
+        logger.info(f'{slug}: ' + (f'woke {session_id} as {new_session}' if session_id else f'started {new_session}')
+                    + f'; {said}'
                     + (f'; ${cost:.4f}' if isinstance(cost, (int, float)) else '')
                     + (f'; streamed {poster.sent}, lost {poster.failed}' if poster else ''))
         return 'woken', reply, cost if isinstance(cost, (int, float)) else 0.0
@@ -1097,8 +1137,9 @@ class MotionPoller:
                 note = ('From the message linked, as it was said (newest last):' if where == slug
                         else f'From the message linked in the Mood "{where}", as it was said there (newest last):')
             else:
-                recent = self.api.recent(slug, limit=400)['turns']
-                said = since_last_word(recent, self.agent, before_id=owed[0]['id'])
+                page = self.api.recent(slug, limit=400)
+                recent = page['turns']
+                said = since_last_word(recent, self.agent, before_id=owed[0]['id'], silences=page.get('quiet') or ())
                 said = [t for t in said if t['id'] not in owed_ids]
                 note = 'What was said here since you last spoke (newest last):'
                 if not said:  # it spoke just before: a little of what led here, for orientation
@@ -1197,6 +1238,8 @@ class MotionPoller:
         for m in pulse.get('motions', []):
             if (self.motions is not None and m['slug'] not in self.motions) or not self.ours(m['slug']):
                 continue  # another runner's to consider: screening it here would only duplicate its dots
+            if m.get('archived'):
+                continue  # out of the list: answers mentions there, never speaks up unasked
             try:
                 outcome = self.consider_motion(m)
             except Exception as e:  # one Motion's trouble is not every Motion's
@@ -1291,7 +1334,7 @@ class MotionPoller:
         new_ids = {t['id'] for t in posts}
         upto = parse_time(posts[-1]['created_at'])
         context = [t for t in recent['turns'] if parse_time(t['created_at']) <= upto]
-        said = since_last_word(context, self.agent)
+        said = since_last_word(context, self.agent, silences=recent.get('quiet') or ())
         if not any(t['id'] in new_ids for t in said):  # its last word came after them: just the new
             said = [t for t in context if t['id'] in new_ids]
         # A little of what led here, when it spoke just before.
@@ -1458,6 +1501,10 @@ def main(argv=None):
     parser.add_argument('--debounce', type=int, default=10, help='Seconds of quiet before considering new posts')
     parser.add_argument('--idle-first', type=int, default=3000,
                         help='Seconds of silence before the first unprompted look (doubles each silent one)')
+    parser.add_argument('--new-sessions', choices=('auto', 'yes', 'no'), default='auto',
+                        help="Start a session in a Mood that has none (a new Mood's first mention). "
+                             "auto: only when answering every Mood (no --motions)")
+    parser.add_argument('--new-cwd', default='~/workspace', help='Where a new Mood\'s first session starts')
     parser.add_argument('--once', action='store_true')
     parser.add_argument('--dry-run', action='store_true', help='Log what would be woken; change nothing')
     args = parser.parse_args(argv)
@@ -1471,7 +1518,8 @@ def main(argv=None):
                 'no MEMORY_LANE_RUNNER_KEY: woken turns reach Motions through the transcript watcher')
     screen = None if args.screen_model == 'none' else ClaudeCodeScreen(agent=args.agent, model=args.screen_model)
     poller = MotionPoller(MotionAPI(args.base, key=key), ClaudeCodeWaker(model=args.model, full_timeout=args.full_timeout,
-                                                                quiet_limit=args.quiet_limit), agent=args.agent,
+                                                                quiet_limit=args.quiet_limit, new_cwd=args.new_cwd),
+                          agent=args.agent, start_new={'auto': None, 'yes': True, 'no': False}[args.new_sessions],
                           state_path=Path(args.state).expanduser(), grace=args.grace,
                           max_wakes_per_hour=args.max_wakes_per_hour, parallel=args.parallel, dry_run=args.dry_run, streamer=streamer,
                           mention_effort=args.mention_effort, screen=screen, consider=not args.no_consider,

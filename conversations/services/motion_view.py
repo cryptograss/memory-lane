@@ -26,7 +26,8 @@ MACHINERY_SENDERS = {'tool-result', 'system'}
 COMPACTION_PREFIX = 'This session is being continued from a previous conversation'
 INTERRUPT_SOURCE = 'interrupt'
 # System rows shown as a line in the thread.
-EVENT_SOURCES = ('deploy', INTERRUPT_SOURCE)
+NEW_MOOD_SOURCE = 'motion-new'
+EVENT_SOURCES = ('deploy', INTERRUPT_SOURCE, NEW_MOOD_SOURCE)
 # Words posted into a Motion directly, not typed into a session: from the
 # composer, or attested with a key (magenta.sh attest).
 POSTED = ('motion-web', 'motion-attest')

@@ -87,13 +87,15 @@
   #devicesBox .dev.revoked, #devicesBox .dev.timed { opacity: .65; }
   #devicesBox button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel);
                        color: var(--ink); cursor: pointer; }
-  #renameBox { position: fixed; z-index: 30; top: 44px; left: 50%; transform: translateX(-50%); width: min(520px, 94vw);
+  #renameBox, #newBox { position: fixed; z-index: 30; top: 44px; left: 50%; transform: translateX(-50%); width: min(520px, 94vw);
                background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.18);
                padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-  #renameBox[hidden] { display: none; }
-  #renameBox input, #renameBox textarea { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+  #renameBox[hidden], #newBox[hidden] { display: none; }
+  #renameBox .archive { float: right; color: var(--muted); }
+  #newBox .hint { font-size: 12.5px; color: var(--muted); }
+  #renameBox input, #renameBox textarea, #newBox input, #newBox textarea { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
                                           background: var(--bg); color: var(--ink); }
-  #renameBox input { font-size: 17px; font-weight: 600; }
+  #renameBox input, #newBox input { font-size: 17px; font-weight: 600; }
 
   .layout { flex: 1; display: flex; min-height: 0; }
 
@@ -102,7 +104,15 @@
     border-right: 1px solid var(--line); padding: 10px 0;
   }
   nav .label { padding: 4px 16px 8px; font-size: 11px; text-transform: uppercase;
-    letter-spacing: .08em; color: var(--muted); }
+    letter-spacing: .08em; color: var(--muted); display: flex; align-items: center; }
+  nav .label #newMood { margin-left: auto; font: inherit; font-size: 15px; line-height: 1; border: 0; background: none;
+                        color: var(--muted); cursor: pointer; padding: 0 2px; }
+  nav .label #newMood:hover { color: var(--accent); }
+  /* Archived Moods: folded under the list, still readable. */
+  nav #archived { margin-top: 8px; }
+  nav #archived summary { padding: 4px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+                          color: var(--muted); cursor: pointer; }
+  nav #archived a.motion { opacity: .75; }
   nav a.motion {
     display: block; padding: 5px 14px; text-decoration: none; color: inherit;
     border-left: 3px solid transparent;
@@ -140,8 +150,12 @@
     line-height: 18px; text-align: center;
   }
 
-  main { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 0 0; }  /* no bottom padding: it would hold the sticky footer off the bottom */
-  .inner { max-width: 760px; margin: 0 auto; padding: 0 22px; }
+  main { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 0 0; container-type: inline-size; }  /* no bottom padding: it would hold the sticky footer off the bottom */
+  /* --gutter: what the jump strip takes at the right (25px + margins). When the
+     window leaves room beside the column the text never reaches it; when the
+     column fills the width (a phone, zoomed in), its text stops short of it. */
+  .inner { --gutter: 36px; max-width: 760px; margin: 0 auto;
+           padding: 0 max(22px, calc(var(--gutter) - max(0px, (100cqw - 760px) / 2))) 0 22px; }
 
   .motion-head h1 { font-size: 22px; margin: 0 0 4px; }
   .motion-head .desc { color: var(--muted); margin: 0 0 6px; }
@@ -187,14 +201,19 @@
   #footer { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); }
   /* Up and down a message at a time, at the right of the thread. */
   /* Two pairs: every message (right), people's messages only (left, with a person on them). */
-  #jump { position: absolute; right: 16px; bottom: calc(100% + 12px); display: grid; grid-template-columns: auto auto; gap: 6px; }
-  #jump button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel);
-                 color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  /* Tight little tabs in the right margin; the thread keeps a gutter clear of them (main, below). */
+  #jump { --jw: 25px; --jh: 19px; position: absolute; right: 4px; bottom: calc(100% + 6px); display: grid;
+          grid-template-columns: auto; gap: 2px; }
+  /* One strip, symmetric: for you, people, every message -- up above, down below. */
+  #jumpMeUp { order: 1; } #jumpHumanUp { order: 2; } #jumpUp { order: 3; }
+  #jumpDown { order: 4; } #jumpHumanDown { order: 5; } #jumpMeDown { order: 6; }
+  #jump button { width: var(--jw); height: var(--jh); border-radius: 3px; border: 1px solid var(--line); background: var(--panel);
+                 color: var(--muted); font-size: 12px; line-height: 1; cursor: pointer; opacity: .85;
                  display: inline-flex; align-items: center; justify-content: center; padding: 0; }
-  #jump button.human { color: var(--human); font-size: 12px; gap: 1px; }
+  #jump button:hover { opacity: 1; }
+  #jump button.human { color: var(--human); font-size: 11px; gap: 0; }
   /* A third pair, for what's for you (mentions of you, answers to you), once you're someone. */
-  #jump button.forme { display: none; color: var(--accent); font-size: 12px; }
-  body.has-me #jump { grid-template-columns: auto auto auto; }
+  #jump button.forme { display: none; color: var(--accent); font-size: 10.5px; letter-spacing: -.5px; }
   body.has-me #jump button.forme { display: inline-flex; }
   #toBottom { display: none; position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% + 12px);
               border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 16px;
@@ -228,7 +247,7 @@
   #qresults .note { padding: 12px; color: var(--muted); font-size: 13px; }
   #notify { border: 0; background: none; cursor: pointer; font-size: 15px; padding: 0 2px; color: var(--muted); }
   #notify[hidden] { display: none; }
-  #jump button.human svg { width: 11px; height: 11px; }
+  #jump button.human svg { width: 9px; height: 9px; }
   #jump button:hover { color: var(--accent); border-color: var(--accent); }
   /* Where a session's context was compacted: one line, its summary on demand. */
   /* Something that happened around the conversation: a server redeployed. */
@@ -407,12 +426,11 @@
     nav, #grip { display: none; }
     body.menu-open nav { display: block; width: auto; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--line); }
     main { padding-top: 12px; }
-    .inner { padding: 0 12px; }
+    .inner { padding: 0 max(12px, calc(var(--gutter) - max(0px, (100cqw - 760px) / 2))) 0 12px; }
     .motion-head h1 { font-size: 19px; }
     #activity { padding: 6px 12px; }
     .hush { padding: 4px 12px 0; }
-    #jump { right: 10px; gap: 5px; }
-    #jump button { width: 30px; height: 30px; font-size: 13px; }
+    #jump { right: 3px; }
     #composer { padding: 6px 8px 8px; gap: 6px; }
     #composer textarea { min-height: 38px; padding: 7px 9px; }
     #composer #attach { padding: 8px 9px; }
@@ -457,7 +475,14 @@
 <form id="renameBox" hidden>
   <input id="renameTitle" maxlength="200" aria-label="Title" placeholder="Title">
   <textarea id="renameDesc" rows="2" maxlength="2000" aria-label="Description" placeholder="What it's about (optional)"></textarea>
-  <span><button type="submit">Rename</button> <button type="button" id="renameCancel">Cancel</button></span>
+  <span><button type="submit">Rename</button> <button type="button" id="renameCancel">Cancel</button>
+    <button type="button" id="archiveBtn" class="archive" title="Out of the Moods list, into Archived. It stays readable, its sessions and container untouched, and a mention there is still answered.">Archive</button></span>
+</form>
+<form id="newBox" hidden>
+  <input id="newTitle" maxlength="200" aria-label="Title" placeholder="What the new Mood is about">
+  <textarea id="newDesc" rows="2" maxlength="2000" aria-label="Description" placeholder="A line or two more (optional)"></textarea>
+  <span class="hint">Its first @magent starts a new session there, briefed by the letter magent left itself.</span>
+  <span><button type="submit">Start</button> <button type="button" id="newCancel">Cancel</button></span>
 </form>
 <div id="locked"></div>
 <div id="search" hidden role="search">
@@ -566,14 +591,24 @@
     try { if (navigator.setAppBadge) (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()); } catch (e) {}
   }
 
+  let archivedOpen = false;
   function renderNav() {
-    const items = motions.map(m => `
+    const item = m => `
       <a class="motion ${m.slug === current ? 'active' : ''}" href="/motions/${encodeURIComponent(m.slug)}/" data-slug="${esc(m.slug)}">
         <div class="title">${esc(m.title)}${badges[m.slug] ? `<span class="badge">${badges[m.slug]}</span>` : ''}</div>
         <div class="meta">${m.message_count.toLocaleString()} · ${ago(m.last_at)}</div>
         <div class="meta people-line">${peopleLine(m.slug)}</div>
-      </a>`).join('');
-    document.getElementById('moodList').innerHTML = '<div class="label">Moods</div>' + items;
+      </a>`;
+    const live = motions.filter(m => !m.archived), archived = motions.filter(m => m.archived);
+    // The one open stays in view: an archived Mood opened shows its fold open.
+    const open = archivedOpen || archived.some(m => m.slug === current);
+    document.getElementById('moodList').innerHTML =
+      `<div class="label">Moods${viewer ? '<button type="button" id="newMood" title="Start a Mood" aria-label="Start a Mood">＋</button>' : ''}</div>`
+      + live.map(item).join('')
+      + (archived.length ? `<details id="archived"${open ? ' open' : ''}><summary>Archived (${archived.length})</summary>`
+         + archived.map(item).join('') + '</details>' : '');
+    const fold = document.getElementById('archived');
+    if (fold) fold.addEventListener('toggle', () => { archivedOpen = fold.open; });
     markLive();
   }
 
@@ -795,9 +830,11 @@
   }
   function addEvent(e, container) {
     const el = document.createElement('div');
-    if (e.type === 'interrupt') {  // someone pressed stop
+    if (e.type === 'interrupt' || e.type === 'created') {  // someone pressed stop; someone started this Mood
       el.className = 'event';
-      el.innerHTML = `■ <b>${esc(e.by || 'someone')}</b> stopped ${esc(e.agent || 'the agent')} · ${esc(stamp(e.created_at))}`;
+      el.innerHTML = e.type === 'created'
+        ? `✦ <b>${esc(e.by || 'someone')}</b> started this Mood · ${esc(stamp(e.created_at))}`
+        : `■ <b>${esc(e.by || 'someone')}</b> stopped ${esc(e.agent || 'the agent')} · ${esc(stamp(e.created_at))}`;
       container.appendChild(el);
       prev = null;
       return;
@@ -916,15 +953,46 @@
     if (h1 && m) h1.textContent = m.title;
     if (m) { baseTitle = m.title + ' · magenta'; setTitle(); }
   }
-  document.addEventListener('click', e => {
+  const isArchived = slug => !!(motions.find(m => m.slug === slug) || {}).archived;
+  const newBox = document.getElementById('newBox');
+  document.addEventListener('click', async e => {
     if (e.target.closest('#rename')) {
       document.getElementById('renameTitle').value = headMotion.title;
       document.getElementById('renameDesc').value = headMotion.description || '';
+      document.getElementById('archiveBtn').textContent = isArchived(current) ? 'Unarchive' : 'Archive';
       renameBox.hidden = false;
       document.getElementById('renameTitle').focus();
     } else if (e.target.closest('#renameCancel')) {
       renameBox.hidden = true;
+    } else if (e.target.closest('#archiveBtn')) {
+      const r = await fetch(`/api/motions/${encodeURIComponent(current)}/archive/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+        body: JSON.stringify({ archived: !isArchived(current) }),
+      });
+      if (!r.ok) { showError('archive: ' + ((await r.json().catch(() => ({}))).error || r.status)); return; }
+      renameBox.hidden = true;
+      loadMotions();
+    } else if (e.target.closest('#newMood')) {
+      document.getElementById('newTitle').value = '';
+      document.getElementById('newDesc').value = '';
+      newBox.hidden = false;
+      document.getElementById('newTitle').focus();
+    } else if (e.target.closest('#newCancel')) {
+      newBox.hidden = true;
     }
+  });
+  newBox.addEventListener('submit', async e => {
+    e.preventDefault();
+    const r = await fetch('/api/motions/new/', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify({ title: document.getElementById('newTitle').value,
+                             description: document.getElementById('newDesc').value }),
+    });
+    if (!r.ok) { showError('new Mood: ' + ((await r.json().catch(() => ({}))).error || r.status)); return; }
+    const made = await r.json();
+    newBox.hidden = true;
+    await loadMotions();
+    open(made.slug, true);
   });
   renameBox.addEventListener('submit', async e => {
     e.preventDefault();

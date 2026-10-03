@@ -41,9 +41,14 @@ def motions_page(request, slug=None):
 
 @require_GET
 def api_motions(request):
-    """Every Motion, most recently active first."""
-    payloads = [motion_payload(m) for m in Motion.objects.all()]
-    payloads.sort(key=lambda p: p['last_at'] or '', reverse=True)
+    """Every Motion, most recently active first; archived ones flagged (the page lists them apart)."""
+    from .services import settings as knobs
+    archived = knobs.archived_slugs()
+    motions = list(Motion.objects.all())
+    payloads = [{**motion_payload(m), 'archived': m.slug in archived} for m in motions]
+    # A Mood nobody has spoken in yet ranks by when it was started: a new one first.
+    started = {m.slug: m.created_at.isoformat() for m in motions}
+    payloads.sort(key=lambda p: p['last_at'] or started[p['slug']], reverse=True)
     people = ThinkingEntity.objects.order_by('name')
     return JsonResponse({'motions': payloads, 'people': [
         {'name': p.name, 'is_human': p.is_biological_human} for p in people]})
@@ -195,6 +200,7 @@ def api_pulse(request):
     humans = set(ThinkingEntity.objects.filter(is_biological_human=True).values_list('name', flat=True))
     agent = request.GET.get('agent', 'magent')
     rows = list(Setting.objects.exclude(key__in=knobs.MODERATION_KEYS))
+    archived = knobs.archived_slugs()
     motions = []
     for motion in Motion.objects.all():
         said = motion.messages.filter(is_sidechain=False).exclude(sender_id__in=MACHINERY_SENDERS)
@@ -208,6 +214,8 @@ def api_pulse(request):
             'activity': activity(motion),
             # How this agent is to carry itself here (services/settings.py).
             'settings': knobs.resolve(motion.slug, agent, rows=rows),
+            # Out of the list: no unprompted looks there (mentions still answered).
+            'archived': motion.slug in archived,
         })
     return JsonResponse({
         'now': timezone.now().isoformat(),
