@@ -20,7 +20,11 @@ MACHINERY_SENDERS = {'tool-result', 'system'}
 
 # Command scaffolding, system reminders and interruption markers are text,
 # but they are not conversation.
-_WRAPPER_PREFIXES = ('<', '[Request interrupted')
+# The summary Claude Code starts a session with after compacting it. Not
+# anyone's words -- the harness writes it, as a prompt -- so never a turn or
+# a mention; the Motion shows it folded, as the moment a context was compacted.
+COMPACTION_PREFIX = 'This session is being continued from a previous conversation'
+_WRAPPER_PREFIXES = ('<', '[Request interrupted', COMPACTION_PREFIX)
 
 
 def pickipedia_url():
@@ -73,6 +77,10 @@ def thought_text(content):
 
 def is_wrapper(text):
     return text.startswith(_WRAPPER_PREFIXES)
+
+
+def is_compaction(text):
+    return text.startswith(COMPACTION_PREFIX)
 
 
 def turns(motion, after=None):
@@ -367,7 +375,8 @@ def timeline(motion, after=None, before=None, limit=None):
 
     Yields ('turn', message, text), ('quiet', message, reason) for an
     agent's choice not to speak, ('thought', message, text) for thinking the
-    harness kept, and ('step', message, None). A step is
+    harness kept, ('compaction', message, summary) where a session was
+    compacted, and ('step', message, None). A step is
     one tool call; its result is fetched on demand (step_detail), so the
     thread stays light. `limit` keeps the newest that many items -- a first
     load, or a page further back with `before`.
@@ -395,6 +404,8 @@ def timeline(motion, after=None, before=None, limit=None):
         reason = quiet_reason(text)
         if reason is not None:
             return ('quiet', msg, reason)
+        if is_compaction(text):
+            return ('compaction', msg, text)
         if is_wrapper(text):
             return None
         return ('turn', msg, text)
@@ -540,6 +551,35 @@ def _doing(msg):
 
 def _when(msg):
     return msg.timestamp / 1000 if msg.timestamp else msg.created_at.timestamp()
+
+
+# --- how full an agent's context is ------------------------------------------
+# Every assistant line records what its model read to write it: fresh input
+# plus cache reads and writes. The newest such line in a Motion's newest
+# session is how full that agent's context is now -- what a wake would
+# resume into. Windows by model; the record shows Opus 5.5 sessions passing
+# 865k tokens, so its window is 1M. Anything unlisted is taken as 200k,
+# and a session seen past its window is taken to have the larger one.
+CONTEXT_WINDOWS = (('claude-opus-5', 1_000_000),)
+DEFAULT_WINDOW = 200_000
+
+
+def context_window(model, tokens=0):
+    window = next((w for prefix, w in CONTEXT_WINDOWS if (model or '').startswith(prefix)), DEFAULT_WINDOW)
+    return window if tokens <= window else max(window, 1_000_000)
+
+
+def context_in(motion, agent):
+    """{'tokens', 'window', 'model', 'at'} for `agent`'s context here, or None."""
+    row = (motion.messages.filter(sender_id=agent, is_sidechain=False, input_tokens__isnull=False)
+           .order_by('-created_at')
+           .values('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'model_backend',
+                   'created_at').first())
+    if row is None:
+        return None
+    tokens = sum(row[k] or 0 for k in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
+    return {'tokens': tokens, 'window': context_window(row['model_backend'], tokens),
+            'model': row['model_backend'] or '', 'at': row['created_at'].isoformat()}
 
 
 # --- a mention the runner is holding ----------------------------------------

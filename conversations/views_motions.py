@@ -18,7 +18,7 @@ from .models import Message, Motion, ThinkingEntity
 from .services import motion_auth
 from .services.motion_view import (
     MACHINERY_SENDERS, activity, background_tasks, is_wrapper, known_names, mentions_in, motion_payload,
-    prose, step_detail, step_images, step_payload, timeline, turn_payload, turns, wiki_title, wikilinks_in,
+    prose, render_html, step_detail, step_images, step_payload, timeline, turn_payload, turns, wiki_title, wikilinks_in,
 )
 
 
@@ -71,13 +71,16 @@ def api_motion_turns(request, slug):
         limit = max(1, min(int(request.GET['limit']), PAGE))
 
     names = known_names()
-    turns_out, step_msgs, quiet_out, thoughts_out = [], [], [], []
+    turns_out, step_msgs, quiet_out, thoughts_out, compactions_out = [], [], [], [], []
     for kind, msg, text in timeline(motion, after=after, before=before, limit=limit):
         if kind == 'turn':
             turns_out.append(turn_payload(msg, text, names))
         elif kind == 'thought':
             thoughts_out.append({'id': str(msg.id), 'sender': msg.sender_id,
                                  'created_at': msg.created_at.isoformat(), 'text': text})
+        elif kind == 'compaction':
+            compactions_out.append({'id': str(msg.id), 'session_id': str(msg.session_id or ''),
+                                    'created_at': msg.created_at.isoformat(), 'html': render_html(text)})
         elif kind == 'quiet':
             quiet_out.append({'id': str(msg.id), 'sender': msg.sender_id,
                               'created_at': msg.created_at.isoformat(), **text})
@@ -85,7 +88,9 @@ def api_motion_turns(request, slug):
             step_msgs.append(msg)
     images = step_images(step_msgs)
     steps_out = [{**step_payload(m), 'images': images.get(str(m.id), [])} for m in step_msgs]
-    first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out], default=None)
+    first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out + compactions_out],
+                default=None)
+    agents = agents_in(motion)
     return JsonResponse({
         'motion': motion_payload(motion),
         # Prose only: the poller reads an agent turn here as an answer, so a
@@ -96,13 +101,17 @@ def api_motion_turns(request, slug):
         'quiet': quiet_out,
         # What the agent thought along the way, where the harness kept it.
         'thoughts': thoughts_out,
+        # Where a session's context was compacted, and the summary it went on from.
+        'compactions': compactions_out,
         'has_earlier': bool(limit) and first is not None and motion.messages.filter(
             is_sidechain=False, created_at__lt=first).exists(),
         'activity': activity(motion),
         # What an agent started in the background here and is still running.
         'tasks': background_tasks(motion),
         # Whether each agent is listening here (the hush menu in the head).
-        'listening': listening_in(motion),
+        'listening': {name: a['listening'] for name, a in agents.items()},
+        # Each agent here: listening, model, effort, and how full its context is.
+        'agents': agents,
         'scram': settings_scram(),
         'typing': typing_in(motion.slug),
     })
@@ -111,10 +120,18 @@ def api_motion_turns(request, slug):
 PAGE = 400
 
 
-def listening_in(motion):
+def agents_in(motion):
+    """name -> {listening, model, effort, context} for each agent, in this Motion."""
     from .services import settings as knobs
+    from .services.motion_view import context_in
     agents = ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True)
-    return {name: knobs.resolve(motion.slug, name)['listening'] for name in agents}
+    out = {}
+    for name in agents:
+        resolved = knobs.resolve(motion.slug, name)
+        out[name] = {'listening': resolved['listening'], 'model': resolved['model'],
+                     'effort': resolved['mention_effort'], 'ultracode': bool(resolved['ultracode']),
+                     'context': context_in(motion, name)}
+    return out
 
 
 def settings_scram():
@@ -364,3 +381,55 @@ def api_mentions(request, name):
                 break
 
     return JsonResponse({'name': name, 'mentions': found})
+
+
+# --- installing it as an app (a web app manifest, an icon, a service worker) --
+# Chrome and Edge (Ubuntu, Windows, macOS) offer "Install" for a page with a
+# manifest, and Chrome on Android "Install app": it then opens in its own
+# window, from the launcher, with no browser around it.
+
+@require_GET
+def app_manifest(request):
+    return JsonResponse({
+        'name': 'pickipedia chat',
+        'short_name': 'pickipedia chat',
+        'description': 'Moods: where cryptograss talks, people and agents together.',
+        'id': '/motions/',
+        'start_url': '/motions/',
+        'scope': '/motions/',
+        'display': 'standalone',
+        'background_color': '#fbfaf7',
+        'theme_color': '#b8106b',
+        'icons': [{'src': f'/motions/icon-{size}.png', 'sizes': f'{size}x{size}', 'type': 'image/png',
+                   'purpose': 'any maskable'} for size in (192, 512)],
+    }, content_type='application/manifest+json')
+
+
+@require_GET
+def app_icon(request, size):
+    from django.http import HttpResponse
+    from .services import app_icon as icon
+    if size not in (180, 192, 512):
+        raise Http404('no icon that size')
+    response = HttpResponse(icon.png(size), content_type='image/png')
+    response['Cache-Control'] = 'public, max-age=86400'
+    return response
+
+
+SERVICE_WORKER = """// pickipedia chat: here so the page can be installed as an app. It keeps
+// nothing: every request goes to the network, as if it weren't here.
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', e => {
+  if (e.request.mode === 'navigate') e.respondWith(fetch(e.request));
+});
+"""
+
+
+@require_GET
+def app_service_worker(request):
+    from django.http import HttpResponse
+    response = HttpResponse(SERVICE_WORKER, content_type='text/javascript')
+    response['Service-Worker-Allowed'] = '/motions/'
+    response['Cache-Control'] = 'no-cache'
+    return response

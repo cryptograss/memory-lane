@@ -15,7 +15,7 @@ A mention is owed a turn when all of these hold:
     one poller, the one holding that session, ever answers;
   - fewer than --max-wakes-per-hour attempts were made in the last hour.
 
-Turns in different Motions run side by side (--parallel, default 4 at
+Turns in different Motions run side by side (--parallel, default 8 at
 once), at most one per Motion: a Motion with a turn under way holds its
 next mention until that turn ends.
 
@@ -380,7 +380,7 @@ class ClaudeCodeWaker:
         return total
 
     def command(self, session_id, new_session_id, prompt, grant=(), budget=None, effort=None, model=None,
-                full=False):
+                full=False, ultracode=False):
         cmd = [self.claude, '-p', '--resume', session_id, '--fork-session',
                '--session-id', new_session_id,
                # Every event on stdout as it happens: what the runner posts to
@@ -404,10 +404,15 @@ class ClaudeCodeWaker:
             cmd += ['--max-budget-usd', f'{budget:.2f}']
         if effort:
             cmd += ['--effort', effort]
+        if ultracode and full:
+            # Claude Code's standing multi-agent workflows, at any effort: a
+            # session setting, not an effort level. Only with full tools --
+            # a look-only turn couldn't run a workflow anyway.
+            cmd += ['--settings', json.dumps({'ultracode': True})]
         return cmd + ['--', prompt]
 
     def wake(self, session_id, prompt, new_session_id=None, on_event=None, grant=(), budget=None, effort=None,
-             model=None, full=False, stop=None):
+             model=None, full=False, stop=None, ultracode=False):
         """Run one turn; (new session id, its reply). `on_event` sees every
         stream event as it comes out; `stop()`, if given, is asked now and
         then whether to end the turn. self.last_result keeps the run's
@@ -418,7 +423,7 @@ class ClaudeCodeWaker:
         new_session_id = new_session_id or str(uuid.uuid4())
         spent_before = self.session_cost(session_id)
         cmd = self.command(session_id, new_session_id, prompt, grant=grant, budget=budget, effort=effort, model=model,
-                           full=full)
+                           full=full, ultracode=ultracode)
         # Its own process group, so ending it ends everything it started: a
         # child left holding the output pipe would keep the turn open.
         proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -523,7 +528,7 @@ class MotionPoller:
                  max_wakes_per_hour=30, dry_run=False, now=None, streamer=None, mention_effort='high',
                  screen=None, consider=True, considers_per_hour=6, consider_usd_per_day=10.0,
                  consider_budget=3.0, consider_effort='medium', debounce=10, idle_first=3000,
-                 full_tools_for=('justin',), parallel=0):
+                 full_tools_for=('justin',), parallel=0, motions=None):
         self.api = api
         self.waker = waker
         self.agent = agent.lower()
@@ -543,6 +548,10 @@ class MotionPoller:
         # unprompted look, can look but not touch. Widen it once docker.sock
         # is out of hunter's containers and Motions have their own workspaces.
         self.full_tools_for = tuple(full_tools_for or ())
+        # Only these Motions, if given: a Motion's own container answers
+        # only that Motion (its sessions live there and nowhere else).
+        self.motions = set(motions) if motions else None
+        self.resumable = {}  # slug -> (whether its newest session is ours to wake, when we asked)
         # The consider loop (see the comment above consider_once).
         self.screen = screen
         self.consider_enabled = consider
@@ -683,6 +692,8 @@ class MotionPoller:
 
         woken = []
         for slug, mentioned in pending.items():
+            if self.motions is not None and slug not in self.motions:
+                continue  # another runner's Motion
             if self.listening(slug) == 'off':
                 # Held, not dropped: answered once the agent is listening again.
                 self.hold(slug, 'hushed here', (self.knob(slug, 'listening') or {}).get('until'))
@@ -756,6 +767,8 @@ class MotionPoller:
         self.save()
         options = dict(effort=self.knob(slug, 'mention_effort', self.mention_effort), model=self.knob(slug, 'model'),
                        full=full)
+        if full and self.knob(slug, 'ultracode'):
+            options['ultracode'] = True
         outcome = self.launch(slug, lambda: self.run_turn(slug, sessions[0], prompt, **options))
         return settled, outcome
 
@@ -915,6 +928,8 @@ class MotionPoller:
             self.settings = {m['slug']: m.get('settings') or {} for m in pulse.get('motions', [])}
         done = []
         for m in pulse.get('motions', []):
+            if (self.motions is not None and m['slug'] not in self.motions) or not self.ours(m['slug']):
+                continue  # another runner's to consider: screening it here would only duplicate its dots
             try:
                 outcome = self.consider_motion(m)
             except Exception as e:  # one Motion's trouble is not every Motion's
@@ -923,6 +938,23 @@ class MotionPoller:
             if outcome:
                 done.append((m['slug'], outcome))
         return done
+
+    OURS_FOR = timedelta(seconds=60)
+
+    def ours(self, slug):
+        """Whether this runner can wake the agent in `slug`: its newest session there
+        is on this machine. Asked at most once a minute per Motion."""
+        known = self.resumable.get(slug)
+        if known and self.now() - known[1] < self.OURS_FOR:
+            return known[0]
+        try:
+            sessions = self.api.sessions(slug, self.agent)
+            mine = bool(sessions) and self.waker.can_wake(sessions[0])
+        except Exception as e:
+            logger.warning(f'{slug}: could not tell whose it is: {e}')
+            mine = False
+        self.resumable[slug] = (mine, self.now())
+        return mine
 
     def consider_motion(self, m):
         slug, now = m['slug'], self.now()
@@ -1140,7 +1172,7 @@ def main(argv=None):
     parser.add_argument('--interval', type=float, default=1.0, help='Seconds between looks (two cheap GETs)')
     parser.add_argument('--grace', type=int, default=600, help='Seconds to leave for a live session to answer')
     parser.add_argument('--max-wakes-per-hour', type=int, default=30)
-    parser.add_argument('--parallel', type=int, default=4,
+    parser.add_argument('--parallel', type=int, default=8,
                         help='Turns at once, at most one per Motion (0: one at a time, each run to its end)')
     parser.add_argument('--model', default=None)
     parser.add_argument('--mention-effort', default='high', help='Effort for a turn woken by a mention')
@@ -1148,6 +1180,8 @@ def main(argv=None):
                         help='Seconds a turn with full tools may run at most (default: no limit; others: 900)')
     parser.add_argument('--quiet-limit', type=int, default=1500,
                         help='Seconds of silence after which a turn with full tools is presumed hung and ended')
+    parser.add_argument('--motions', default='',
+                        help="Comma-separated: answer only these Motions (a Motion's own container); default all")
     parser.add_argument('--full-tools-for', default='justin',
                         help="Comma-separated: a mention wake gets full tools when every post that woke it is "
                              "from these people ('' for nobody)")
@@ -1182,7 +1216,8 @@ def main(argv=None):
                           considers_per_hour=args.considers_per_hour,
                           consider_usd_per_day=args.consider_usd_per_day, consider_budget=args.consider_budget,
                           consider_effort=args.consider_effort, debounce=args.debounce, idle_first=args.idle_first,
-                          full_tools_for=[n.strip() for n in args.full_tools_for.split(',') if n.strip()])
+                          full_tools_for=[n.strip() for n in args.full_tools_for.split(',') if n.strip()],
+                          motions=[n.strip() for n in args.motions.split(',') if n.strip()] or None)
     while True:
         try:
             poller.cycle()

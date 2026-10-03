@@ -181,3 +181,48 @@ def api_say(request, slug):
         timestamp=int(time.time() * 1000), source_file=WEB_SOURCE,
     )
     return JsonResponse({'id': str(message.id)}, status=201)
+
+
+@require_POST
+def api_rename(request, slug):
+    """Rename a Motion (its title, and optionally its description), as the device's person.
+
+    Body: {"title": "...", "description": "..."}. The slug -- the Motion's
+    key, in every link -- never changes. The record keeps what it was called
+    before: a system row in the Motion says who renamed it, from what, to what.
+    """
+    from .models import ConversationParticipant
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = motion_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to rename'}, status=401)
+    motion = get_object_or_404(Motion, slug=slug)
+    try:
+        body = json.loads(request.body)
+        title = str(body.get('title', '')).replace('\x00', '').strip()
+        description = body.get('description')
+        if description is not None:
+            description = str(description).replace('\x00', '').strip()
+    except (ValueError, AttributeError):
+        return JsonResponse({'error': 'expected {"title": ...}'}, status=400)
+    if not title:
+        return JsonResponse({'error': 'a title, please'}, status=400)
+    if len(title) > 200 or (description is not None and len(description) > 2000):
+        return JsonResponse({'error': 'at most 200 characters for a title, 2000 for a description'}, status=400)
+
+    was = {'title': motion.title, 'description': motion.description}
+    motion.title = title
+    fields = ['title']
+    if description is not None:
+        motion.description = description
+        fields.append('description')
+    motion.save(update_fields=fields)
+    system, _ = ConversationParticipant.objects.get_or_create(name='system', defaults={'participant_type': 'system'})
+    Message.objects.create(
+        id=uuid.uuid4(), sender=system, motion=motion, timestamp=int(time.time() * 1000), source_file='motion-rename',
+        content={'type': 'renamed', 'by': device.entity_id, 'from': was,
+                 'to': {'title': motion.title, 'description': motion.description}},
+    )
+    return JsonResponse({'title': motion.title, 'description': motion.description})

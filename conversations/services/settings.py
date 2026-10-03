@@ -37,6 +37,8 @@ KNOBS = {
     'model': ('', "Which model it runs on here: 'opus', 'sonnet', 'fable', 'haiku', or a full name. "
                   "Empty: its harness's default."),
     'rules': ('', 'How it should carry itself here, in a few lines. It reads this at every wake.'),
+    'ultracode': (False, "Its full-tools mention wakes here run with Claude Code's ultracode on: standing "
+                         "multi-agent workflows, at any effort. Thorough, and costly."),
 }
 GLOBAL_KNOBS = {
     'consider_usd_per_day': (10.0, 'Dollars a day across screens and considerations (mentions not counted).'),
@@ -87,6 +89,14 @@ def clean(key, value):
         if not re.fullmatch(r'[a-z0-9.\-]{0,60}', value):
             raise Invalid('model: letters, digits, dots and dashes')
         return value
+    if key == 'ultracode':
+        if value in (True, False):
+            return value
+        if str(value).lower() in ('true', 'on', '1', 'yes'):
+            return True
+        if str(value).lower() in ('false', 'off', '0', 'no', ''):
+            return False
+        raise Invalid('ultracode: on or off')
     if key == 'rules':
         value = str(value or '').strip()
         if len(value) > 4000:
