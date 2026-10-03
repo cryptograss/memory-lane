@@ -204,3 +204,22 @@ class MoodMemoryToolsTest(TestCase):
         self.assertNotIn('line 2', tail)
         self.assertIn('line 3', tail)
         self.assertIn("No Mood 'nowhere'", read_mood_text('nowhere'))
+
+
+class ReadFromTest(TestCase):
+    """?from= reads one Mood from one of its own messages, never another's."""
+
+    def test_from_a_message_in_this_mood_only(self):
+        justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        a = Motion.objects.create(slug='a')
+        b = Motion.objects.create(slug='b')
+        first = Message.objects.create(id=uuid.uuid4(), sender=justin, motion=a, content='in a, first',
+                                       timestamp=int(time.time() * 1000))
+        Message.objects.create(id=uuid.uuid4(), sender=justin, motion=b, content='in b, meanwhile',
+                               timestamp=int(time.time() * 1000) + 1)
+        Message.objects.create(id=uuid.uuid4(), sender=justin, motion=a, content='in a, then',
+                               timestamp=int(time.time() * 1000) + 2)
+        texts = [t['text'] for t in self.client.get(f'/api/motions/a/turns/?from={first.id}').json()['turns']]
+        self.assertEqual(texts, ['in a, first', 'in a, then'])
+        wrong = self.client.get(f'/api/motions/b/turns/?from={first.id}')
+        self.assertEqual((wrong.status_code, wrong.json()['motion']), (404, 'a'))

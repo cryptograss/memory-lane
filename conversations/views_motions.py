@@ -67,6 +67,10 @@ def api_motion_turns(request, slug):
     # ?from=<id>: that message and everything since -- what a runner reads
     # when a post links a message to read from.
     start = _message_or_none(request.GET['from']) if request.GET.get('from') else None
+    if request.GET.get('from') and (start is None or start.motion_id != motion.slug):
+        # Never this Mood read from another's moment: the message must be here.
+        return JsonResponse({'error': 'no such message in this Mood',
+                             'motion': start.motion_id if start else None}, status=404)
     # A first load, or a page back, is the newest PAGE items; a poll is
     # everything since.
     limit = None if after is not None or start is not None else PAGE
