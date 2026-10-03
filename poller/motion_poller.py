@@ -379,6 +379,37 @@ class ClaudeCodeWaker:
                     continue
         return total
 
+    # Writing a session's context into the prompt cache, per million tokens:
+    # what resuming it costs once the cache has gone cold (an hour, at most).
+    # Opus's rate, measured 2026-10-01; other models cost less, so it's an upper bound.
+    COLD_USD_PER_MTOK = 6.25
+    TAIL_BYTES = 4 * 1024 * 1024
+
+    def context_tokens(self, session_id):
+        """How much a session's model last read: its newest assistant line's input and cache tokens (0 if unknown).
+        Only the file's tail is read -- a long session's transcript runs to tens of megabytes."""
+        path = self.find(session_id)
+        if path is None:
+            return 0
+        with open(path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - self.TAIL_BYTES))
+            lines = f.read().decode('utf-8', errors='replace').splitlines()
+        for line in reversed(lines):
+            if '"usage"' not in line or '"assistant"' not in line:
+                continue
+            try:
+                usage = (json.loads(line).get('message') or {}).get('usage') or {}
+            except ValueError:
+                continue
+            return sum(int(usage.get(k) or 0) for k in
+                       ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
+        return 0
+
+    def cold_read_usd(self, session_id):
+        """What reading `session_id` into a cold cache costs, at most."""
+        return self.context_tokens(session_id) / 1e6 * self.COLD_USD_PER_MTOK
+
     def command(self, session_id, new_session_id, prompt, grant=(), budget=None, effort=None, model=None,
                 full=False, ultracode=False):
         cmd = [self.claude, '-p', '--resume', session_id, '--fork-session',
@@ -436,6 +467,7 @@ class ClaudeCodeWaker:
         watchdog = threading.Thread(target=self.watch, args=(proc, full, heard, done, stop), daemon=True)
         watchdog.start()
         result = None
+        said = ''  # the last text the agent itself wrote (not a helper's)
         try:
             for raw in proc.stdout:
                 heard[0] = time.monotonic()
@@ -447,6 +479,11 @@ class ClaudeCodeWaker:
                     continue
                 if event.get('type') == 'result':
                     result = event
+                elif event.get('type') == 'assistant' and not event.get('parent_tool_use_id'):
+                    blocks = (event.get('message') or {}).get('content') or []
+                    texts = [b.get('text', '') for b in blocks if isinstance(b, dict) and b.get('type') == 'text']
+                    if any(t.strip() for t in texts):
+                        said = '\n'.join(t for t in texts if t.strip())
                 if on_event:
                     try:
                         on_event(event)
@@ -461,7 +498,9 @@ class ClaudeCodeWaker:
             self.last_result['run_cost_usd'] = max(0.0, float(result.get('total_cost_usd') or 0.0) - spent_before)
         if result is None:
             raise RuntimeError(f'claude exited {proc.returncode} without a result: {"".join(stderr).strip()[:500]}')
-        return new_session_id, (result.get('result') or '').strip()
+        # A run that ends in an error -- over its budget, say -- may still have
+        # said something; its result then carries no text, but the stream does.
+        return new_session_id, (result.get('result') or said or '').strip()
 
 
     def watch(self, proc, full, heard, done, stop):
@@ -840,8 +879,10 @@ class MotionPoller:
         if poster:
             poster.close()
         cost = (getattr(self.waker, 'last_result', None) or {}).get('run_cost_usd')
-        logger.info(f'{slug}: woke {session_id} as {new_session}; '
-                    f'{"stayed silent" if _SILENT_REPLY.match(reply or "") else f"replied {len(reply)} chars"}'
+        ending = (getattr(self.waker, 'last_result', None) or {}).get('subtype') or ''
+        said = ('stayed silent' if _SILENT_REPLY.match(reply or '') else f'replied {len(reply)} chars' if reply
+                else f'ended without a word ({ending or "no reply"})')
+        logger.info(f'{slug}: woke {session_id} as {new_session}; {said}'
                     + (f'; ${cost:.4f}' if isinstance(cost, (int, float)) else '')
                     + (f'; streamed {poster.sent}, lost {poster.failed}' if poster else ''))
         return 'woken', reply, cost if isinstance(cost, (int, float)) else 0.0
@@ -1083,14 +1124,18 @@ class MotionPoller:
         st['wakes'] = [w for w in st.get('wakes', []) if self.now() - parse_time(w) < timedelta(hours=1)]
         st['wakes'].append(self.now().isoformat())
         self.save()  # recorded before the turn runs, as for mentions
-        options = dict(effort=self.knob(slug, 'consider_effort', self.consider_effort), budget=self.consider_budget,
+        # The cap is for what the consideration does, on top of reading the
+        # session: a cold read of a long one alone can pass $4, and a cap below
+        # it ends the turn after its first response, before it can look anything up.
+        cold = getattr(self.waker, 'cold_read_usd', lambda s: 0.0)(sessions[0])
+        options = dict(effort=self.knob(slug, 'consider_effort', self.consider_effort), budget=self.consider_budget + cold,
                        model=self.knob(slug, 'model'))
 
         def turn():
             outcome, reply, cost = self.run_turn_for(slug, sessions[0], prompt, **options)
-            if outcome == 'failed':
-                return 'failed', cost
-            return ('silent' if _SILENT_REPLY.match(reply or '') else 'spoke'), cost
+            if outcome == 'failed' or not (reply or '').strip():
+                return 'failed', cost  # a turn that said nothing didn't speak: the wait still doubles
+            return ('silent' if _SILENT_REPLY.match(reply) else 'spoke'), cost
 
         def settle(result):
             outcome, cost = result if isinstance(result, tuple) else (result, 0.0)
