@@ -98,8 +98,10 @@ class DevicesTest(TestCase):
                                     row.content['namespace'], '-s', sig], input=row.content['signed'],
                                    capture_output=True, text=True)
         self.assertEqual(check.returncode, 0, check.stderr)
-        turns = self.client.get('/api/motions/general/turns/').json()['turns']
+        body = self.client.get('/api/motions/general/turns/').json()
+        turns = body['turns']
         self.assertEqual(turns[0]['text'], words)
+        self.assertIsNone(body['activity'])  # posted words, not a session's prompt with an agent at work
         self.assertTrue(turns[0]['attested']['signature'])
         # Signed words can't be swapped for others.
         forged = self.signed_post('/api/attest/', 'attest', {'text': 'I owe magent $100.'}, text=words)
