@@ -36,6 +36,8 @@ def prose(content):
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, dict):
+        if content.get('type') == 'attestation':
+            return str(content.get('text', '')).strip()  # a statement signed with someone's key
         return ''  # a tool call
     if isinstance(content, list):
         parts = []
@@ -391,6 +393,8 @@ def timeline(motion, after=None, before=None, limit=None):
         rows = rows.filter(created_at__lt=before.created_at)
 
     def item(msg):
+        if msg.source_file == 'deploy' and isinstance(msg.content, dict):
+            return ('event', msg, msg.content)  # a server redeployed: a line in the thread
         if msg.sender_id in MACHINERY_SENDERS or msg.sender_id not in speakers:
             return None
         if hasattr(msg, 'tooluse'):
@@ -505,8 +509,18 @@ def how_payload(msg):
     return {'model': model_label(msg.model_backend), 'effort': msg.effort or ''}
 
 
+def attestation_of(msg):
+    """What makes a turn an attestation -- exactly what was signed, the
+    signature, the key -- or None."""
+    c = msg.content
+    if msg.source_file != 'motion-attest' or not isinstance(c, dict) or c.get('type') != 'attestation':
+        return None
+    return {k: c.get(k, '') for k in ('signed', 'signature', 'key', 'namespace')}
+
+
 def turn_payload(msg, text, mentionable=()):
     return {
+        'attested': attestation_of(msg),
         **how_payload(msg),
         'id': str(msg.id),
         'sender': msg.sender_id,

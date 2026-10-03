@@ -71,13 +71,16 @@ def api_motion_turns(request, slug):
         limit = max(1, min(int(request.GET['limit']), PAGE))
 
     names = known_names()
-    turns_out, step_msgs, quiet_out, thoughts_out, compactions_out = [], [], [], [], []
+    turns_out, step_msgs, quiet_out, thoughts_out, compactions_out, events_out = [], [], [], [], [], []
     for kind, msg, text in timeline(motion, after=after, before=before, limit=limit):
         if kind == 'turn':
             turns_out.append(turn_payload(msg, text, names))
         elif kind == 'thought':
             thoughts_out.append({'id': str(msg.id), 'sender': msg.sender_id,
                                  'created_at': msg.created_at.isoformat(), 'text': text})
+        elif kind == 'event':
+            events_out.append({'id': str(msg.id), 'created_at': msg.created_at.isoformat(),
+                               **{k: text.get(k) for k in ('type', 'server', 'state', 'commit', 'by', 'note', 'took')}})
         elif kind == 'compaction':
             compactions_out.append({'id': str(msg.id), 'session_id': str(msg.session_id or ''),
                                     'created_at': msg.created_at.isoformat(), 'html': render_html(text)})
@@ -88,8 +91,8 @@ def api_motion_turns(request, slug):
             step_msgs.append(msg)
     images = step_images(step_msgs)
     steps_out = [{**step_payload(m), 'images': images.get(str(m.id), [])} for m in step_msgs]
-    first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out + compactions_out],
-                default=None)
+    first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out + compactions_out
+                 + events_out], default=None)
     agents = agents_in(motion)
     return JsonResponse({
         'motion': motion_payload(motion),
@@ -103,6 +106,8 @@ def api_motion_turns(request, slug):
         'thoughts': thoughts_out,
         # Where a session's context was compacted, and the summary it went on from.
         'compactions': compactions_out,
+        # Things that happened around the conversation: a server redeployed.
+        'events': events_out,
         'has_earlier': bool(limit) and first is not None and motion.messages.filter(
             is_sidechain=False, created_at__lt=first).exists(),
         'activity': activity(motion),
@@ -442,6 +447,18 @@ def api_recent(request):
         value = row.value if not isinstance(row.value, dict) else (row.value.get('mode') or row.value)
         events.append({'kind': 'set', 'at': row.created_at.isoformat(), 'motion': row.motion_id,
                        'who': row.set_by_id or '', 'text': f"{row.key} for {row.agent_id or 'every agent'}: {value}"[:140]})
+
+    told = set()  # a redeploy is announced in several Moods; list it once
+    for row in (Message.objects.filter(source_file='deploy', created_at__gt=since).order_by('-created_at')
+                .values('content', 'created_at')[:limit * 10]):
+        c = row['content'] if isinstance(row['content'], dict) else {}
+        key = (c.get('server'), c.get('state'), row['created_at'].replace(microsecond=0).isoformat()[:18])
+        if key in told:
+            continue
+        told.add(key)
+        verb = {'started': 'redeploy started', 'finished': 'redeployed', 'failed': 'redeploy failed'}.get(c.get('state'), '')
+        events.append({'kind': 'deploy', 'at': row['created_at'].isoformat(), 'motion': None, 'who': c.get('by', ''),
+                       'text': f"{c.get('server')} {verb}" + (f" · {c['commit'][:8]}" if c.get('commit') else '')})
 
     for motion in Motion.objects.filter(created_at__gt=since).order_by('-created_at')[:limit]:
         events.append({'kind': 'opened', 'at': motion.created_at.isoformat(), 'motion': motion.slug, 'who': '',

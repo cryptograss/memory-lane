@@ -215,6 +215,11 @@ TOOL_RESULT_CONTENT_CHARS = int(os.getenv('TOOL_RESULT_CONTENT_CHARS', '0'))
 MOTION_RUNNER_KEYS = dict(
     pair.split(':', 1) for pair in os.getenv('MOTION_RUNNER_KEYS', '').split(',') if ':' in pair)
 
+# The deploy scripts on maybelle (maybelle-config's report-deploy.sh) tell the
+# Moods when a server is being redeployed, with this key from the vault
+# (memory_lane_deploy_key). Unset, nobody can.
+MOTION_DEPLOY_KEY = os.getenv('MOTION_DEPLOY_KEY', '')
+
 # Who may kick, ban, scram (AZ5) and lift, with their SSH key
 # (conversations/views_admin.py): "justin,skyler". Unset, nobody can.
 MOTION_ADMINS = tuple(n.strip().lower() for n in os.getenv('MOTION_ADMINS', '').split(',') if n.strip())
