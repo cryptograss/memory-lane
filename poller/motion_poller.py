@@ -528,7 +528,7 @@ class MotionPoller:
                  max_wakes_per_hour=30, dry_run=False, now=None, streamer=None, mention_effort='high',
                  screen=None, consider=True, considers_per_hour=6, consider_usd_per_day=10.0,
                  consider_budget=3.0, consider_effort='medium', debounce=10, idle_first=3000,
-                 full_tools_for=('justin',), parallel=0):
+                 full_tools_for=('justin',), parallel=0, motions=None):
         self.api = api
         self.waker = waker
         self.agent = agent.lower()
@@ -548,6 +548,10 @@ class MotionPoller:
         # unprompted look, can look but not touch. Widen it once docker.sock
         # is out of hunter's containers and Motions have their own workspaces.
         self.full_tools_for = tuple(full_tools_for or ())
+        # Only these Motions, if given: a Motion's own container answers
+        # only that Motion (its sessions live there and nowhere else).
+        self.motions = set(motions) if motions else None
+        self.resumable = {}  # slug -> (whether its newest session is ours to wake, when we asked)
         # The consider loop (see the comment above consider_once).
         self.screen = screen
         self.consider_enabled = consider
@@ -688,6 +692,8 @@ class MotionPoller:
 
         woken = []
         for slug, mentioned in pending.items():
+            if self.motions is not None and slug not in self.motions:
+                continue  # another runner's Motion
             if self.listening(slug) == 'off':
                 # Held, not dropped: answered once the agent is listening again.
                 self.hold(slug, 'hushed here', (self.knob(slug, 'listening') or {}).get('until'))
@@ -922,6 +928,8 @@ class MotionPoller:
             self.settings = {m['slug']: m.get('settings') or {} for m in pulse.get('motions', [])}
         done = []
         for m in pulse.get('motions', []):
+            if (self.motions is not None and m['slug'] not in self.motions) or not self.ours(m['slug']):
+                continue  # another runner's to consider: screening it here would only duplicate its dots
             try:
                 outcome = self.consider_motion(m)
             except Exception as e:  # one Motion's trouble is not every Motion's
@@ -930,6 +938,23 @@ class MotionPoller:
             if outcome:
                 done.append((m['slug'], outcome))
         return done
+
+    OURS_FOR = timedelta(seconds=60)
+
+    def ours(self, slug):
+        """Whether this runner can wake the agent in `slug`: its newest session there
+        is on this machine. Asked at most once a minute per Motion."""
+        known = self.resumable.get(slug)
+        if known and self.now() - known[1] < self.OURS_FOR:
+            return known[0]
+        try:
+            sessions = self.api.sessions(slug, self.agent)
+            mine = bool(sessions) and self.waker.can_wake(sessions[0])
+        except Exception as e:
+            logger.warning(f'{slug}: could not tell whose it is: {e}')
+            mine = False
+        self.resumable[slug] = (mine, self.now())
+        return mine
 
     def consider_motion(self, m):
         slug, now = m['slug'], self.now()
@@ -1155,6 +1180,8 @@ def main(argv=None):
                         help='Seconds a turn with full tools may run at most (default: no limit; others: 900)')
     parser.add_argument('--quiet-limit', type=int, default=1500,
                         help='Seconds of silence after which a turn with full tools is presumed hung and ended')
+    parser.add_argument('--motions', default='',
+                        help="Comma-separated: answer only these Motions (a Motion's own container); default all")
     parser.add_argument('--full-tools-for', default='justin',
                         help="Comma-separated: a mention wake gets full tools when every post that woke it is "
                              "from these people ('' for nobody)")
@@ -1189,7 +1216,8 @@ def main(argv=None):
                           considers_per_hour=args.considers_per_hour,
                           consider_usd_per_day=args.consider_usd_per_day, consider_budget=args.consider_budget,
                           consider_effort=args.consider_effort, debounce=args.debounce, idle_first=args.idle_first,
-                          full_tools_for=[n.strip() for n in args.full_tools_for.split(',') if n.strip()])
+                          full_tools_for=[n.strip() for n in args.full_tools_for.split(',') if n.strip()],
+                          motions=[n.strip() for n in args.motions.split(',') if n.strip()] or None)
     while True:
         try:
             poller.cycle()

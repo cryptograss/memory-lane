@@ -619,6 +619,37 @@ class UltracodeTest(TestCase):
         self.assertIs(waker.options.get('ultracode'), True)
 
 
+class WhoseMotionTest(TestCase):
+    """Several runners (a person's container, a Mood's own) each answer only what they can wake."""
+
+    def make(self, api, waker, **kwargs):
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        state.write_text(json.dumps({'since': (T0 - timedelta(hours=1)).isoformat(), 'handled': [], 'wakes': []}))
+        return MotionPoller(api, waker, state_path=state, now=lambda: T0 + timedelta(minutes=15), consider=False,
+                            **kwargs)
+
+    def test_a_moods_own_runner_answers_only_that_mood(self):
+        api = FakeAPI([mention('delivery-kid', dict(turn('a', 'skyler', 14), via='web')),
+                       mention('m26', dict(turn('b', 'justin', 14), via='web'))],
+                      sessions={'delivery-kid': ['s-local'], 'm26': ['s-local']})
+        waker = FakeWaker()
+        poller = self.make(api, waker, motions=['delivery-kid'])
+        self.assertEqual(poller.poll_once(), ['delivery-kid'])
+        self.assertEqual(len(waker.woken), 1)
+
+    def test_the_consider_loop_leaves_moods_it_cannot_wake(self):
+        api = ConsiderAPI(turns=[post('a', 1)])
+        screen = FakeScreen()
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        clock = [T0]
+        poller = MotionPoller(api, FakeWaker(local=()), state_path=state, now=lambda: clock[0], screen=screen)
+        poller.consider_once()
+        api.turns.append(post('b', 2))
+        clock[0] = T0 + timedelta(minutes=5)
+        self.assertEqual(poller.consider_once(), [])  # its session lives elsewhere: not screened here
+        self.assertEqual((screen.prompts, api.quiets), ([], []))
+
+
 class DefaultsTest(TestCase):
 
     def test_eight_turns_at_once_by_default(self):
