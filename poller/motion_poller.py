@@ -126,6 +126,11 @@ class MotionAPI:
                                   headers={'Authorization': f'Bearer {self.key}'}, timeout=30)
         return response.status_code == 201
 
+    def interrupt(self, slug, agent):
+        """{'scram', 'interrupt'}: whether an AZ5 is in force, and the newest
+        time someone stopped `agent` in `slug` ({'by', 'at', ...} or None)."""
+        return self._get(f'/api/motions/{slug}/interrupt/', agent=agent)
+
     def held(self, slug, reason, until=None):
         """Say the agent's next turn in `slug` is held, and why; no reason lifts it."""
         if not self.key:
@@ -312,14 +317,15 @@ class ClaudeCodeWaker:
     """Starts one Claude Code turn by forking a session that exists on this machine."""
 
     def __init__(self, projects_dir='~/.claude/projects', claude='claude', timeout=900, model=None,
-                 full_timeout=None, quiet_limit=1500, check_every=15):
+                 full_timeout=None, quiet_limit=1500, check_every=3):
         self.projects_dir = Path(projects_dir).expanduser()
         self.claude = claude
         self.timeout = timeout
         # A turn with full tools is asked for real work, which takes as long
         # as it takes: no clock by default. What ends it is silence (no event
         # for quiet_limit seconds: a hung pipe or a tool that never returns,
-        # not a long think) or a stop: an AZ5, checked every check_every s.
+        # not a long think) or a stop -- an AZ5, or someone pressing stop in
+        # the Motion -- checked every check_every s.
         self.full_timeout = full_timeout
         self.quiet_limit = quiet_limit
         self.check_every = check_every
@@ -641,12 +647,29 @@ def linked_message(posts):
     return None
 
 
-def compact_request(text, agent):
-    """For a post like "@magent /compact [what to keep]": what to keep ('' for
-    nothing in particular). None if the post asks something else."""
+# Claude Code's own commands a post can run as they are, instead of a turn,
+# and what each takes after it. Others either aren't available in the mode
+# wakes run in (/status, /rewind, /btw, /memory, /help), are knobs already
+# (/model, /effort), or would throw the session away (/clear).
+COMMANDS = {
+    'compact': True,   # what to keep, optionally
+    'context': False,  # what fills the context, by kind
+    'usage': False,    # the subscription's limits, used so far
+    'cost': False,     # the same as /usage
+}
+
+
+def command_request(text, agent):
+    """For a post like "@magent /compact [what to keep]": the command line
+    to run ('/compact what to keep'). None if the post asks something else."""
     rest = re.sub(rf'@{re.escape(agent)}\b', '', text or '').strip()
-    match = re.match(r'/compact(?:\s+(.*))?\Z', rest, re.S | re.I)
-    return (match.group(1) or '').strip() if match else None
+    match = re.match(r'/([a-z]+)(?:\s+(.*))?\Z', rest, re.S | re.I)
+    if not match or match.group(1).lower() not in COMMANDS:
+        return None
+    name, args = match.group(1).lower(), (match.group(2) or '').strip()
+    if args and not COMMANDS[name]:
+        return None  # "/usage of the word banjo" is a question, not the command
+    return f'/{name} {args}'.strip()
 
 
 def since_last_word(turns, agent, before_id=None):
@@ -889,13 +912,24 @@ class MotionPoller:
             self.hold(slug, f'{self.max_wakes_per_hour} wakes this hour already', opens)
             return settled, None
 
-        # "@magent /compact" from someone trusted with real work: compact the
-        # session instead of taking a turn. Anything else owed here waits for
-        # the next look, and is answered from the compacted session.
-        compacts = [t for t in owed if t['sender'] in self.full_tools_for
-                    and compact_request(t['text'], self.agent) is not None]
-        if compacts:
-            owed = compacts
+        # Someone pressed stop here after these were posted: let them go. What
+        # they said stays in the Motion, read by the next mention's wake.
+        stopped = self.stopped_at(slug)
+        if stopped:
+            let_go = [t for t in owed if parse_time(t['created_at']) <= stopped]
+            if let_go:
+                logger.info(f'{slug}: let go of {len(let_go)} mention(s): stopped after they were posted')
+                settled += [t['id'] for t in let_go]
+                owed = [t for t in owed if t not in let_go]
+                if not owed:
+                    return settled, 'stopped'
+        # "@magent /compact" (or another of COMMANDS) from someone trusted with
+        # real work: run it instead of a turn. Anything else owed here waits
+        # for the next look, and is answered from the session it leaves.
+        commands = [t for t in owed if t['sender'] in self.full_tools_for
+                    and command_request(t['text'], self.agent) is not None]
+        if commands:
+            owed = commands[:1]
         sessions = self.api.sessions(slug, self.agent)
         settled += [t['id'] for t in owed]
         if not sessions or not self.waker.can_wake(sessions[0]):
@@ -905,10 +939,9 @@ class MotionPoller:
             return settled, 'elsewhere'
 
         full = bool(self.full_tools_for) and all(t['sender'] in self.full_tools_for for t in owed)
-        if compacts:
-            keep = compact_request(compacts[-1]['text'], self.agent)
-            # Claude Code's own command; it needs no tools, and says nothing.
-            prompt, full = '/compact' + (f' {keep}' if keep else ''), False
+        if commands:
+            # Claude Code's own command, run as typed: no wake framing, no effort.
+            prompt = command_request(commands[0]['text'], self.agent)
         else:
             prompt = self.prompt(slug, owed, full=full)
         if self.dry_run:
@@ -921,8 +954,10 @@ class MotionPoller:
         self.save()
         options = dict(effort=self.knob(slug, 'mention_effort', self.mention_effort), model=self.knob(slug, 'model'),
                        full=full)
-        if compacts:
+        if commands:
             del options['effort']
+        # Stopped from the Motion after what woke it: end the turn.
+        options['since'] = owed[-1]['created_at']
         if full and self.knob(slug, 'ultracode'):
             options['ultracode'] = True
         outcome = self.launch(slug, lambda: self.run_turn(slug, sessions[0], prompt, **options))
@@ -969,6 +1004,35 @@ class MotionPoller:
                 except Exception as e:
                     logger.error(f'{slug}: settling a turn failed: {e}')
 
+    def stopped_at(self, slug):
+        """When someone last stopped this agent in `slug`, or None."""
+        try:
+            stop = (self.api.interrupt(slug, self.agent) or {}).get('interrupt')
+        except Exception as e:  # an older server, or a blip: nothing to let go of
+            logger.debug(f'{slug}: no word on stops: {e}')
+            return None
+        return parse_time(stop['at']) if stop and stop.get('at') else None
+
+    def stop_check(self, slug, since):
+        """What a running turn asks every few seconds: end now? Yes on an AZ5,
+        or if someone pressed stop in `slug` after `since` (ISO), when the
+        posts that woke it were made."""
+        since = parse_time(since) if since else self.now()
+
+        def stop():
+            try:
+                state = self.api.interrupt(slug, self.agent) or {}
+            except Exception:  # an older server: the AZ5 is still in the pulse
+                return self.scram_now()
+            if state.get('scram'):
+                return True
+            at = (state.get('interrupt') or {}).get('at')
+            if at and parse_time(at) >= since:
+                logger.warning(f'{slug}: stopped by {state["interrupt"].get("by")}')
+                return True
+            return False
+        return stop
+
     def scram_now(self):
         """Whether an AZ5 is in force: asked while a turn runs, so it ends that turn too."""
         return bool((self.api.pulse(self.agent) or {}).get('scram'))
@@ -982,9 +1046,10 @@ class MotionPoller:
         """Wake one turn; (outcome, reply, what it cost). Safe to run beside others."""
         new_session = str(uuid.uuid4())
         poster = self.streamer(slug, new_session) if self.streamer else None
+        stop = self.stop_check(slug, options.pop('since', None))
         try:
             new_session, reply = self.waker.wake(session_id, prompt, new_session_id=new_session,
-                                                 on_event=poster.put if poster else None, stop=self.scram_now,
+                                                 on_event=poster.put if poster else None, stop=stop,
                                                  **options)
         except Exception as e:
             logger.error(f'{slug}: wake failed, not retrying: {e}')
@@ -997,9 +1062,9 @@ class MotionPoller:
             poster.close()
         cost = (getattr(self.waker, 'last_result', None) or {}).get('run_cost_usd')
         ending = (getattr(self.waker, 'last_result', None) or {}).get('subtype') or ''
-        compacted = (getattr(self.waker, 'last_result', None) or {}).get('local_command') == 'compact'
-        said = ('stayed silent' if _SILENT_REPLY.match(reply or '') else f'replied {len(reply)} chars' if reply
-                else 'compacted' if compacted else f'ended without a word ({ending or "no reply"})')
+        command = (getattr(self.waker, 'last_result', None) or {}).get('local_command')
+        said = ('stayed silent' if _SILENT_REPLY.match(reply or '') else f'ran /{command}' if command
+                else f'replied {len(reply)} chars' if reply else f'ended without a word ({ending or "no reply"})')
         logger.info(f'{slug}: woke {session_id} as {new_session}; {said}'
                     + (f'; ${cost:.4f}' if isinstance(cost, (int, float)) else '')
                     + (f'; streamed {poster.sent}, lost {poster.failed}' if poster else ''))

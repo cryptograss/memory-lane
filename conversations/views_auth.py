@@ -356,3 +356,43 @@ def api_attest(request):
                  'namespace': motion_auth.NAMESPACE, 'key': motion_auth.public_key_of(name)})
     return JsonResponse({'id': str(message_row.id), 'motion': GENERAL,
                          'url': request.build_absolute_uri(f'/motions/{GENERAL}/#m-{message_row.id}')}, status=201)
+
+
+@require_http_methods(['GET', 'POST'])
+def api_interrupt(request, slug):
+    """Stop what an agent is doing in a Motion, as Esc does in a terminal.
+
+    POST {"agent": "magent"}, as the device's person: a turn under way ends
+    (its runner checks every few seconds), and a mention not yet answered is
+    let go -- posted by mistake, say, to be added to. What was said stays
+    in the Motion, so the next mention's wake still reads it. A line in the
+    thread says who stopped whom.
+
+    GET ?agent=magent: the newest such stop here, and whether an AZ5 is in
+    force -- what a runner asks while a turn runs. Readable by anyone, like
+    the thread it is a line in.
+    """
+    from .models import ConversationParticipant
+    from .services import settings as knobs
+    from .services.motion_view import INTERRUPT_SOURCE, latest_interrupt
+    from .views_admin import locked_response
+    motion = get_object_or_404(Motion, slug=slug)
+    if request.method == 'GET':
+        return JsonResponse({'scram': knobs.scram(), 'interrupt': latest_interrupt(motion, request.GET.get('agent'))})
+    if locked_response():
+        return locked_response()
+    device = motion_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to stop an agent'}, status=401)
+    try:
+        agent = str(json.loads(request.body or b'{}').get('agent') or 'magent').lower()
+    except (ValueError, AttributeError):
+        return JsonResponse({'error': 'expected {"agent": "<name>"}'}, status=400)
+    if not ThinkingEntity.objects.filter(name=agent, is_biological_human=False).exists():
+        return JsonResponse({'error': f'no agent named {agent}'}, status=400)
+    system, _ = ConversationParticipant.objects.get_or_create(name='system', defaults={'participant_type': 'system'})
+    Message.objects.create(id=uuid.uuid4(), sender=system, motion=motion, source_file=INTERRUPT_SOURCE,
+                           content={'type': 'interrupt', 'agent': agent, 'by': device.entity_id},
+                           timestamp=int(time.time() * 1000))
+    return JsonResponse({'interrupt': latest_interrupt(motion, agent)})
+

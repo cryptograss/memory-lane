@@ -143,6 +143,23 @@ class StreamTest(TestCase):
         self.post([helper])
         self.assertTrue(Message.objects.get(id=helper['uuid']).is_sidechain)
 
+    def test_a_commands_output_is_shown_and_leaves_the_pie_alone(self):
+        # /context's answer is a "<synthetic>" message that read nothing.
+        Message.objects.create(id=uuid.uuid4(), sender_id='magent', motion=self.motion, session_id=str(uuid.uuid4()),
+                               content=[{'type': 'text', 'text': 'Before.'}], timestamp=1, input_tokens=3,
+                               cache_read_input_tokens=400_000, model_backend='claude-opus-5-5')
+        s = self.session
+        table = event('assistant', [{'type': 'text', 'text': '## Context Usage\n\n**Tokens:** 400k / 1m (40%)'}],
+                      session_id=s)
+        table['message'].update({'model': '<synthetic>', 'stop_reason': 'end_turn',
+                                 'usage': {'input_tokens': 0, 'output_tokens': 0}})
+        done = {'type': 'result', 'subtype': 'success', 'is_error': False, 'result': table['message']['content'][0]['text'],
+                'num_turns': 0, 'local_command': 'context', 'session_id': s, 'uuid': str(uuid.uuid4())}
+        self.post([table, done])
+        turns = self.client.get('/api/motions/m26/turns/').json()
+        self.assertIn('Context Usage', turns['turns'][-1]['text'])
+        self.assertEqual(turns['agents']['magent']['context']['tokens'], 400_003)
+
     def test_a_compaction_streams_in_as_one_and_is_the_session_to_resume(self):
         # `/compact` run by the poller: no reply, just the summary the session
         # goes on from. It must count as the agent's, or the next wake would

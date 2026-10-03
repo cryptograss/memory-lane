@@ -87,7 +87,7 @@ def api_motion_turns(request, slug):
                                  'created_at': msg.created_at.isoformat(), 'text': text})
         elif kind == 'event':
             events_out.append({'id': str(msg.id), 'created_at': msg.created_at.isoformat(),
-                               **{k: text.get(k) for k in ('type', 'server', 'state', 'commit', 'by', 'note', 'took')}})
+                               **{k: text.get(k) for k in ('type', 'server', 'state', 'commit', 'by', 'note', 'took', 'agent')}})
         elif kind == 'compaction':
             compactions_out.append({'id': str(msg.id), 'session_id': str(msg.session_id or ''),
                                     'created_at': msg.created_at.isoformat(), 'html': render_html(text)})

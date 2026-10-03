@@ -274,6 +274,9 @@
   #activity b { color: var(--agent); }
   /* Held: owed a turn the runner isn't starting yet -- a still dot, not a pulse. */
   #activity.held .dot { animation: none; opacity: .35; }
+  #activity #stopBtn { margin-left: auto; font: inherit; font-size: 12px; padding: 2px 9px; border: 1px solid var(--line);
+                       border-radius: 10px; background: var(--panel); color: var(--muted); cursor: pointer; white-space: nowrap; }
+  #activity #stopBtn:hover { color: var(--err); border-color: var(--err); }
   @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
   .people { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .people .who { font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--code); }
@@ -476,7 +479,7 @@
     <button type="button" id="toBottom">↓ newest</button>
     <div id="typing"></div>
     <div id="tasks"></div>
-    <div id="activity"><span class="dot"></span><span id="activityText"></span></div>
+    <div id="activity"><span class="dot"></span><span id="activityText"></span><button type="button" id="stopBtn" title="Stop it, as Esc does in a terminal (Esc in the message box does the same). What was said stays; add to it and it reads both." hidden>■ stop</button></div>
     <div class="hush" id="hush"></div>
     <form id="composer" autocomplete="off">
       <div id="suggest"></div>
@@ -792,6 +795,13 @@
   }
   function addEvent(e, container) {
     const el = document.createElement('div');
+    if (e.type === 'interrupt') {  // someone pressed stop
+      el.className = 'event';
+      el.innerHTML = `■ <b>${esc(e.by || 'someone')}</b> stopped ${esc(e.agent || 'the agent')} · ${esc(stamp(e.created_at))}`;
+      container.appendChild(el);
+      prev = null;
+      return;
+    }
     el.className = 'event ' + (e.state || '');
     const commit = e.commit ? ` · <code>${esc(e.commit.slice(0, 8))}</code>` : '';
     const by = e.by ? ` · by ${esc(e.by)}` : '';
@@ -1637,6 +1647,26 @@
     markLive();
   }
 
+  // Stop what the agent here is doing: a turn under way ends within seconds,
+  // and a mention it hasn't answered yet is let go (POST .../interrupt/).
+  const stopBtn = document.getElementById('stopBtn');
+  async function interrupt() {
+    if (!act || act.doing === 'held' || !viewer || !current) return false;
+    stopBtn.disabled = true;
+    try {
+      const r = await fetch('/api/motions/' + encodeURIComponent(current) + '/interrupt/', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+        body: JSON.stringify({ agent: act.agent }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+      act = null; renderActivity();
+      await poll(false);
+    } catch (e) { showError('stop: ' + e.message); }
+    finally { stopBtn.disabled = false; }
+    return true;
+  }
+  stopBtn.addEventListener('click', interrupt);
+
   function renderActivity() {
     const turnsEl = document.getElementById('turns');
     const newest = turnsEl && turnsEl.lastElementChild;
@@ -1645,6 +1675,7 @@
     activityEl.classList.toggle('on', !!act);
     activityEl.classList.toggle('held', !!act && act.doing === 'held');
     markLive();
+    stopBtn.hidden = !(viewer && act && act.doing !== 'held');
     if (!act) return;
     const hhmm = iso => new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     activityText.innerHTML = act.doing === 'waking'
@@ -1770,7 +1801,11 @@
     } else if ((e.key === 'Enter' && !e.ctrlKey && !e.metaKey) || e.key === 'Tab') {
       e.preventDefault(); e.stopImmediatePropagation(); acceptSuggest(chosen);
       return;
-    } else if (e.key === 'Escape') { closeSuggest(); }
+    } else if (e.key === 'Escape') { e.preventDefault(); closeSuggest(); }
+  });
+  // Esc in the box, with no suggestions open: stop the agent, as in a terminal.
+  sayBox.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !e.defaultPrevented && act && act.doing !== 'held') { e.preventDefault(); interrupt(); }
   });
   suggest.addEventListener('mousedown', e => { const d = e.target.closest('[data-i]'); if (d) { e.preventDefault(); acceptSuggest(+d.dataset.i); } });
   sayBox.addEventListener('blur', () => setTimeout(closeSuggest, 150));

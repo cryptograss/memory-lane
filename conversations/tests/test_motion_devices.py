@@ -156,3 +156,49 @@ class ServersTest(TestCase):
     def test_without_a_key_nobody_tells_of_redeploys(self):
         with override_settings(MOTION_DEPLOY_KEY=''):
             self.assertEqual(self.deploy({'server': 'hunter', 'state': 'started'}).status_code, 503)
+
+
+@skipUnless(HAS_SSH_KEYGEN, 'needs ssh-keygen')
+class InterruptTest(DevicesTest):
+    """Stop in the Motion: who may, the line it leaves, and what a runner reads."""
+
+    def test_only_a_signed_in_person_may_stop_an_agent(self):
+        self.assertEqual(self.client.post('/api/motions/m26/interrupt/', '{}', content_type='application/json').status_code, 401)
+        client = self.sign_in()
+        post = lambda body: client.post('/api/motions/m26/interrupt/', json.dumps(body), content_type='application/json',
+                                        HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value)
+        self.assertEqual(post({'agent': 'justin'}).status_code, 400)  # a person, not an agent
+        stopped = post({'agent': 'magent'}).json()['interrupt']
+        self.assertEqual((stopped['agent'], stopped['by']), ('magent', 'justin'))
+
+    def test_what_a_runner_reads_and_the_line_in_the_thread(self):
+        from conversations.services import settings as knobs
+        self.assertEqual(self.client.get('/api/motions/m26/interrupt/', {'agent': 'magent'}).json(),
+                         {'scram': knobs.scram(), 'interrupt': None})
+        client = self.sign_in()
+        client.post('/api/motions/m26/interrupt/', '{"agent": "magent"}', content_type='application/json',
+                    HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value)
+        state = self.client.get('/api/motions/m26/interrupt/', {'agent': 'magent'}).json()
+        self.assertEqual(state['interrupt']['by'], 'justin')
+        events = self.client.get('/api/motions/m26/turns/').json()['events']
+        self.assertEqual([(e['type'], e['agent'], e['by']) for e in events], [('interrupt', 'magent', 'justin')])
+        # A line, not a word: the Mood's "last said" and its turns are untouched.
+        self.assertEqual(self.client.get('/api/motions/m26/turns/').json()['turns'], [])
+
+    def test_stopping_ends_waking_and_working_at_once(self):
+        import time
+        import uuid
+        from conversations.services.motion_view import activity
+        motion = Motion.objects.get(slug='m26')
+        now = time.time()
+        Message.objects.create(id=uuid.uuid4(), sender_id='justin', motion=motion, source_file='motion-web',
+                               content='@magent fix the', timestamp=int(now * 1000))
+        self.assertEqual(activity(motion, now=now + 1)['doing'], 'waking')
+        client = self.sign_in()
+        client.post('/api/motions/m26/interrupt/', '{"agent": "magent"}', content_type='application/json',
+                    HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value)
+        self.assertIsNone(activity(motion, now=time.time() + 1))
+        # What's posted after the stop wakes as usual.
+        Message.objects.create(id=uuid.uuid4(), sender_id='justin', motion=motion, source_file='motion-web',
+                               content='@magent ...banjo page, I meant', timestamp=int((time.time() + 2) * 1000))
+        self.assertEqual(activity(motion, now=time.time() + 3)['doing'], 'waking')

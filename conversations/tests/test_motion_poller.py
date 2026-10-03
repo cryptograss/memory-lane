@@ -1212,7 +1212,19 @@ class CompactTest(TestCase):
     def test_the_command_alone_is_what_runs(self):
         self.assertEqual(self.run_for(('justin', '@magent /compact')), ['/compact'])
         self.assertNotIn('effort', self.waker.options)
-        self.assertFalse(self.waker.options['full'])  # it needs no tools
+        # With the tools a turn of theirs would have, so /context counts what a real turn carries.
+        self.assertTrue(self.waker.options['full'])
+
+    def test_the_other_commands_and_what_they_take(self):
+        self.assertEqual(self.run_for(('justin', '@magent /context')), ['/context'])
+        self.assertEqual(self.run_for(('justin', '@magent /usage')), ['/usage'])
+        self.assertEqual(self.run_for(('justin', '@magent /cost')), ['/cost'])
+        # Words after a command that takes none: a question, not the command.
+        self.assertTrue(self.run_for(('justin', '@magent /usage of the word banjo?'))[0].startswith('<motion-wake'))
+        # Not one of ours (unavailable here, a knob already, or throws the session away): an ordinary mention.
+        for line in ('@magent /clear', '@magent /model sonnet', '@magent /rewind'):
+            with self.subTest(line=line):
+                self.assertTrue(self.run_for(('justin', line))[0].startswith('<motion-wake'))
 
     def test_what_to_keep_goes_with_it(self):
         self.assertEqual(self.run_for(('justin', '@magent /compact keep the setlist and the open PRs')),
@@ -1231,6 +1243,73 @@ class CompactTest(TestCase):
     def test_a_mention_of_compacting_is_not_the_command(self):
         prompts = self.run_for(('justin', '@magent should we /compact soon?'))
         self.assertTrue(prompts[0].startswith('<motion-wake'))
+
+
+class StopAPI(FakeAPI):
+    """A Motion where someone pressed stop at `stopped` (minutes after T0)."""
+
+    def __init__(self, *args, stopped=None, scram=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.stopped, self.scram = stopped, scram
+
+    def interrupt(self, slug, agent):
+        at = (T0 + timedelta(minutes=self.stopped)).isoformat() if self.stopped is not None else None
+        return {'scram': self.scram, 'interrupt': at and {'agent': agent, 'by': 'justin', 'at': at}}
+
+
+class StopTest(TestCase):
+    """Stop in the Motion: a mention not yet answered is let go; a turn under way ends."""
+
+    def make(self, api):
+        self.waker = FakeWaker()
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        state.write_text(json.dumps({'since': (T0 - timedelta(hours=1)).isoformat(), 'handled': [], 'wakes': []}))
+        return MotionPoller(api, self.waker, state_path=state, now=lambda: T0 + timedelta(minutes=30))
+
+    def test_a_mention_stopped_before_it_was_answered_is_let_go(self):
+        api = StopAPI([mention('m26', dict(turn('a', 'justin', 10), via='web'))], sessions={'m26': ['s-local']},
+                      stopped=11)
+        poller = self.make(api)
+        self.assertEqual(poller.poll_once(), [])
+        self.assertEqual(self.waker.woken, [])
+        # Settled: the cursor moves past it, so it's never woken later either.
+        self.assertEqual(poller.state['since'], (T0 + timedelta(minutes=10)).isoformat())
+        self.assertEqual(poller.poll_once(), [])
+
+    def test_what_is_added_after_the_stop_wakes_and_reads_the_rest(self):
+        api = StopAPI([mention('m26', dict(turn('a', 'justin', 10, '@magent fix the'), via='web')),
+                       mention('m26', dict(turn('b', 'justin', 12, '@magent ...banjo page, I meant'), via='web'))],
+                      sessions={'m26': ['s-local']}, stopped=11)
+        self.make(api).poll_once()
+        self.assertEqual(len(self.waker.woken), 1)
+        prompt = self.waker.woken[0][1]
+        self.assertIn('banjo page, I meant', prompt)
+        self.assertNotIn('] @magent fix the', prompt.split('The Motion lately')[0])  # not owed: only context
+
+    def test_a_running_turn_ends_on_a_stop_after_what_woke_it_and_not_before(self):
+        poller = self.make(StopAPI(stopped=11))
+        self.assertTrue(poller.stop_check('m26', (T0 + timedelta(minutes=10)).isoformat())())
+        self.assertFalse(poller.stop_check('m26', (T0 + timedelta(minutes=12)).isoformat())())
+        self.assertFalse(self.make(StopAPI()).stop_check('m26', T0.isoformat())())
+        self.assertTrue(self.make(StopAPI(scram={'by': 'justin'})).stop_check('m26', T0.isoformat())())
+
+    def test_an_older_server_without_stops_still_has_its_az5(self):
+        class Old(FakeAPI):
+            def interrupt(self, slug, agent):
+                raise RuntimeError('404')
+
+            def pulse(self, agent='magent'):
+                return {'scram': {'by': 'justin'}}
+        poller = self.make(Old())
+        self.assertIsNone(poller.stopped_at('m26'))
+        self.assertTrue(poller.stop_check('m26', T0.isoformat())())
+
+    def test_the_turn_is_given_the_check(self):
+        api = StopAPI([mention('m26', dict(turn('a', 'justin', 10), via='web'))], sessions={'m26': ['s-local']})
+        self.make(api).poll_once()
+        self.assertTrue(callable(self.waker.stop))
+        api.stopped = 20
+        self.assertTrue(self.waker.stop())
 
 
 class RunCostTest(TestCase):

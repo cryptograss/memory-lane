@@ -24,6 +24,9 @@ MACHINERY_SENDERS = {'tool-result', 'system'}
 # anyone's words -- the harness writes it, as a prompt -- so never a turn or
 # a mention; the Motion shows it folded, as the moment a context was compacted.
 COMPACTION_PREFIX = 'This session is being continued from a previous conversation'
+INTERRUPT_SOURCE = 'interrupt'
+# System rows shown as a line in the thread.
+EVENT_SOURCES = ('deploy', INTERRUPT_SOURCE)
 # Words posted into a Motion directly, not typed into a session: from the
 # composer, or attested with a key (magenta.sh attest).
 POSTED = ('motion-web', 'motion-attest')
@@ -399,8 +402,8 @@ def timeline(motion, after=None, before=None, limit=None, start=None):
         rows = rows.filter(created_at__lt=before.created_at)
 
     def item(msg):
-        if msg.source_file == 'deploy' and isinstance(msg.content, dict):
-            return ('event', msg, msg.content)  # a server redeployed: a line in the thread
+        if msg.source_file in EVENT_SOURCES and isinstance(msg.content, dict):
+            return ('event', msg, msg.content)  # a server redeployed, someone stopped an agent: a line in the thread
         if msg.sender_id in MACHINERY_SENDERS or msg.sender_id not in speakers:
             return None
         if hasattr(msg, 'tooluse'):
@@ -603,7 +606,10 @@ def context_window(model, tokens=0):
 
 def context_in(motion, agent):
     """{'tokens', 'window', 'model', 'at'} for `agent`'s context here, or None."""
-    row = (motion.messages.filter(sender_id=agent, is_sidechain=False, input_tokens__isnull=False)
+    # A slash command's output (/context, /usage) is a "<synthetic>" message
+    # (stored with no model) that read nothing: it says nothing about the context.
+    row = (motion.messages.filter(sender_id=agent, is_sidechain=False, input_tokens__isnull=False,
+                                  model_backend__isnull=False)
            .order_by('-created_at')
            .values('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'model_backend',
                    'created_at').first())
@@ -679,6 +685,32 @@ def set_held(slug, agent, reason, until=None, now=None):
 
 
 def activity(motion, now=None):
+    """What an agent in this Motion is doing now, or None: see _activity.
+    Someone stopping the agent since that began ends it at once, without
+    waiting for its runner to notice."""
+    doing = _activity(motion, now)
+    if doing and doing['doing'] != 'held':
+        stopped = latest_interrupt(motion, doing['agent'])
+        if stopped and stopped['at_ts'] >= doing['since']:
+            return None
+    return doing
+
+
+def latest_interrupt(motion, agent=None):
+    """{'agent', 'by', 'at', 'at_ts'} for the newest time someone stopped
+    `agent` (any agent, if None) here; None if nobody ever has."""
+    for msg in (motion.messages.filter(source_file=INTERRUPT_SOURCE).order_by('-created_at')
+                .only('content', 'timestamp', 'created_at')[:20]):
+        c = msg.content if isinstance(msg.content, dict) else {}
+        if agent is None or c.get('agent') == agent:
+            at = _when(msg)
+            from datetime import datetime, timezone as tz
+            return {'agent': c.get('agent'), 'by': c.get('by'), 'at_ts': at,
+                    'at': datetime.fromtimestamp(at, tz.utc).isoformat()}
+    return None
+
+
+def _activity(motion, now=None):
     """What an agent in this Motion is doing now, or None if nothing is underway.
 
     Read straight from the record, so no process has to report in: every

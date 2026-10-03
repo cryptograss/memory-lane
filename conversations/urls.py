@@ -33,6 +33,7 @@ urlpatterns = [
     path('api/motions/<slug:slug>/sessions/', views_motions.api_motion_sessions, name='api_motion_sessions'),
     path('api/motions/<slug:slug>/steps/<str:step_id>/', views_motions.api_motion_step, name='api_motion_step'),
     path('api/motions/<slug:slug>/typing/', views_motions.api_typing, name='api_motion_typing'),
+    path('api/motions/<slug:slug>/interrupt/', views_auth.api_interrupt, name='api_motion_interrupt'),
     path('api/motions/<slug:slug>/media/', views_auth.api_media, name='api_motion_media'),
     path('api/motions/<slug:slug>/stream/', views_runner.api_stream, name='api_motion_stream'),
     path('api/motions/<slug:slug>/quiet/', views_runner.api_quiet, name='api_motion_quiet'),
