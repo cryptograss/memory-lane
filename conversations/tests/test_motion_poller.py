@@ -443,6 +443,29 @@ class RealProcessTest(TestCase):
         self.assertEqual([e['type'] for e in seen], ['system', 'assistant', 'result'])
         self.assertEqual(waker.last_result['total_cost_usd'], 0.02)
 
+    def test_a_run_over_its_budget_still_says_what_it_said(self):
+        # 2026-10-03: a cold read of a long session passed the $3 cap; the result
+        # ended error_max_budget_usd with no text, and the silence was read as speech.
+        stream = [{'type': 'assistant', 'message': {'content': [{'type': 'thinking', 'thinking': ''}]}},
+                  {'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': '<silent>resting</silent>'}]}},
+                  {'type': 'assistant', 'parent_tool_use_id': 't1',
+                   'message': {'content': [{'type': 'text', 'text': 'words from a helper'}]}},
+                  {'type': 'result', 'subtype': 'error_max_budget_usd', 'is_error': True, 'total_cost_usd': 4.3}]
+        body = ''.join(f"echo '{json.dumps(e)}'\n" for e in stream)
+        new_session, reply = self.waker(body).wake('s-old', 'prompt', new_session_id='s-new')
+        self.assertEqual(reply, '<silent>resting</silent>')
+
+    def test_how_much_a_session_last_read(self):
+        path = self.projects / project_dir_name(str(self.cwd)) / 's-old.jsonl'
+        with open(path, 'a') as f:
+            f.write(json.dumps({'type': 'assistant', 'message': {'usage': {
+                'input_tokens': 2, 'cache_read_input_tokens': 500_000, 'cache_creation_input_tokens': 60_000}}}) + '\n')
+            f.write(json.dumps({'type': 'cost-state', 'totalCostUSD': 9}) + '\n')
+        waker = ClaudeCodeWaker(projects_dir=self.projects)
+        self.assertEqual(waker.context_tokens('s-old'), 560_002)
+        self.assertAlmostEqual(waker.cold_read_usd('s-old'), 3.50, places=2)
+        self.assertEqual(waker.context_tokens('s-missing'), 0)
+
     def test_a_run_without_a_result_is_a_failure(self):
         with self.assertRaises(RuntimeError):
             self.waker("echo 'oops' >&2; exit 3").wake('s-old', 'prompt')
@@ -656,6 +679,39 @@ class DefaultsTest(TestCase):
         import inspect
         from poller import motion_poller
         self.assertIn("'--parallel', type=int, default=8", inspect.getsource(motion_poller.main))
+
+
+class ColdQuietTest(TestCase):
+    """A long quiet's look that says nothing doubles the wait; it never resets it."""
+
+    def test_an_empty_turn_is_not_speech(self):
+        class Wordless(FakeWaker):
+            def wake(inner, session_id, prompt, **kw):
+                inner.woken.append((session_id, prompt))
+                inner.options = kw
+                return 'fork', ''
+        api = ConsiderAPI(turns=[post('a', 0, sender='justin')], human_at=(T0 + timedelta(minutes=1)).isoformat())
+        clock = [T0 + timedelta(minutes=1)]
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        poller = MotionPoller(api, Wordless(), state_path=state, now=lambda: clock[0], idle_first=3000)
+        poller.consider_once()  # first sight
+        clock[0] += timedelta(minutes=51)
+        self.assertEqual(poller.consider_once(), [('m26', 'failed')])
+        self.assertEqual(poller.state['consider']['m26']['idle_after'], 6000)  # doubled, not reset
+
+    def test_the_cap_covers_a_cold_read_and_the_look(self):
+        class Costly(FakeWaker):
+            def cold_read_usd(inner, session_id):
+                return 4.25
+        api = ConsiderAPI(turns=[post('a', 0, sender='justin')], human_at=(T0 + timedelta(minutes=1)).isoformat())
+        clock = [T0 + timedelta(minutes=1)]
+        waker = Costly(reply='<silent>resting</silent>')
+        poller = MotionPoller(api, waker, state_path=Path(tempfile.mkdtemp()) / 's.json', now=lambda: clock[0],
+                              idle_first=3000, consider_budget=3.0)
+        poller.consider_once()
+        clock[0] += timedelta(minutes=51)
+        poller.consider_once()
+        self.assertAlmostEqual(waker.options['budget'], 7.25)
 
 
 class ConsiderAPI:
