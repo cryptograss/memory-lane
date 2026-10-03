@@ -60,6 +60,10 @@
   #userMenu[hidden] { display: none; }
   #userMenu > * { padding: 6px 14px; color: var(--ink); text-decoration: none; text-align: left; }
   #userMenu > a:hover, #userMenu > button:hover { background: var(--hover); }
+  #userMenu .textsize { display: flex; align-items: center; gap: 6px; color: var(--ink); }
+  #userMenu .textsize button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px;
+                               background: var(--panel); color: var(--ink); cursor: pointer; padding: 1px 7px; }
+  #userMenu .textsize span { min-width: 3em; text-align: center; color: var(--muted); font-size: 12.5px; }
   #userMenu .auth { color: var(--muted); border-bottom: 1px solid var(--line); margin-bottom: 4px; }
   #userMenu label { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
   #userMenu label.only { display: none; }
@@ -163,7 +167,17 @@
   .motion-head .meta a { color: var(--muted); }
   .motion-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
 
-  .turn { padding: 12px 0 12px 10px; margin-left: -10px; border-top: 1px solid var(--line); border-left: 3px solid transparent; }
+  /* What was said, at its own size: --text-scale is the reader's choice (the menu's text size), apart from zoom. */
+  :root { --text-base: 15px; --text-scale: 1; }
+  .turn .body, #composer textarea { font-size: calc(var(--text-base) * var(--text-scale)); }
+  .turn { position: relative; padding: 12px 0 12px 10px; margin-left: -10px; border-top: 1px solid var(--line); border-left: 3px solid transparent; }
+  /* A message in a run has no heading: its link is a # at its right, on hover (always, faintly, on a touch screen). */
+  .turn .permalink.mini { display: none; }
+  .turn.cont .permalink.mini { display: block; position: absolute; right: -17px; top: 1px; font-size: 12px; color: var(--muted);
+                               opacity: 0; padding: 0 3px; }
+  .turn.cont:hover .permalink.mini, .turn.cont .permalink.mini:focus { opacity: .9; }
+  @media (hover: none) { .turn.cont .permalink.mini { opacity: .45; } }
+  a.permalink.mini[data-copied]::after { content: '✓'; position: absolute; left: 100%; }
   #turns > .turn:first-child { border-top: 0; }
   /* The same sender again within minutes: one heading for the run. */
   .turn.cont { border-top: 0; padding-top: 0; }
@@ -180,11 +194,11 @@
   .turn .body > :last-child { margin-bottom: 0; }
   .turn .body p { margin: 0 0 .7em; }
   .turn .body ul, .turn .body ol { margin: 0 0 .7em; padding-left: 1.4em; }
-  .turn .body h4 { margin: .8em 0 .3em; font-size: 15px; }
-  .turn .body code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
-  .turn .body pre { background: var(--code); padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: 13px; }
+  .turn .body h4 { margin: .8em 0 .3em; font-size: 1em; }
+  .turn .body code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: .87em; }
+  .turn .body pre { background: var(--code); padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: .87em; }
   .turn .body pre code { background: none; padding: 0; }
-  .turn .body table { border-collapse: collapse; margin: .4em 0 .8em; font-size: 14px; }
+  .turn .body table { border-collapse: collapse; margin: .4em 0 .8em; font-size: .93em; }
   .turn .body th, .turn .body td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; vertical-align: top; }
   .turn .body th { background: var(--code); font-weight: 600; }
   .turn .body a { color: var(--human); }
@@ -283,7 +297,7 @@
   #activity, #composer { max-width: 760px; margin: 0 auto; }  /* the reading column's width */
   #composer { display: none; position: relative; padding: 10px 16px 14px; }
   body.writer #composer { display: flex; gap: 8px; align-items: flex-end; }
-  #composer textarea { flex: 1; font: inherit; min-height: 44px; max-height: 40vh; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+  #composer textarea { flex: 1; font-family: inherit; line-height: inherit; min-height: 44px; max-height: 40vh; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
   #composer button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
   #composer button:disabled { opacity: .5; cursor: default; }
   #composer .err { color: var(--accent); font-size: 12px; }
@@ -431,6 +445,7 @@
     #activity { padding: 6px 12px; }
     .hush { padding: 4px 12px 0; }
     #jump { right: 3px; }
+    :root { --text-base: 16.5px; }
     #composer { padding: 6px 8px 8px; gap: 6px; }
     #composer textarea { min-height: 38px; padding: 7px 9px; }
     #composer #attach { padding: 8px 9px; }
@@ -461,6 +476,7 @@
       <div class="auth" id="auth"></div>
       <label class="me">viewing as <select id="me"><option value="">nobody</option></select></label>
       <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
+      <span class="textsize">text size <button type="button" data-step="-1" aria-label="Smaller text">A−</button><span id="textSizeVal">100%</span><button type="button" data-step="1" aria-label="Larger text">A+</button></span>
       <button id="notify" type="button" hidden aria-label="Notifications"></button>
       <a href="#" id="devicesLink" hidden>your devices</a>
       <a class="settings" href="/motions/settings/" title="How each agent carries itself in each Mood">settings</a>
@@ -725,7 +741,8 @@
     el.id = 'm-' + t.id;
     if (forMe.has(t.id)) el.classList.add('for-me');
     const signed = t.attested ? `<button type="button" class="signed" title="Signed with ${esc(t.sender)}'s SSH key: click for the proof">✓ signed</button>` : '';
-    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${esc(t.sender)}</span><a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${how(t)}${signed}</div><div class="body">${t.html}</div>`;
+    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${esc(t.sender)}</span><a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${how(t)}${signed}</div>`
+      + `<a class="permalink mini" href="#m-${esc(t.id)}" title="${esc(stamp(t.created_at))} · this message's link: click to copy">#</a><div class="body">${t.html}</div>`;
     if (t.attested) el._proof = t.attested;
     markTurn(el, t.mentions || []);
     return el;
@@ -1883,6 +1900,22 @@
     renderMe(); remarkAll(); resetBadges(); refreshBadges(true);
   });
   onlyMine.addEventListener('change', () => document.body.classList.toggle('only-mine', onlyMine.checked));
+  // Text size: what was said, larger or smaller, without zooming the page. Kept per browser.
+  const TEXT_SIZES = [0.85, 1, 1.15, 1.3, 1.5, 1.75, 2];
+  function applyTextSize(scale) {
+    document.documentElement.style.setProperty('--text-scale', scale);
+    document.getElementById('textSizeVal').textContent = Math.round(scale * 100) + '%';
+  }
+  applyTextSize(store.get('textScale', 1));
+  document.querySelector('#userMenu .textsize').addEventListener('click', e => {
+    const b = e.target.closest('button[data-step]');
+    if (!b) return;
+    e.stopPropagation();  // the menu stays open while you try sizes
+    const at = Math.max(0, TEXT_SIZES.indexOf(store.get('textScale', 1)));
+    const scale = TEXT_SIZES[Math.max(0, Math.min(TEXT_SIZES.length - 1, at + Number(b.dataset.step)))];
+    store.set('textScale', scale);
+    applyTextSize(scale);
+  });
   const agentsBtn = document.getElementById('agentsBtn');
   agentsBtn.addEventListener('click', () => {
     agentsBtn.setAttribute('aria-expanded', document.body.classList.toggle('agents-open'));
