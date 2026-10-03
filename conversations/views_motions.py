@@ -36,6 +36,8 @@ def motions_page(request, slug=None):
         'preview_label': getattr(settings, 'PREVIEW_LABEL', ''),
         # [[ in the composer suggests PickiPedia titles, asked of the wiki itself.
         'pickipedia_url': getattr(settings, 'PICKIPEDIA_URL', 'https://pickipedia.xyz').rstrip('/'),
+        # Voice memos and reading aloud, if an ElevenLabs key is set (services/voice.py).
+        'voice_enabled': bool(getattr(settings, 'ELEVENLABS_API_KEY', '')),
     })
 
 
@@ -222,7 +224,7 @@ def api_pulse(request):
         'agent': agent,
         # An admin's emergency stop: while set, a runner wakes nothing.
         'scram': knobs.scram(),
-        'budget': {k: knobs.global_value(k) for k in knobs.GLOBAL_KNOBS},
+        'budget': {'consider_usd_per_day': knobs.global_value('consider_usd_per_day')},  # the runner's own
         'motions': motions,
     })
 

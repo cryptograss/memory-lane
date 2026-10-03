@@ -128,6 +128,8 @@ _MENTION = re.compile(r'(?<![\w@/.])@([A-Za-z][\w.-]*)')
 # so a viewer's browser never fetches from somewhere nobody chose.
 _IMAGE = re.compile(r'!\[([^\]\n]*)\]\((/motions/media/[0-9a-f]{64}\.(?:png|jpg|gif|webp)|https://[^)\s]+)\)')
 _MD_LINK = re.compile(r'\[([^\]]+)\]\((https?://[^)\s]+)\)')
+# [label](a stored recording): a voice memo, played in place (services/voice.py).
+_AUDIO = re.compile(r'\[([^\]\n]*)\]\((/motions/media/[0-9a-f]{64}\.(?:webm|ogg|m4a|mp3|wav))\)')
 _URL = re.compile(r'(https?://(?:(?!&quot;|&#x27;|&lt;|&gt;)[^\s<>"\x01\x02])+)')
 # Placeholders the renderer uses for markup it has already made; never input.
 _PLACEHOLDER_CHARS = re.compile(r'[\x00\x01\x02]')
@@ -277,6 +279,8 @@ def _inline(text, mentionable=()):
 
     text = _IMAGE.sub(lambda m: stash(_image(m)), text)
     text = _WIKILINK.sub(lambda m: stash(_wikilink(m)), text)
+    text = _AUDIO.sub(lambda m: stash(f'<span class="memo">{m.group(1)}</span>'
+                                      f'<audio controls preload="none" src="{m.group(2)}" title="{m.group(1)}"></audio>'), text)
     text = _MD_LINK.sub(lambda m: stash(f'<a href="{m.group(2)}">{m.group(1)}</a>'), text)
     text = _URL.sub(lambda m: stash(_link_url(m)), text)
     if mentionable:
@@ -541,7 +545,11 @@ def attestation_of(msg):
 
 
 def turn_payload(msg, text, mentionable=()):
+    # A ```voice block is how its writer wants it read aloud: performed, not shown.
+    from .voice import split_voice
+    text, direction = split_voice(text)
     return {
+        'voiced': direction is not None,
         'attested': attestation_of(msg),
         **how_payload(msg),
         'id': str(msg.id),

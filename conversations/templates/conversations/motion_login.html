@@ -5,7 +5,7 @@
 <meta name="color-scheme" content="light dark">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex">
-<title>Sign in · Motions</title>
+<title>Sign in · magenta</title>
 <style>
   :root { --bg: #fbfaf7; --panel: #fff; --ink: #1f1d1a; --muted: #6b6560; --line: #e6e1d8; --accent: #b8106b; }
   @media (prefers-color-scheme: dark) {
@@ -22,24 +22,45 @@
   input { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 14px; }
   button { width: 100%; font: inherit; padding: 10px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
   a { color: var(--accent); }
+  .ok { color: var(--ink); }
 </style>
 </head>
 <body>
 <div class="card">
-{% if name %}
+{% if state == 'live' %}
   <h1>Write as {{ name }} on this device?</h1>
-  <p>Your SSH key vouched for you. This browser will be able to post into Motions as <b>{{ name }}</b> until you sign out. Anyone can read them; only you can write as you.</p>
+  <p>Your SSH key vouched for you. This browser will be able to post in magenta as <b>{{ name }}</b> until you sign out. Anyone can read what's said; only you can write as you.</p>
   <form method="post">
     {% csrf_token %}
     <label for="label">Name this device (optional)</label>
     <input id="label" name="label" maxlength="100" placeholder="phone, laptop…">
     <button type="submit">Yes, sign in</button>
   </form>
+{% elif state == 'used' %}
+  {% if signed_in_here == used.name %}
+  <h1>You're signed in here</h1>
+  <p class="ok">This link already signed this browser in as <b>{{ used.name }}</b>, at <time datetime="{{ used.at.isoformat }}">{{ used.at|date:"H:i" }} UTC</time>. Nothing more to do.</p>
+  {% else %}
+  <h1>This link was already used</h1>
+  <p class="ok">It signed in <b>{{ used.name }}</b>{% if used.label %} on “{{ used.label }}”{% endif %} at <time datetime="{{ used.at.isoformat }}">{{ used.at|date:"H:i" }} UTC</time>. If that was you, that browser is signed in: open magenta there.</p>
+  <p>A phone's home-screen app keeps its own sign-in, apart from the browser. To sign it in, run <code>magenta.sh login</code> again, copy the link, and paste it in the app's menu (your name or "read-only", top right), under "Have a sign-in link?".</p>
+  {% endif %}
+  <p><a href="/motions/">Open magenta</a></p>
+{% elif state == 'expired' %}
+  <h1>This link has expired</h1>
+  <p>Sign-in links last 15 minutes, and work once. Run <code>magenta.sh login</code> again for a fresh one.</p>
+  <p><a href="/motions/">Read magenta</a></p>
 {% else %}
-  <h1>This link has been used or has expired</h1>
-  <p>Login links work once, for 15 minutes. Run <code>magenta.sh login</code> again for a fresh one.</p>
-  <p><a href="/motions/">Read the Motions</a></p>
+  <h1>This isn't a sign-in link we know</h1>
+  <p>Perhaps part of it was lost when it was copied: links are long, and a line break can cut one. Run <code>magenta.sh login</code> again and copy the whole link, or scan its QR code.</p>
+  <p><a href="/motions/">Read magenta</a></p>
 {% endif %}
+<script>
+  // The times above in this device's own time zone.
+  document.querySelectorAll('time[datetime]').forEach(t => {
+    t.textContent = new Date(t.dateTime).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  });
+</script>
 </div>
 </body>
 </html>

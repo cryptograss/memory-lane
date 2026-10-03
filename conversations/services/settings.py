@@ -45,6 +45,9 @@ KNOBS = {
 }
 GLOBAL_KNOBS = {
     'consider_usd_per_day': (10.0, 'Dollars a day across screens and considerations (mentions not counted).'),
+    'voice_usd_per_day': (10.0, 'Dollars a day for voice: messages read aloud and memos transcribed (ElevenLabs).'),
+    'voice': ('', "The voice messages are read in unless one directs otherwise: a name from /api/voice/voices/. "
+                  "Empty: the first ElevenLabs offers."),
 }
 MODERATION_KEYS = ('scram', 'banned')
 # A Mood's own state, not how an agent carries itself there: set for the
@@ -115,6 +118,19 @@ def clean(key, value):
         if isinstance(value, bool):
             return value
         raise Invalid('archived: true or false')
+    if key == 'voice':
+        value = str(value or '').strip()
+        if len(value) > 100:
+            raise Invalid('voice: a name, at most 100 characters')
+        return value
+    if key == 'voice_usd_per_day':
+        try:
+            value = round(float(value), 2)
+        except (TypeError, ValueError):
+            raise Invalid('voice_usd_per_day: a number')
+        if not 0 <= value <= 500:
+            raise Invalid('voice_usd_per_day: from 0 to 500')
+        return value
     if key == 'consider_usd_per_day':
         try:
             value = round(float(value), 2)

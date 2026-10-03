@@ -60,6 +60,13 @@
   #userMenu[hidden] { display: none; }
   #userMenu > * { padding: 6px 14px; color: var(--ink); text-decoration: none; text-align: left; }
   #userMenu > a:hover, #userMenu > button:hover { background: var(--hover); }
+  #userMenu #pasteLink { margin-top: 8px; color: var(--muted); }
+  #userMenu #pasteLink label { display: block; font-size: 12.5px; margin-bottom: 3px; }
+  #userMenu #pasteLink span { display: flex; gap: 6px; }
+  #userMenu #pasteLink input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--line);
+                               border-radius: 5px; background: var(--bg); color: var(--ink); }
+  #userMenu #pasteLink button { font: inherit; font-size: 13px; border: 0; border-radius: 5px; padding: 3px 10px;
+                                background: var(--accent); color: #fff; cursor: pointer; }
   #userMenu .textsize { display: flex; align-items: center; gap: 6px; color: var(--ink); }
   #userMenu .textsize button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px;
                                background: var(--panel); color: var(--ink); cursor: pointer; padding: 1px 7px; }
@@ -394,6 +401,23 @@
                          background: none; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
   #composer #agentsBtn .pie { position: absolute; top: -3px; right: -3px; margin: 0; }
   #send svg { display: none; width: 18px; height: 18px; vertical-align: middle; }
+  /* Voice: a memo recorded here, and messages read aloud (services/voice.py). */
+  #composer #memoBtn { font: inherit; font-size: 16px; line-height: 1; padding: 8px 9px; background: none; color: var(--muted);
+                       border: 1px solid var(--line); border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  #composer #memoBtn[hidden] { display: none; }
+  #composer #memoBtn.recording { color: #fff; background: var(--err, #c0392b); border-color: transparent; font-size: 13px; }
+  #composer #memoBtn.busy { opacity: .6; cursor: progress; font-size: 13px; }
+  .turn .speak { font: inherit; font-size: 11px; line-height: 1; border: 1px solid var(--line); border-radius: 9px; background: none;
+                 color: var(--muted); cursor: pointer; padding: 2px 7px; }
+  .turn .speak:hover, .turn .speak.playing { color: var(--accent); border-color: var(--accent); }
+  .turn .speak.directed::after { content: ' ✦'; }
+  .turn .speak.busy { cursor: progress; opacity: .6; }
+  .turn .speak.mini { display: none; }
+  .turn.cont .speak.mini { display: inline-block; position: absolute; right: -19px; top: 20px; opacity: 0; padding: 1px 4px; border: 0; }
+  .turn.cont:hover .speak.mini, .turn.cont .speak.mini.playing, .turn.cont .speak.mini.busy { opacity: .9; }
+  @media (hover: none) { .turn.cont .speak.mini { opacity: .45; } }
+  .turn .body audio { display: block; width: 100%; max-width: 420px; height: 36px; margin: 4px 0; }
+  .turn .body .memo { font-size: 12.5px; color: var(--muted); }
   #composer.dropping textarea { outline: 2px dashed var(--accent); }
   /* Whether each agent is listening here; a hush for a long deliberation. */
   /* Each agent's listening, model and effort, and its pie: in the footer, always in view. */
@@ -526,6 +550,7 @@
       <div id="suggest"></div>
       <button type="button" id="agentsBtn" title="Agents here: listening, model, effort" aria-label="Agent settings" aria-expanded="false">⚙</button>
       <button type="button" id="attach" title="Add an image (or paste or drop one)" aria-label="Add an image">＋</button>
+      <button type="button" id="memoBtn" title="Record a voice memo: tap to start, tap again to stop. It's transcribed for you to look over before sending." aria-label="Record a voice memo" hidden>🎙</button>
       <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
       <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
       <button type="submit" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z" fill="currentColor"/></svg></button>
@@ -729,6 +754,43 @@
   const RUN_MS = 5 * 60 * 1000;  // the same sender within this is one run
   let prev = null;               // the last turn rendered: {sender, at}
 
+  // Voice (services/voice.py): ▶ reads a message aloud -- as its writer
+  // directed (✦), if they wrote a ```voice block. (A memo's recording is a
+  // player already: the server renders it so.)
+  const voiceOn = {{ voice_enabled|yesno:"true,false" }};
+  function speakButton(t, mini) {
+    return `<button type="button" class="speak${mini ? ' mini' : ''}${t.voiced ? ' directed' : ''}" data-id="${esc(t.id)}"`
+      + ` title="${t.voiced ? 'Read aloud, as its writer directed' : 'Read aloud'}" aria-label="Read aloud">▶</button>`;
+  }
+  let speaking = null;  // {audio, button}
+  function stopSpeaking() {
+    if (!speaking) return;
+    speaking.audio.pause();
+    speaking.button.classList.remove('playing'); speaking.button.textContent = '▶';
+    speaking = null;
+  }
+  document.addEventListener('click', async e => {
+    const b = e.target.closest('.turn .speak');
+    if (!b) return;
+    if (speaking && speaking.button === b) { stopSpeaking(); return; }
+    stopSpeaking();
+    b.classList.add('busy'); b.textContent = '…';
+    try {
+      const r = await fetch(`/api/motions/${encodeURIComponent(current)}/speak/${encodeURIComponent(b.dataset.id)}/`, {
+        method: 'POST', headers: { 'X-CSRFToken': csrf() } });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || r.status);
+      const audio = new Audio(body.url);
+      speaking = { audio, button: b };
+      audio.addEventListener('ended', stopSpeaking);
+      b.classList.add('playing'); b.textContent = '■';
+      await audio.play();
+    } catch (err) {
+      showError('read aloud: ' + err.message);
+      b.textContent = '▶';
+    } finally { b.classList.remove('busy'); }
+  });
+
   function turnEl(t, isNew) {
     const el = document.createElement('article');
     const at = new Date(t.created_at).getTime();
@@ -742,7 +804,9 @@
     if (forMe.has(t.id)) el.classList.add('for-me');
     const signed = t.attested ? `<button type="button" class="signed" title="Signed with ${esc(t.sender)}'s SSH key: click for the proof">✓ signed</button>` : '';
     el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${esc(t.sender)}</span><a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${how(t)}${signed}</div>`
-      + `<a class="permalink mini" href="#m-${esc(t.id)}" title="${esc(stamp(t.created_at))} · this message's link: click to copy">#</a><div class="body">${t.html}</div>`;
+      + `<a class="permalink mini" href="#m-${esc(t.id)}" title="${esc(stamp(t.created_at))} · this message's link: click to copy">#</a>`
+      + (voiceOn && viewer ? speakButton(t, true) : '') + `<div class="body">${t.html}</div>`;
+    if (voiceOn && viewer) el.querySelector('.who').insertAdjacentHTML('beforeend', speakButton(t, false));
     if (t.attested) el._proof = t.attested;
     markTurn(el, t.mentions || []);
     return el;
@@ -1995,6 +2059,53 @@
     if (files.length) { e.preventDefault(); files.forEach(upload); }
   });
 
+  // A voice memo: recorded here, transcribed there, put in the box to look
+  // over before sending -- a player for the audio, then what was heard.
+  const memoBtn = document.getElementById('memoBtn');
+  const MEMO_MAX_S = 600;
+  let recorder = null, memoTimer = null;
+  if (voiceOn && viewer && window.MediaRecorder && navigator.mediaDevices) memoBtn.hidden = false;
+  const clock = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+  memoBtn.addEventListener('click', async () => {
+    if (recorder) { recorder.stop(); return; }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { showError('microphone: ' + e.message); return; }
+    const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm']
+      .find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
+    recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+    const chunks = [], started = Date.now();
+    recorder.addEventListener('dataavailable', e => { if (e.data.size) chunks.push(e.data); });
+    recorder.addEventListener('stop', async () => {
+      clearInterval(memoTimer);
+      stream.getTracks().forEach(t => t.stop());
+      const seconds = (Date.now() - started) / 1000;
+      recorder = null;
+      memoBtn.classList.remove('recording'); memoBtn.classList.add('busy'); memoBtn.textContent = 'transcribing…';
+      try {
+        const r = await fetch('/api/motions/' + encodeURIComponent(current) + '/memo/', {
+          method: 'POST', headers: { 'X-CSRFToken': csrf() }, body: new Blob(chunks, { type: chunks[0]?.type || type || 'audio/webm' }) });
+        const body = await r.json().catch(() => ({}));
+        if (body.url) {
+          const heard = body.text ? '\n\n' + body.text : '';
+          insertAtCaret(`🎙 [voice memo · ${clock(body.seconds || seconds)}](${body.url})${heard}`);
+          sayBox.dispatchEvent(new Event('input'));
+          sayBox.focus();
+        }
+        if (!r.ok) throw new Error(body.error || r.status);
+      } catch (e) { showError('voice memo: ' + e.message); }
+      finally { memoBtn.classList.remove('busy'); memoBtn.textContent = '🎙'; }
+    });
+    recorder.start(1000);
+    memoBtn.classList.add('recording');
+    memoBtn.textContent = '■ 0:00';
+    memoTimer = setInterval(() => {
+      const s = (Date.now() - started) / 1000;
+      memoBtn.textContent = '■ ' + clock(s);
+      if (s >= MEMO_MAX_S && recorder) recorder.stop();
+    }, 500);
+  });
+
   function csrf() {
     const m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
     return m ? decodeURIComponent(m[1]) : '';
@@ -2016,7 +2127,17 @@
     });
   } else {
     userBtn.textContent = 'read-only ▾';
-    auth.innerHTML = 'To write, run <code>magenta.sh login</code> on a machine with your SSH key.';
+    auth.innerHTML = 'To write, run <code>magenta.sh login</code> on a machine with your SSH key.'
+      + '<form id="pasteLink"><label for="pasted">Have a sign-in link? Paste it here:</label>'
+      + '<span><input id="pasted" type="url" autocomplete="off" placeholder="…/motions/login/…/"><button type="submit">Go</button></span></form>';
+    // A home-screen app has no address bar, and keeps its own sign-in apart
+    // from the browser's: here it can open a link it was handed.
+    document.getElementById('pasteLink').addEventListener('submit', e => {
+      e.preventDefault();
+      const m = document.getElementById('pasted').value.trim().match(/\/motions\/login\/([\w-]+)\/?/);
+      if (!m) { showError('That isn\'t a sign-in link: it should contain /motions/login/…'); return; }
+      location.href = '/motions/login/' + m[1] + '/';  // this app's own origin, whatever host was pasted
+    });
   }
   // Your devices: when each signed in, last wrote, and times out; revoke any.
   const devicesBox = document.getElementById('devicesBox');

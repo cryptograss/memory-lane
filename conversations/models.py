@@ -1340,7 +1340,10 @@ class Media(models.Model):
     class Meta:
         db_table = 'media'
 
-    EXTENSIONS = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp'}
+    EXTENSIONS = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp',
+                  # Voice memos, and messages read aloud (services/voice.py).
+                  'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3',
+                  'audio/wav': 'wav'}
 
     @property
     def url(self):
