@@ -624,19 +624,20 @@ def transcript_of(turns, new_ids=(), limit=20_000, each=1500):
     return lines
 
 
-# A link to a message in a Motion -- /motions/<slug>/#m-<uuid>, or just
-# #m-<uuid> -- in a post that wakes the agent: read from there.
-_MESSAGE_LINK = re.compile(r'#m-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})')
+# A link to a message -- /motions/<slug>/#m-<uuid>, or just #m-<uuid> for one
+# in the same Mood -- in a post that wakes the agent: read from there, in
+# whichever Mood the link names.
+_MESSAGE_LINK = re.compile(r'(?:/motions/([\w-]+)/)?#m-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})')
 CHARS_PER_TOKEN = 4
 EACH_MAX = 8000  # characters of any one message read word for word
 
 
 def linked_message(posts):
-    """The first message a post links to read from, or None."""
+    """(slug or None, message id) for the first message a post links to read from, or None."""
     for post in posts:
         match = _MESSAGE_LINK.search(post.get('text', ''))
         if match:
-            return match.group(1)
+            return match.group(1), match.group(2)
     return None
 
 
@@ -1003,8 +1004,10 @@ class MotionPoller:
         linked = linked_message(owed)
         try:
             if linked:
-                said = [t for t in self.api.turns_from(slug, linked) if t['id'] not in owed_ids]
-                note = 'From the message linked, as it was said (newest last):'
+                where = linked[0] or slug
+                said = [t for t in self.api.turns_from(where, linked[1]) if t['id'] not in owed_ids]
+                note = ('From the message linked, as it was said (newest last):' if where == slug
+                        else f'From the message linked in the Mood "{where}", as it was said there (newest last):')
             else:
                 recent = self.api.recent(slug, limit=400)['turns']
                 said = since_last_word(recent, self.agent, before_id=owed[0]['id'])

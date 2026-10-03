@@ -1338,8 +1338,6 @@
     gen++;
     current = slug;
     if (push) history.pushState({ slug }, '', '/motions/' + encodeURIComponent(slug) + '/');
-    // What was waiting for me here, to bring into view once it's drawn.
-    const waiting = [...(unread[slug] || new Map()).entries()].sort((a, b) => (a[1] < b[1] ? -1 : 1))[0];
     newBelow = 0;
     touch(slug);
     renderNav();
@@ -1355,15 +1353,24 @@
       inner.replaceChildren(saved.nodes);
       ({ lastId, firstId, prev } = saved);
       showMotionName(saved.headMotion);
-      main.scrollTop = saved.scrollTop;
       await poll(false);
     } else {
       lastId = null;
       inner.innerHTML = '<div class="empty">Loading…</div>';
       await poll(true);
     }
+    // A Mood opens at its newest, always: what's for you is marked, and the @
+    // arrows (or a notification, a search hit, a link) take you to it.
+    toNewest();
     renderToBottom();
-    if (waiting) await reveal(waiting[0]);
+  }
+  // To the newest, and stay there while images above it load and push it down.
+  function toNewest() {
+    main.scrollTop = main.scrollHeight;
+    const until = Date.now() + 4000;
+    document.querySelectorAll('#turns img').forEach(img => {
+      if (!img.complete) img.addEventListener('load', () => { if (Date.now() < until) main.scrollTop = main.scrollHeight; }, { once: true });
+    });
   }
 
   let firstId = null;      // the oldest item shown, for ?before=

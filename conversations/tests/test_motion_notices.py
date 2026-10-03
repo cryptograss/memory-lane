@@ -172,3 +172,35 @@ class AroundTest(TestCase):
         cache.delete('eth-head')
         with mock.patch('requests.get', side_effect=OSError('down')):
             self.assertIsNone(self.client.get('/api/block/').json()['height'])
+
+
+class MoodMemoryToolsTest(TestCase):
+    """The memory server reads Moods: list_moods, and read_mood from a message or a time."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        cls.magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+        cls.m26 = Motion.objects.create(slug='m26', title='Magenta Interface(s)', description='the chat itself')
+        cls.rows = []
+        for i in range(5):
+            cls.rows.append(Message.objects.create(id=uuid.uuid4(), sender=cls.justin if i % 2 == 0 else cls.magent,
+                                                   motion=cls.m26, content=f'line {i}',
+                                                   timestamp=int((time.time() + i) * 1000)))
+
+    def test_list_moods(self):
+        from conversations.mcp.tools import list_moods_text
+        text = list_moods_text()
+        self.assertIn('m26 -- Magenta Interface(s)', text)
+        self.assertIn('5 messages', text)
+
+    def test_read_a_mood_whole_or_from_a_message(self):
+        from conversations.mcp.tools import read_mood_text
+        whole = read_mood_text('m26')
+        self.assertIn('Mood: Magenta Interface(s) (m26)', whole)
+        self.assertLess(whole.index('line 0'), whole.index('line 4'))  # oldest first
+        self.assertIn(f'#m-{self.rows[2].id}', whole)
+        tail = read_mood_text('m26', start=str(self.rows[3].id))
+        self.assertNotIn('line 2', tail)
+        self.assertIn('line 3', tail)
+        self.assertIn("No Mood 'nowhere'", read_mood_text('nowhere'))

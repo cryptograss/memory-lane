@@ -689,6 +689,7 @@ class MentionContextTest(TestCase):
             def turns_from(inner, slug, message_id):
                 ids = [t['id'] for t in turns]
                 inner.read_from = message_id
+                inner.read_in = slug
                 return turns[ids.index(message_id):] + [owed] if message_id in ids else []
         api = API([mention('m26', owed)], sessions={'m26': ['s-local']})
         state = Path(tempfile.mkdtemp()) / 'state.json'
@@ -715,6 +716,13 @@ class MentionContextTest(TestCase):
         self.assertEqual(api.read_from, self.LINKED)
         self.assertIn('From the message linked', prompt)
         self.assertIn('Here is the plan we settled on.', prompt)
+
+    def test_a_message_linked_in_another_mood_is_read_there(self):
+        said = [turn(self.LINKED, 'justin', 1, 'What we built today, in the other Mood.')]
+        api, prompt = self.make(said, owed_text=f'@magent read up: https://x/motions/magenta-26-million/#m-{self.LINKED}')
+        self.assertEqual((api.read_in, api.read_from), ('magenta-26-million', self.LINKED))
+        self.assertIn('linked in the Mood "magenta-26-million"', prompt)
+        self.assertIn('What we built today', prompt)
 
     def test_over_budget_the_older_part_is_said_to_be_left_out(self):
         said = [turn(f's{i}', 'justin', 1 + i, f'post {i} ' + 'la ' * 400) for i in range(30)]
