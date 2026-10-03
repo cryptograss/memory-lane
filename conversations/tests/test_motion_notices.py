@@ -134,3 +134,41 @@ class OpenWorkTest(TestCase):
             body = self.client.get('/api/work/').json()
         self.assertEqual(body['items'], [])
         self.assertIn('could not ask the forge', body['error'])
+
+
+class AroundTest(TestCase):
+    """Who's around in each Mood: who spoke in the last 100 blocks, and who's typing."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        cls.skyler = ThinkingEntity.objects.create(name='skyler', is_biological_human=True)
+        cls.magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+        cls.m26 = Motion.objects.create(slug='m26')
+        cls.dk = Motion.objects.create(slug='delivery-kid')
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.delete('motions-live')
+        cache.delete('typing:m26')
+
+    def test_recent_speakers_per_mood(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        old = Message.objects.create(id=uuid.uuid4(), sender=self.skyler, motion=self.dk, content='an hour ago')
+        Message.objects.filter(pk=old.pk).update(created_at=timezone.now() - timedelta(hours=1))
+        Message.objects.create(id=uuid.uuid4(), sender=self.justin, motion=self.m26, content='just now')
+        live = self.client.get('/api/motions/live/').json()['motions']
+        self.assertEqual(live['m26']['speakers'], ['justin'])
+        self.assertEqual(live['delivery-kid']['speakers'], [])  # an hour is more than 100 blocks
+
+    def test_the_block_height_comes_from_the_explorer_or_not_at_all(self):
+        from unittest import mock
+        from django.core.cache import cache
+        cache.delete('eth-head')
+        head = mock.Mock(json=lambda: [{'height': 26113794, 'timestamp': '2026-10-03T19:06:23Z'}])
+        with mock.patch('requests.get', return_value=head):
+            self.assertEqual(self.client.get('/api/block/').json()['height'], 26113794)
+        cache.delete('eth-head')
+        with mock.patch('requests.get', side_effect=OSError('down')):
+            self.assertIsNone(self.client.get('/api/block/').json()['height'])

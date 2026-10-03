@@ -657,3 +657,60 @@ def api_work(request):
             return JsonResponse({'items': [], 'error': f'could not ask the forge: {type(e).__name__}'})
         cache.set('work:open', items, 120)
     return JsonResponse({'items': items})
+
+
+# --- who's around in each Mood, and the chain's height -------------------------
+
+AROUND_BLOCKS = 100     # who spoke within this many blocks counts as around
+SECONDS_PER_BLOCK = 12  # since the merge, a slot every 12 s (a missed slot makes it a little more)
+
+
+@require_GET
+def api_motions_live(request):
+    """Each Mood's people of the moment: who has spoken in the last 100 blocks
+    (about 20 minutes), who's typing, which agent is working. Cached for
+    3 s: every open page asks every few seconds."""
+    from datetime import timedelta
+    from django.core.cache import cache
+    from django.utils import timezone
+
+    cached = cache.get('motions-live')
+    if cached is not None:
+        return JsonResponse(cached)
+    now = timezone.now()
+    names = set(ThinkingEntity.objects.values_list('name', flat=True))
+    since = now - timedelta(seconds=AROUND_BLOCKS * SECONDS_PER_BLOCK)
+    spoke = (Message.objects.filter(motion__isnull=False, is_sidechain=False, created_at__gte=since,
+                                    sender_id__in=names)
+             .values('motion_id', 'sender_id').annotate(last=Max('created_at')).order_by('-last'))
+    live = {}
+    for row in spoke:
+        live.setdefault(row['motion_id'], {'speakers': [], 'typing': [], 'busy': None})['speakers'].append(row['sender_id'])
+    for motion in Motion.objects.all():
+        entry = live.setdefault(motion.slug, {'speakers': [], 'typing': [], 'busy': None})
+        entry['typing'] = typing_in(motion.slug)
+        if motion.slug in {r['motion_id'] for r in spoke}:  # only a Mood with recent words can have work under way
+            act = activity(motion)
+            if act and act.get('doing') != 'held':
+                entry['busy'] = act['agent']
+    body = {'motions': live, 'blocks': AROUND_BLOCKS}
+    cache.set('motions-live', body, 3)
+    return JsonResponse(body)
+
+
+@require_GET
+def api_block(request):
+    """Ethereum mainnet's newest block -- height and time -- from a public
+    explorer, cached a minute; the page counts on from it, a block every
+    12 seconds."""
+    from django.core.cache import cache
+    block = cache.get('eth-head')
+    if block is None:
+        try:
+            import requests
+            head = requests.get('https://eth.blockscout.com/api/v2/main-page/blocks', timeout=5).json()[0]
+            block = {'height': int(head['height']), 'at': head['timestamp'], 'seconds': SECONDS_PER_BLOCK}
+        except Exception:
+            block = {'height': None}
+        cache.set('eth-head', block, 60 if block['height'] else 15)
+    return JsonResponse(block)

@@ -111,8 +111,8 @@
   nav a.motion.active { background: var(--accent-soft); border-left-color: var(--accent); }
   nav a.motion .title { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; line-height: 1.3; }
   nav a.motion .meta { font-size: 11.5px; color: var(--muted); line-height: 1.3; }
-  nav a.motion .people-line { display: none; }
-  nav a.motion.active .people-line { display: block; }
+  nav a.motion .people-line:empty { display: none; }
+  header .block { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; cursor: default; }
   /* Someone typing or an agent at work: their name pulses where the Motion is listed. */
   /* What's been happening everywhere, under the list; folds away. */
   #recent, #work { border-top: 1px solid var(--line); margin-top: 8px; padding: 6px 0 12px; font-size: 12.5px; }
@@ -388,6 +388,7 @@
     header .preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
     #menu { display: block; }
     header .brand { display: none; }  /* the Mood's name matters more here */
+    header .block { display: none; }
     header .crumb::before { content: none; }
     header .preview { max-width: 70px; }
     #serverPop { right: 8px; }
@@ -413,6 +414,7 @@
   <span class="crumb" id="crumb"></span>
   {% if preview_label %}<span class="preview" title="A branch's code, not production; see the label for which record">{{ preview_label }}</span>{% endif %}
   <span class="grow"></span>
+  <span class="block" id="block" title="Ethereum mainnet's block height"></span>
   <span class="servers" id="servers" title="Servers"></span>
   <button id="searchBtn" type="button" title="Search what was said (/)">⌕</button>
   <span class="status" id="status" title="connecting…"></span>
@@ -549,18 +551,62 @@
       <a class="motion ${m.slug === current ? 'active' : ''}" href="/motions/${encodeURIComponent(m.slug)}/" data-slug="${esc(m.slug)}">
         <div class="title">${esc(m.title)}${badges[m.slug] ? `<span class="badge">${badges[m.slug]}</span>` : ''}</div>
         <div class="meta">${m.message_count.toLocaleString()} · ${ago(m.last_at)}</div>
-        <div class="meta people-line">${m.participants.map(n => `<span class="nm" data-who="${esc(n)}">${esc(n)}</span>`).join(', ') || '—'}</div>
+        <div class="meta people-line">${peopleLine(m.slug)}</div>
       </a>`).join('');
     document.getElementById('moodList').innerHTML = '<div class="label">Moods</div>' + items;
     markLive();
   }
 
-  // Pulse the names of whoever is typing or at work in the open Motion.
-  function markLive() {
-    const live = new Set(typingNow);
-    if (act && act.doing !== 'held') live.add(act.agent);  // held isn't busy
-    nav.querySelectorAll('a.motion.active .nm').forEach(el => el.classList.toggle('live', live.has(el.dataset.who)));
+  // Who's around in each Mood: whoever spoke in the last 100 blocks (about 20
+  // minutes), and whoever is typing or at work there now, their name pulsing.
+  let liveData = {};
+  function aroundIn(slug) {
+    const d = liveData[slug] || { speakers: [], typing: [], busy: null };
+    const typing = new Set(slug === current ? [...d.typing, ...typingNow] : d.typing);
+    const busy = slug === current && act && act.doing !== 'held' ? act.agent : d.busy;
+    const names = [...new Set([...(busy ? [busy] : []), ...typing, ...d.speakers])];
+    return { names, active: new Set([...typing, ...(busy ? [busy] : [])]) };
   }
+  function peopleLine(slug) {
+    const { names, active } = aroundIn(slug);
+    return names.map(n => `<span class="nm${active.has(n) ? ' live' : ''}" data-who="${esc(n)}">${esc(n)}</span>`).join(', ');
+  }
+  function markLive() {
+    nav.querySelectorAll('a.motion').forEach(a => {
+      const line = a.querySelector('.people-line');
+      const html = peopleLine(a.dataset.slug);
+      if (line && line.innerHTML !== html) line.innerHTML = html;
+    });
+  }
+  async function refreshLive() {
+    try {
+      const r = await fetch('/api/motions/live/');
+      if (r.ok) { liveData = (await r.json()).motions || {}; markLive(); }
+    } catch (e) {}
+  }
+  setInterval(refreshLive, 5000);
+  refreshLive();
+
+  // --- the chain's height: from the explorer now and then, a block every 12 s between ---
+  const blockEl = document.getElementById('block');
+  let blockAnchor = null;
+  async function refreshBlock() {
+    try {
+      const b = await (await fetch('/api/block/')).json();
+      if (b.height) blockAnchor = b;
+    } catch (e) {}
+    tickBlock();
+  }
+  function tickBlock() {
+    if (!blockAnchor) { blockEl.textContent = ''; return; }
+    const since = Math.max(0, (Date.now() - new Date(blockAnchor.at).getTime()) / 1000);
+    const height = blockAnchor.height + Math.floor(since / blockAnchor.seconds);
+    blockEl.textContent = '⛓ ' + height.toLocaleString();
+    blockEl.title = `Ethereum mainnet, about block ${height.toLocaleString()} (counted on from the explorer's ${blockAnchor.height.toLocaleString()})`;
+  }
+  setInterval(tickBlock, 3000);
+  setInterval(refreshBlock, 5 * 60 * 1000);
+  refreshBlock();
 
   const grip = document.getElementById('grip');
   const NAV_MIN = 140, NAV_MAX = 480;
