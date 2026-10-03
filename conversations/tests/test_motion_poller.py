@@ -598,6 +598,27 @@ class HoldTest(TestCase):
             thread.join(5)
 
 
+class UltracodeTest(TestCase):
+
+    def test_only_a_full_tools_wake_turns_it_on(self):
+        waker = ClaudeCodeWaker(claude='claude')
+        full = waker.command('s', 'n', 'hi', full=True, ultracode=True)
+        self.assertIn('--settings', full)
+        self.assertEqual(json.loads(full[full.index('--settings') + 1]), {'ultracode': True})
+        self.assertNotIn('--settings', waker.command('s', 'n', 'hi', full=False, ultracode=True))
+        self.assertNotIn('--settings', waker.command('s', 'n', 'hi', full=True))
+
+    def test_the_knob_reaches_a_wake_from_justin(self):
+        api = FakeAPI([mention('m26', dict(turn('a', 'justin', 14), via='web'))], sessions={'m26': ['s-local']})
+        waker = FakeWaker()
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        state.write_text(json.dumps({'since': (T0 - timedelta(hours=1)).isoformat(), 'handled': [], 'wakes': []}))
+        poller = MotionPoller(api, waker, state_path=state, now=lambda: T0 + timedelta(minutes=15), consider=False)
+        poller.settings = {'m26': {'ultracode': True}}
+        poller.poll_once()
+        self.assertIs(waker.options.get('ultracode'), True)
+
+
 class DefaultsTest(TestCase):
 
     def test_eight_turns_at_once_by_default(self):

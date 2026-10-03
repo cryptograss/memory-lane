@@ -9,6 +9,9 @@ from . import views_admin
 urlpatterns = [
     path('motions/', views_motions.motions_page, name='motions'),
     path('motions/settings/', views_settings.settings_page, name='motion_settings'),
+    path('motions/manifest.webmanifest', views_motions.app_manifest, name='motion_app_manifest'),
+    path('motions/sw.js', views_motions.app_service_worker, name='motion_app_sw'),
+    path('motions/icon-<int:size>.png', views_motions.app_icon, name='motion_app_icon'),
     path('motions/<slug:slug>/', views_motions.motions_page, name='motion'),
     path('motions/login/<str:code>/', views_auth.login_page, name='motion_login'),
     path('api/auth/challenge/', views_auth.api_challenge, name='auth_challenge'),
@@ -16,6 +19,7 @@ urlpatterns = [
     path('api/auth/me/', views_auth.api_me, name='auth_me'),
     path('api/auth/logout/', views_auth.api_logout, name='auth_logout'),
     path('api/motions/<slug:slug>/say/', views_auth.api_say, name='api_motion_say'),
+    path('api/motions/<slug:slug>/rename/', views_auth.api_rename, name='api_motion_rename'),
     path('api/motions/', views_motions.api_motions, name='api_motions'),
     path('api/motions/pulse/', views_motions.api_pulse, name='api_motions_pulse'),
     path('api/settings/', views_settings.api_settings, name='api_settings'),

@@ -129,7 +129,8 @@ def agents_in(motion):
     for name in agents:
         resolved = knobs.resolve(motion.slug, name)
         out[name] = {'listening': resolved['listening'], 'model': resolved['model'],
-                     'effort': resolved['mention_effort'], 'context': context_in(motion, name)}
+                     'effort': resolved['mention_effort'], 'ultracode': bool(resolved['ultracode']),
+                     'context': context_in(motion, name)}
     return out
 
 
@@ -380,3 +381,55 @@ def api_mentions(request, name):
                 break
 
     return JsonResponse({'name': name, 'mentions': found})
+
+
+# --- installing it as an app (a web app manifest, an icon, a service worker) --
+# Chrome and Edge (Ubuntu, Windows, macOS) offer "Install" for a page with a
+# manifest, and Chrome on Android "Install app": it then opens in its own
+# window, from the launcher, with no browser around it.
+
+@require_GET
+def app_manifest(request):
+    return JsonResponse({
+        'name': 'pickipedia chat',
+        'short_name': 'pickipedia chat',
+        'description': 'Moods: where cryptograss talks, people and agents together.',
+        'id': '/motions/',
+        'start_url': '/motions/',
+        'scope': '/motions/',
+        'display': 'standalone',
+        'background_color': '#fbfaf7',
+        'theme_color': '#b8106b',
+        'icons': [{'src': f'/motions/icon-{size}.png', 'sizes': f'{size}x{size}', 'type': 'image/png',
+                   'purpose': 'any maskable'} for size in (192, 512)],
+    }, content_type='application/manifest+json')
+
+
+@require_GET
+def app_icon(request, size):
+    from django.http import HttpResponse
+    from .services import app_icon as icon
+    if size not in (180, 192, 512):
+        raise Http404('no icon that size')
+    response = HttpResponse(icon.png(size), content_type='image/png')
+    response['Cache-Control'] = 'public, max-age=86400'
+    return response
+
+
+SERVICE_WORKER = """// pickipedia chat: here so the page can be installed as an app. It keeps
+// nothing: every request goes to the network, as if it weren't here.
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', e => {
+  if (e.request.mode === 'navigate') e.respondWith(fetch(e.request));
+});
+"""
+
+
+@require_GET
+def app_service_worker(request):
+    from django.http import HttpResponse
+    response = HttpResponse(SERVICE_WORKER, content_type='text/javascript')
+    response['Service-Worker-Allowed'] = '/motions/'
+    response['Cache-Control'] = 'no-cache'
+    return response

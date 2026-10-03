@@ -380,7 +380,7 @@ class ClaudeCodeWaker:
         return total
 
     def command(self, session_id, new_session_id, prompt, grant=(), budget=None, effort=None, model=None,
-                full=False):
+                full=False, ultracode=False):
         cmd = [self.claude, '-p', '--resume', session_id, '--fork-session',
                '--session-id', new_session_id,
                # Every event on stdout as it happens: what the runner posts to
@@ -404,10 +404,15 @@ class ClaudeCodeWaker:
             cmd += ['--max-budget-usd', f'{budget:.2f}']
         if effort:
             cmd += ['--effort', effort]
+        if ultracode and full:
+            # Claude Code's standing multi-agent workflows, at any effort: a
+            # session setting, not an effort level. Only with full tools --
+            # a look-only turn couldn't run a workflow anyway.
+            cmd += ['--settings', json.dumps({'ultracode': True})]
         return cmd + ['--', prompt]
 
     def wake(self, session_id, prompt, new_session_id=None, on_event=None, grant=(), budget=None, effort=None,
-             model=None, full=False, stop=None):
+             model=None, full=False, stop=None, ultracode=False):
         """Run one turn; (new session id, its reply). `on_event` sees every
         stream event as it comes out; `stop()`, if given, is asked now and
         then whether to end the turn. self.last_result keeps the run's
@@ -418,7 +423,7 @@ class ClaudeCodeWaker:
         new_session_id = new_session_id or str(uuid.uuid4())
         spent_before = self.session_cost(session_id)
         cmd = self.command(session_id, new_session_id, prompt, grant=grant, budget=budget, effort=effort, model=model,
-                           full=full)
+                           full=full, ultracode=ultracode)
         # Its own process group, so ending it ends everything it started: a
         # child left holding the output pipe would keep the turn open.
         proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -756,6 +761,8 @@ class MotionPoller:
         self.save()
         options = dict(effort=self.knob(slug, 'mention_effort', self.mention_effort), model=self.knob(slug, 'model'),
                        full=full)
+        if full and self.knob(slug, 'ultracode'):
+            options['ultracode'] = True
         outcome = self.launch(slug, lambda: self.run_turn(slug, sessions[0], prompt, **options))
         return settled, outcome
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Motion settings</title>
+<title>settings · pickipedia chat</title>
 <style>
   :root {
     --bg: #fbfaf7; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b6560;
@@ -45,7 +45,7 @@
 </head>
 <body>
 <header>
-  <a class="brand" href="/motions/">Motions</a><span>settings</span>
+  <a class="brand" href="/motions/">pickipedia chat</a><span>settings</span>
   <span class="who" id="who"></span>
 </header>
 <main>
@@ -66,8 +66,10 @@
   const LABELS = {
     listening: 'listening', consider_after: 'consider after (s)', idle_after: 'first unprompted look (min)',
     considers_per_hour: 'considerations / hour', mention_effort: 'effort when mentioned',
-    consider_effort: 'effort when considering', model: 'model', rules: 'rules here',
+    consider_effort: 'effort when considering', model: 'model', rules: 'rules here', ultracode: 'ultracode',
   };
+  // As the terminal names them.
+  const EFFORT_LABELS = { xhigh: 'extra' };
   let state = null;
 
   function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -98,7 +100,9 @@
         `<option value="${m}" ${v.mode === m ? 'selected' : ''}>${m === 'mentions' ? 'mentions only' : m}</option>`).join('')}</select>`
         + (v.until ? ` <span class="note">until ${esc(when(v.until))}</span>` : '');
     } else if (key === 'mention_effort' || key === 'consider_effort') {
-      input = `<select ${attrs}>${state.efforts.map(e => `<option ${e === value ? 'selected' : ''}>${e}</option>`).join('')}</select>`;
+      input = `<select ${attrs}>${state.efforts.map(e => `<option value="${e}" ${e === value ? 'selected' : ''}>${EFFORT_LABELS[e] || e}</option>`).join('')}</select>`;
+    } else if (key === 'ultracode') {
+      input = `<label class="note"><input type="checkbox" ${attrs} ${value ? 'checked' : ''}> on for full-tools mention wakes</label>`;
     } else if (key === 'rules') {
       input = `<textarea ${attrs} placeholder="(none)">${esc(value)}</textarea>`;
     } else if (key === 'idle_after') {
@@ -127,7 +131,7 @@
     for (const m of state.motions) {
       for (const a of state.agents) cards.push(card(m.title, `${a} in #${m.slug}`, state.resolved[m.slug][a], m.slug, a));
     }
-    document.getElementById('cards').innerHTML = cards.join('') || 'No Motions yet.';
+    document.getElementById('cards').innerHTML = cards.join('') || 'No Moods yet.';
     const globals = state.agents.map(a => card(`${a}, everywhere`, `unless a Motion says otherwise`, everywhere(a), null, a));
     globals.push(`<div class="card"><h2>Budget</h2><div class="sub">for all agents together</div>`
       + `<div class="row"><label title="${esc(state.global_knobs.consider_usd_per_day.help)}">$ a day</label>`
@@ -150,7 +154,8 @@
     if (el.dataset.kind === 'listening') value = { mode: el.value, until: null };
     else if (el.dataset.scale) value = Number(el.value) * Number(el.dataset.scale);
     else if (el.type === 'number') value = Number(el.value);
-    const status = el.parentElement.querySelector('.status');
+    else if (el.type === 'checkbox') value = el.checked;
+    const status = el.closest('span:not(.note)').querySelector('.status');
     const r = await fetch('/api/settings/', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
       body: JSON.stringify({ key, value, motion: el.dataset.motion || null, agent: el.dataset.agent || null }),

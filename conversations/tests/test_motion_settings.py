@@ -123,6 +123,45 @@ class SettingsAPITest(TestCase):
         self.assertEqual((context['tokens'], context['window'], context['model']),
                          (210_015, 1_000_000, 'claude-opus-5-5'))
 
+    def test_a_mood_is_renamed_by_someone_signed_in_and_the_record_keeps_its_old_name(self):
+        from conversations.models import Message
+
+        def rename(body):
+            return self.client.post('/api/motions/m26/rename/', json.dumps(body), content_type='application/json')
+        self.m26.title = 'Magenta 26 Million'
+        self.m26.save()
+        self.assertEqual(rename({'title': 'Magenta Interface(s)'}).status_code, 401)
+        with self.as_(self.justin):
+            self.assertEqual(rename({'title': '  '}).status_code, 400)
+            self.assertEqual(rename({'title': 'x' * 201}).status_code, 400)
+            self.assertEqual(rename({'title': 'Magenta Interface(s)'}).status_code, 200)
+        self.m26.refresh_from_db()
+        self.assertEqual((self.m26.slug, self.m26.title), ('m26', 'Magenta Interface(s)'))  # the slug never changes
+        row = Message.objects.get(motion=self.m26, sender_id='system', source_file='motion-rename')
+        self.assertEqual((row.content['by'], row.content['from']['title']), ('justin', 'Magenta 26 Million'))
+        turns = self.client.get('/api/motions/m26/turns/').json()
+        self.assertEqual(turns['motion']['title'], 'Magenta Interface(s)')
+        self.assertEqual(turns['turns'], [])  # the note is for the record, not the thread
+
+    def test_ultracode_is_a_switch(self):
+        self.assertIs(knobs.clean('ultracode', 'on'), True)
+        self.assertIs(knobs.clean('ultracode', False), False)
+        with self.assertRaises(knobs.Invalid):
+            knobs.clean('ultracode', 'sometimes')
+        knobs.change('ultracode', True, motion=self.m26, agent=self.magent, by=self.justin)
+        self.assertIs(self.client.get('/api/motions/m26/turns/').json()['agents']['magent']['ultracode'], True)
+
+    def test_installable_as_an_app(self):
+        manifest = self.client.get('/motions/manifest.webmanifest')
+        self.assertEqual(manifest['Content-Type'], 'application/manifest+json')
+        body = manifest.json()
+        self.assertEqual((body['name'], body['display'], body['start_url']), ('pickipedia chat', 'standalone', '/motions/'))
+        icon = self.client.get('/motions/icon-192.png')
+        self.assertEqual(icon.content[:8], b'\x89PNG\r\n\x1a\n')
+        self.assertEqual(int.from_bytes(icon.content[16:20], 'big'), 192)  # IHDR width
+        self.assertEqual(self.client.get('/motions/icon-7.png').status_code, 404)
+        self.assertEqual(self.client.get('/motions/sw.js')['Service-Worker-Allowed'], '/motions/')
+
     def test_a_context_window_by_model(self):
         from conversations.services.motion_view import context_window
         self.assertEqual(context_window('claude-opus-5-5'), 1_000_000)

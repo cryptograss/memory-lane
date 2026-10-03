@@ -3,7 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Motions</title>
+<title>pickipedia chat</title>
+<link rel="manifest" href="/motions/manifest.webmanifest">
+<meta name="theme-color" content="#b8106b">
+<link rel="icon" type="image/png" sizes="192x192" href="/motions/icon-192.png">
+<link rel="apple-touch-icon" href="/motions/icon-180.png">
 <style>
   :root {
     --bg: #fbfaf7; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b6560;
@@ -63,6 +67,13 @@
   .inner { max-width: 760px; margin: 0 auto; padding: 0 22px; }
 
   .motion-head h1 { font-size: 22px; margin: 0 0 4px; }
+  #rename { margin-left: 8px; border: 0; background: none; color: var(--muted); font-size: 15px; cursor: pointer; vertical-align: 2px; }
+  #rename:hover { color: var(--accent); }
+  #renameForm { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+  #renameForm[hidden] { display: none; }
+  #renameForm input, #renameForm textarea { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+                                            background: var(--panel); color: var(--ink); }
+  #renameForm input { font-size: 18px; font-weight: 600; }
   .motion-head .desc { color: var(--muted); margin: 0 0 6px; }
   .motion-head .meta { font-size: 12px; color: var(--muted); }
   .motion-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
@@ -220,6 +231,8 @@
   .hush select { font: inherit; font-size: 12.5px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px;
                  background: var(--panel); color: var(--ink); }
   .hush .off { color: var(--accent); }
+  .hush .ultra { white-space: nowrap; cursor: pointer; }
+  .hush .ultra input { vertical-align: -2px; margin: 0 2px 0 0; }
   /* How full an agent's context is: a little pie, its details on hover. */
   .pie { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-right: 4px;
          background: conic-gradient(var(--agent) var(--p), transparent 0); box-shadow: inset 0 0 0 1px var(--agent);
@@ -265,8 +278,8 @@
 </head>
 <body>
 <header>
-  <span class="brand">Motions<small>memory-lane</small></span>
-  <a class="settings" href="/motions/settings/" title="How each agent carries itself in each Motion">settings</a>
+  <span class="brand">pickipedia chat</span>
+  <a class="settings" href="/motions/settings/" title="How each agent carries itself in each Mood">settings</a>
   {% if preview_label %}<span class="preview" title="A branch's code, not production; see the label for which record">{{ preview_label }}</span>{% endif %}
   <span class="me">viewing as <select id="me"><option value="">nobody</option></select></span>
   <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
@@ -276,7 +289,7 @@
 </header>
 <div id="locked"></div>
 <div class="layout">
-  <nav id="nav"><div class="label">Motions</div></nav>
+  <nav id="nav"><div class="label">Moods</div></nav>
   <div id="grip" title="Drag to resize; double-click to reset"></div>
   <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div>
     <div id="footer">
@@ -328,7 +341,7 @@
   let me = viewer || store.get('me', '') || '';
   let lastSeen = store.get('lastSeen', {});   // slug -> iso
   let badges = {};          // slug -> count of my mentions since lastSeen
-  let baseTitle = 'Motions';
+  let baseTitle = 'pickipedia chat';
   let people = [];          // everyone who can be named, for @-completion
   let human = {};           // name -> is a person
   let act = null;           // what an agent is doing now, from /turns/
@@ -373,7 +386,7 @@
         <div class="title">${esc(m.title)}${badges[m.slug] ? `<span class="badge">${badges[m.slug]}</span>` : ''}</div>
         <div class="meta">${m.participants.map(n => `<span class="nm" data-who="${esc(n)}">${esc(n)}</span>`).join(', ') || '—'} · ${m.message_count} · ${ago(m.last_at)}</div>
       </a>`).join('');
-    nav.innerHTML = '<div class="label">Motions</div>' + items;
+    nav.innerHTML = '<div class="label">Moods</div>' + items;
     markLive();
   }
 
@@ -421,8 +434,11 @@
   function renderHead(m) {
     const block = m.eth_blockheight ? 'opened at block ' + m.eth_blockheight.toLocaleString() : '';
     return `<div class="motion-head">
-      <h1>${esc(m.title)}</h1>
+      <h1>${esc(m.title)}${viewer ? '<button type="button" id="rename" title="Rename this Mood" aria-label="Rename this Mood">✎</button>' : ''}</h1>
       ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
+      <form id="renameForm" hidden><input id="renameTitle" maxlength="200" aria-label="Title">
+        <textarea id="renameDesc" rows="2" maxlength="2000" aria-label="Description" placeholder="What it's about (optional)"></textarea>
+        <span><button type="submit">Rename</button> <button type="button" id="renameCancel">Cancel</button></span></form>
       <div class="meta">${block ? block + ' · ' : ''}${m.message_count} messages in the record</div>
       <div class="people" id="people">${m.participants.map(n =>
         `<span class="who ${human[n] ? 'human' : 'agent'}" data-who="${esc(n)}">${icon(n)}${esc(n)}</span>`).join('')}</div>
@@ -570,6 +586,34 @@
     b.addEventListener('click', () => jump(dir, '.human'));
   }
 
+  // --- renaming a Mood: its title and description; the slug never changes ---
+  let headMotion = null;  // the Motion the head was last drawn for
+  document.addEventListener('click', e => {
+    if (e.target.closest('#rename')) {
+      const form = document.getElementById('renameForm');
+      document.getElementById('renameTitle').value = headMotion.title;
+      document.getElementById('renameDesc').value = headMotion.description || '';
+      form.hidden = false;
+      document.querySelector('.motion-head h1').hidden = true;
+      document.getElementById('renameTitle').focus();
+    } else if (e.target.closest('#renameCancel')) {
+      document.getElementById('renameForm').hidden = true;
+      document.querySelector('.motion-head h1').hidden = false;
+    }
+  });
+  document.addEventListener('submit', async e => {
+    if (e.target.id !== 'renameForm') return;
+    e.preventDefault();
+    const r = await fetch(`/api/motions/${encodeURIComponent(current)}/rename/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify({ title: document.getElementById('renameTitle').value,
+                             description: document.getElementById('renameDesc').value }),
+    });
+    if (!r.ok) { showError('rename: ' + ((await r.json().catch(() => ({}))).error || r.status)); return; }
+    await loadMotions();
+    poll(true);
+  });
+
   function addQuiet(q, container) {
     let row = container.lastElementChild;
     if (!row || !row.classList.contains('quiet')) {
@@ -702,9 +746,18 @@
     }
     if (full) {
       prev = null;
+      headMotion = data.motion;
       inner.innerHTML = renderHead(data.motion);
-      baseTitle = data.motion.title + ' · Motions';
+      baseTitle = data.motion.title + ' · pickipedia chat';
       setTitle();
+    } else if (headMotion && data.motion && data.motion.title !== headMotion.title) {
+      // Someone renamed it: say so in place, without redrawing the thread.
+      headMotion = data.motion;
+      const h1 = document.querySelector('.motion-head h1');
+      if (h1 && h1.firstChild) h1.firstChild.textContent = data.motion.title;
+      baseTitle = data.motion.title + ' · pickipedia chat';
+      setTitle();
+      loadMotions();
     }
     act = data.activity || null;
     renderActivity();
@@ -752,6 +805,7 @@
   // mention_effort), so changing them needs no trip to the settings page.
   const MODELS = [['', 'default model'], ['opus', 'opus'], ['sonnet', 'sonnet'], ['fable', 'fable'], ['haiku', 'haiku']];
   const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const EFFORT_LABELS = { xhigh: 'extra' };  // as the terminal names them
   let agentsNow = {}, agentsShown = '';
   function describeListening(l) {
     const until = l.until ? ' until ' + new Date(l.until).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
@@ -784,7 +838,7 @@
     agentsNow = agents;
     const box = document.getElementById('hush');
     // Redraw the menus only when a setting changed: never under someone's open menu.
-    const key = JSON.stringify(Object.entries(agents).map(([n, a]) => [n, a.listening, a.model, a.effort, viewer]));
+    const key = JSON.stringify(Object.entries(agents).map(([n, a]) => [n, a.listening, a.model, a.effort, a.ultracode, viewer]));
     if (box && (key !== agentsShown || !box.childElementCount)) {
       agentsShown = key;
       box.innerHTML = agentRows(agents);
@@ -797,7 +851,8 @@
       const row = `<span class="agent${l.mode === 'on' ? '' : ' off'}" data-who="${esc(agent)}">${icon(agent, false)}${esc(agent)}: `;
       if (!viewer) {
         return row
-          + `${esc(describeListening(l))} · ${esc(a.model || 'default model')} · effort ${esc(a.effort)}</span>`;
+          + `${esc(describeListening(l))} · ${esc(a.model || 'default model')} · effort ${esc(EFFORT_LABELS[a.effort] || a.effort)}`
+          + (a.ultracode ? ' · ultracode' : '') + '</span>';
       }
       const listen = `<select data-agent="${esc(agent)}" data-knob="listening"><option selected disabled>${esc(describeListening(l))}</option>`
         + HUSH.map(([mode, minutes, label], i) => `<option value="${i}">${esc(label)}</option>`).join('') + '</select>';
@@ -806,14 +861,16 @@
         + models.map(([v, label]) => `<option value="${esc(v)}"${v === a.model ? ' selected' : ''}>`
           + `${esc(v ? label : (ctx.model ? `default (${shortModel(ctx.model)})` : label))}</option>`).join('') + '</select>';
       const effort = `<select data-agent="${esc(agent)}" data-knob="mention_effort" title="how hard it thinks when @mentioned here">`
-        + EFFORTS.map(v => `<option value="${v}"${v === a.effort ? ' selected' : ''}>effort ${v}</option>`).join('') + '</select>';
-      return `${row}${listen} ${model} ${effort}</span>`;
+        + EFFORTS.map(v => `<option value="${v}"${v === a.effort ? ' selected' : ''}>effort ${EFFORT_LABELS[v] || v}</option>`).join('') + '</select>';
+      const ultra = `<label class="ultra" title="Claude Code's standing multi-agent workflows, on wakes with full tools: thorough, and costly">`
+        + `<input type="checkbox" data-agent="${esc(agent)}" data-knob="ultracode"${a.ultracode ? ' checked' : ''}> ultracode</label>`;
+      return `${row}${listen} ${model} ${effort} ${ultra}</span>`;
     }).join('');
   }
   document.addEventListener('change', async e => {
-    const select = e.target.closest('#hush select');
+    const select = e.target.closest('#hush select, #hush input[type=checkbox]');
     if (!select) return;
-    let key = select.dataset.knob, value = select.value;
+    let key = select.dataset.knob, value = select.type === 'checkbox' ? select.checked : select.value;
     if (key === 'listening') {
       const [mode, minutes] = HUSH[Number(select.value)];
       value = { mode, until: minutes ? new Date(Date.now() + minutes * 60000).toISOString() : null };
@@ -1129,10 +1186,12 @@
   (async function start() {
     try { await loadMotions(); } catch (e) { setStatus('cannot reach memory-lane', 'stale'); return; }
     const slug = initialSlug || (motions[0] && motions[0].slug);
-    if (!slug) { inner.innerHTML = '<div class="empty">No Motions yet.</div>'; setStatus('live', 'live'); return; }
+    if (!slug) { inner.innerHTML = '<div class="empty">No Moods yet.</div>'; setStatus('live', 'live'); return; }
     await open(slug, false);
     setInterval(() => poll(false), POLL_MS);
   })();
+  // Installable as an app: the browser wants a service worker (it keeps nothing).
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/motions/sw.js', { scope: '/motions/' }).catch(() => {});
 })();
 </script>
 </body>
