@@ -1196,6 +1196,43 @@ class GlovesOffTest(TestCase):
             self.assertIn(flag, limited)
 
 
+class CompactTest(TestCase):
+    """"@magent /compact" from someone trusted compacts the session instead of taking a turn."""
+
+    def run_for(self, *posts):
+        api = FakeAPI([mention('m26', dict(turn(f'm{i}', who, i, text), via='web'))
+                       for i, (who, text) in enumerate(posts)], sessions={'m26': ['s-local']})
+        self.waker = FakeWaker(reply='')
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        state.write_text(json.dumps({'since': (T0 - timedelta(hours=1)).isoformat(), 'handled': [], 'wakes': []}))
+        self.poller = MotionPoller(api, self.waker, state_path=state, now=lambda: T0 + timedelta(minutes=30))
+        self.poller.poll_once()
+        return [prompt for _, prompt in self.waker.woken]
+
+    def test_the_command_alone_is_what_runs(self):
+        self.assertEqual(self.run_for(('justin', '@magent /compact')), ['/compact'])
+        self.assertNotIn('effort', self.waker.options)
+        self.assertFalse(self.waker.options['full'])  # it needs no tools
+
+    def test_what_to_keep_goes_with_it(self):
+        self.assertEqual(self.run_for(('justin', '@magent /compact keep the setlist and the open PRs')),
+                         ['/compact keep the setlist and the open PRs'])
+        self.assertEqual(self.run_for(('justin', '/compact @magent')), ['/compact'])
+
+    def test_anything_else_owed_waits_for_the_compacted_session(self):
+        prompts = self.run_for(('justin', '@magent what time is soundcheck?'), ('justin', '@magent /compact'))
+        self.assertEqual(prompts, ['/compact'])
+        self.assertEqual(set(self.poller.state['handled']), {'m1'})  # the question is still owed
+
+    def test_only_from_someone_trusted_with_real_work(self):
+        prompts = self.run_for(('skyler', '@magent /compact'))
+        self.assertTrue(prompts[0].startswith('<motion-wake'))  # just a mention: it can say why not
+
+    def test_a_mention_of_compacting_is_not_the_command(self):
+        prompts = self.run_for(('justin', '@magent should we /compact soon?'))
+        self.assertTrue(prompts[0].startswith('<motion-wake'))
+
+
 class RunCostTest(TestCase):
     """A fork inherits its session's running total; a run's cost is what it added."""
 

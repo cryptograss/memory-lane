@@ -641,6 +641,14 @@ def linked_message(posts):
     return None
 
 
+def compact_request(text, agent):
+    """For a post like "@magent /compact [what to keep]": what to keep ('' for
+    nothing in particular). None if the post asks something else."""
+    rest = re.sub(rf'@{re.escape(agent)}\b', '', text or '').strip()
+    match = re.match(r'/compact(?:\s+(.*))?\Z', rest, re.S | re.I)
+    return (match.group(1) or '').strip() if match else None
+
+
 def since_last_word(turns, agent, before_id=None):
     """The turns after `agent` last spoke, up to (not including) `before_id`; turns oldest first."""
     if before_id is not None:
@@ -881,6 +889,13 @@ class MotionPoller:
             self.hold(slug, f'{self.max_wakes_per_hour} wakes this hour already', opens)
             return settled, None
 
+        # "@magent /compact" from someone trusted with real work: compact the
+        # session instead of taking a turn. Anything else owed here waits for
+        # the next look, and is answered from the compacted session.
+        compacts = [t for t in owed if t['sender'] in self.full_tools_for
+                    and compact_request(t['text'], self.agent) is not None]
+        if compacts:
+            owed = compacts
         sessions = self.api.sessions(slug, self.agent)
         settled += [t['id'] for t in owed]
         if not sessions or not self.waker.can_wake(sessions[0]):
@@ -890,7 +905,12 @@ class MotionPoller:
             return settled, 'elsewhere'
 
         full = bool(self.full_tools_for) and all(t['sender'] in self.full_tools_for for t in owed)
-        prompt = self.prompt(slug, owed, full=full)
+        if compacts:
+            keep = compact_request(compacts[-1]['text'], self.agent)
+            # Claude Code's own command; it needs no tools, and says nothing.
+            prompt, full = '/compact' + (f' {keep}' if keep else ''), False
+        else:
+            prompt = self.prompt(slug, owed, full=full)
         if self.dry_run:
             logger.info(f'{slug}: would wake {sessions[0]} {"with full tools " if full else ""}with:\n{prompt}')
             return settled, 'woken'
@@ -901,6 +921,8 @@ class MotionPoller:
         self.save()
         options = dict(effort=self.knob(slug, 'mention_effort', self.mention_effort), model=self.knob(slug, 'model'),
                        full=full)
+        if compacts:
+            del options['effort']
         if full and self.knob(slug, 'ultracode'):
             options['ultracode'] = True
         outcome = self.launch(slug, lambda: self.run_turn(slug, sessions[0], prompt, **options))
@@ -975,8 +997,9 @@ class MotionPoller:
             poster.close()
         cost = (getattr(self.waker, 'last_result', None) or {}).get('run_cost_usd')
         ending = (getattr(self.waker, 'last_result', None) or {}).get('subtype') or ''
+        compacted = (getattr(self.waker, 'last_result', None) or {}).get('local_command') == 'compact'
         said = ('stayed silent' if _SILENT_REPLY.match(reply or '') else f'replied {len(reply)} chars' if reply
-                else f'ended without a word ({ending or "no reply"})')
+                else 'compacted' if compacted else f'ended without a word ({ending or "no reply"})')
         logger.info(f'{slug}: woke {session_id} as {new_session}; {said}'
                     + (f'; ${cost:.4f}' if isinstance(cost, (int, float)) else '')
                     + (f'; streamed {poster.sent}, lost {poster.failed}' if poster else ''))

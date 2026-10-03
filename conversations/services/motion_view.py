@@ -610,8 +610,36 @@ def context_in(motion, agent):
     if row is None:
         return None
     tokens = sum(row[k] or 0 for k in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
-    return {'tokens': tokens, 'window': context_window(row['model_backend'], tokens),
-            'model': row['model_backend'] or '', 'at': row['created_at'].isoformat()}
+    window = context_window(row['model_backend'], tokens)
+    # Compacted since (`@magent /compact`): no turn has measured the context
+    # yet, so it is about the summary's size until the next one does.
+    summary = compacted_since(motion, agent, row['created_at'])
+    if summary is not None:
+        return {'tokens': len(summary.text) // CHARS_PER_TOKEN, 'window': window, 'model': row['model_backend'] or '',
+                'at': summary.at.isoformat(), 'compacted': True}
+    return {'tokens': tokens, 'window': window, 'model': row['model_backend'] or '', 'at': row['created_at'].isoformat()}
+
+
+CHARS_PER_TOKEN = 4  # roughly, for English prose
+
+
+class _Summary:
+    def __init__(self, text, at):
+        self.text, self.at = text, at
+
+
+def compacted_since(motion, agent, when):
+    """The summary `agent`'s context went on from, if it was compacted after
+    `when` (its last measured turn); else None. What follows a summary
+    before the next turn is only the command's own echo."""
+    for row in (motion.messages.filter(sender_id=agent, is_sidechain=False, created_at__gt=when)
+                .order_by('-created_at').values('content', 'created_at')[:20]):
+        content = row['content']
+        if isinstance(content, list):
+            content = ' '.join(b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text')
+        if isinstance(content, str) and is_compaction(content):
+            return _Summary(content, row['created_at'])
+    return None
 
 
 # --- a mention the runner is holding ----------------------------------------

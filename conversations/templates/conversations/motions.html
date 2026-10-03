@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>pickipedia chat</title>
+<title>magenta</title>
 <link rel="manifest" href="/motions/manifest.webmanifest">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#b8106b" media="(prefers-color-scheme: light)">
@@ -353,6 +353,11 @@
     font: inherit; font-size: 18px; line-height: 1; padding: 8px 10px; background: none; color: var(--muted);
             border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
   #composer #attach:hover { color: var(--ink); }
+  /* On a phone, the agents' settings fold behind ⚙ and Send is an arrow: the room goes to the conversation. */
+  #composer #agentsBtn { display: none; position: relative; font: inherit; font-size: 17px; line-height: 1; padding: 8px 9px;
+                         background: none; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  #composer #agentsBtn .pie { position: absolute; top: -3px; right: -3px; margin: 0; }
+  #send svg { display: none; width: 18px; height: 18px; vertical-align: middle; }
   #composer.dropping textarea { outline: 2px dashed var(--accent); }
   /* Whether each agent is listening here; a hush for a long deliberation. */
   /* Each agent's listening, model and effort, and its pie: in the footer, always in view. */
@@ -365,10 +370,13 @@
   .hush .ultra { white-space: nowrap; cursor: pointer; }
   .hush .ultra input { vertical-align: -2px; margin: 0 2px 0 0; }
   /* How full an agent's context is: a little pie, its details on hover. */
-  .pie { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-right: 4px;
-         background: conic-gradient(var(--agent) var(--p), transparent 0); box-shadow: inset 0 0 0 1px var(--agent);
-         cursor: help; }
-  .pie.full { background: conic-gradient(var(--accent) var(--p), transparent 0); box-shadow: inset 0 0 0 1px var(--accent); }
+  /* Its colour says how close to compacting: green to 70%, yellow to 80, orange to 90, red above. */
+  .pie { --pc: #2e9e4f; display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px;
+         margin-right: 4px; background: conic-gradient(var(--pc) var(--p), transparent 0);
+         box-shadow: inset 0 0 0 1px var(--pc); cursor: help; }
+  .pie.warm { --pc: #d4a514; }
+  .pie.hot { --pc: #e8761c; }
+  .pie.full { --pc: #d63a2f; }
   #locked { display: none; background: #3a0d0d; color: #ffd9d9; padding: 8px 16px; font-size: 13.5px; }
   body.locked #locked { display: block; }
   body.locked #composer, body.locked #typing { display: none !important; }
@@ -402,7 +410,15 @@
     .hush { padding: 4px 12px 0; }
     #jump { right: 10px; gap: 5px; }
     #jump button { width: 30px; height: 30px; font-size: 13px; }
-    #composer { padding: 8px 10px 10px; }
+    #composer { padding: 6px 8px 8px; gap: 6px; }
+    #composer textarea { min-height: 38px; padding: 7px 9px; }
+    #composer #attach { padding: 8px 9px; }
+    #composer #agentsBtn { display: block; }
+    #composer #send { padding: 8px 10px; }
+    #send .label { display: none; }
+    #send svg { display: inline-block; }
+    .hush { display: none; }
+    body.agents-open .hush:not(:empty) { display: flex; padding: 6px 10px 2px; max-height: 40vh; overflow-y: auto; }
   }
   /* Signed in, you are who you are: no need to choose whose view to see. */
 </style>
@@ -410,7 +426,7 @@
 <body>
 <header>
   <button id="menu" type="button" aria-label="Moods" aria-expanded="false">☰</button>
-  <a class="brand" href="/motions/">pickipedia chat</a>
+  <a class="brand" href="/motions/">magenta</a>
   <span class="crumb" id="crumb"></span>
   {% if preview_label %}<span class="preview" title="A branch's code, not production; see the label for which record">{{ preview_label }}</span>{% endif %}
   <span class="grow"></span>
@@ -464,10 +480,11 @@
     <div class="hush" id="hush"></div>
     <form id="composer" autocomplete="off">
       <div id="suggest"></div>
+      <button type="button" id="agentsBtn" title="Agents here: listening, model, effort" aria-label="Agent settings" aria-expanded="false">⚙</button>
       <button type="button" id="attach" title="Add an image (or paste or drop one)" aria-label="Add an image">＋</button>
       <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
       <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
-      <button type="submit" id="send">Send</button>
+      <button type="submit" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z" fill="currentColor"/></svg></button>
     </form>
     </div>
   </main>
@@ -505,7 +522,7 @@
   let me = viewer || store.get('me', '') || '';
   let lastSeen = store.get('lastSeen', {});   // slug -> iso
   let badges = {};          // slug -> count of my mentions since lastSeen
-  let baseTitle = 'pickipedia chat';
+  let baseTitle = 'magenta';
   let people = [];          // everyone who can be named, for @-completion
   let human = {};           // name -> is a person
   let act = null;           // what an agent is doing now, from /turns/
@@ -887,7 +904,7 @@
     crumb.innerHTML = m ? esc(m.title) + (viewer ? '<button type="button" id="rename" title="Rename this Mood" aria-label="Rename this Mood">✎</button>' : '') : '';
     const h1 = document.querySelector('.motion-head h1');
     if (h1 && m) h1.textContent = m.title;
-    if (m) { baseTitle = m.title + ' · pickipedia chat'; setTitle(); }
+    if (m) { baseTitle = m.title + ' · magenta'; setTitle(); }
   }
   document.addEventListener('click', e => {
     if (e.target.closest('#rename')) {
@@ -1511,19 +1528,25 @@
     const c = (agentsNow[name] || {}).context;
     if (!c || !c.window) return null;
     const pct = Math.min(100, Math.round(100 * c.tokens / c.window));
-    const title = `context ${pct}% full · ${c.tokens.toLocaleString()} of ${c.window.toLocaleString()} tokens`
-      + (c.model ? ` · ${shortModel(c.model)}` : '') + ` · as of ${stamp(c.at)}`;
+    const title = c.compacted
+      ? `compacted ${stamp(c.at)} · about ${c.tokens.toLocaleString()} tokens of ${c.window.toLocaleString()}, the summary; its next turn measures it`
+      : `context ${pct}% full · ${c.tokens.toLocaleString()} of ${c.window.toLocaleString()} tokens`
+        + (c.model ? ` · ${shortModel(c.model)}` : '') + ` · as of ${stamp(c.at)}`;
     return { pct, title };
   }
   // Wherever an agent is named with its settings -- the people chips, the
   // agent rows -- its pie leads; drawn in place, since the rest changes rarely.
   function refreshPies() {
-    document.querySelectorAll('.people .who.agent, #hush .agent').forEach(el => {
+    // ⚙ on a phone carries the pie of whichever agent here is fullest.
+    const fullest = Object.keys(agentsNow).sort((a, b) => ((pieAttrs(b) || {}).pct || 0) - ((pieAttrs(a) || {}).pct || 0))[0];
+    const gear = document.getElementById('agentsBtn');
+    if (fullest) gear.dataset.who = fullest; else delete gear.dataset.who;
+    document.querySelectorAll('.people .who.agent, #hush .agent, #agentsBtn').forEach(el => {
       const a = pieAttrs(el.dataset.who);
       let p = el.querySelector('.pie');
       if (!a) { if (p) p.remove(); return; }
       if (!p) { p = document.createElement('span'); el.prepend(p); }
-      p.className = 'pie' + (a.pct >= 80 ? ' full' : '');
+      p.className = 'pie' + (a.pct > 90 ? ' full' : a.pct > 80 ? ' hot' : a.pct > 70 ? ' warm' : '');
       p.style.setProperty('--p', a.pct + '%');
       p.title = a.title;
     });
@@ -1757,12 +1780,24 @@
     renderMe(); remarkAll(); resetBadges(); refreshBadges(true);
   });
   onlyMine.addEventListener('change', () => document.body.classList.toggle('only-mine', onlyMine.checked));
+  const agentsBtn = document.getElementById('agentsBtn');
+  agentsBtn.addEventListener('click', () => {
+    agentsBtn.setAttribute('aria-expanded', document.body.classList.toggle('agents-open'));
+  });
   const menu = document.getElementById('menu');
   menu.addEventListener('click', () => {
     menu.setAttribute('aria-expanded', document.body.classList.toggle('menu-open'));
   });
   nav.addEventListener('click', e => { if (e.target.closest('a.motion')) document.body.classList.remove('menu-open'); });
-  if (matchMedia('(max-width: 720px)').matches) sayBox.placeholder = 'Say something · @name · [[Page]]';
+  // On a phone: one line until there's more to say, growing with the text (to 40% of the screen).
+  const phone = matchMedia('(max-width: 720px)').matches;
+  function fitSay() {
+    if (!phone) return;
+    sayBox.style.height = 'auto';
+    sayBox.style.height = sayBox.scrollHeight + 2 + 'px';
+  }
+  if (phone) { sayBox.placeholder = 'Say something · @name · [[Page]]'; sayBox.rows = 1; }
+  sayBox.addEventListener('input', fitSay);
 
   // Tell the Motion this person is typing: at most every 3s while there is
   // text, and once when it is cleared or sent.
@@ -1901,7 +1936,7 @@
         body: JSON.stringify({ text }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
-      sayBox.value = ''; typingSent = 0; sendTyping(false);
+      sayBox.value = ''; fitSay(); typingSent = 0; sendTyping(false);
       await poll(false);
     } catch (e) {
       composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(e.message)}</span>`);

@@ -591,8 +591,8 @@ def api_mentions(request, name):
 @require_GET
 def app_manifest(request):
     return JsonResponse({
-        'name': 'pickipedia chat',
-        'short_name': 'pickipedia chat',
+        'name': 'magenta',
+        'short_name': 'magenta',
         'description': 'Moods: where cryptograss talks, people and agents together.',
         'id': '/motions/',
         'start_url': '/motions/',
@@ -616,7 +616,7 @@ def app_icon(request, size):
     return response
 
 
-SERVICE_WORKER = """// pickipedia chat: here so the page can be installed as an app. It keeps
+SERVICE_WORKER = """// magenta: here so the page can be installed as an app. It keeps
 // nothing: every request goes to the network, as if it weren't here.
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
@@ -624,7 +624,7 @@ self.addEventListener('fetch', e => {
   if (e.request.mode === 'navigate') e.respondWith(fetch(e.request));
 });
 // A notification (a mention, an answer) opens its Mood at that message: in a
-// window already open on pickipedia chat if there is one, else a new one.
+// window already open on magenta if there is one, else a new one.
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const { slug, id } = e.notification.data || {};

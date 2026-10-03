@@ -143,6 +143,36 @@ class StreamTest(TestCase):
         self.post([helper])
         self.assertTrue(Message.objects.get(id=helper['uuid']).is_sidechain)
 
+    def test_a_compaction_streams_in_as_one_and_is_the_session_to_resume(self):
+        # `/compact` run by the poller: no reply, just the summary the session
+        # goes on from. It must count as the agent's, or the next wake would
+        # resume the session from before it, uncompacted.
+        older = str(uuid.uuid4())
+        Message.objects.create(id=uuid.uuid4(), sender_id='magent', motion=self.motion, session_id=older,
+                               content=[{'type': 'text', 'text': 'Before.'}], timestamp=1,
+                               input_tokens=3, cache_read_input_tokens=900_000, model_backend='claude-opus-5-5')
+        s = self.session
+        boundary = {'type': 'system', 'subtype': 'compact_boundary', 'session_id': s, 'uuid': str(uuid.uuid4()),
+                    'compact_metadata': {'trigger': 'manual', 'pre_tokens': 970145, 'post_tokens': 12650}}
+        summary = event('user', 'This session is being continued from a previous conversation that ran out '
+                        'of context. The summary below covers the earlier portion of the conversation.\n\n'
+                        'Summary:\n1. Banjo setlist.', session_id=s, isReplay=True)
+        stdout = event('user', '<local-command-stdout>Compacted </local-command-stdout>', session_id=s, isReplay=True)
+        done = {'type': 'result', 'subtype': 'success', 'is_error': False, 'result': '', 'num_turns': 0,
+                'total_cost_usd': 0.4, 'local_command': 'compact', 'session_id': s, 'uuid': str(uuid.uuid4())}
+        self.assertTrue(self.post([boundary, summary, stdout, done]).json()['finished'])
+
+        sessions = self.client.get('/api/motions/m26/sessions/', {'sender': 'magent'}).json()['sessions']
+        self.assertEqual(sessions[0]['session_id'], s)
+        turns = self.client.get('/api/motions/m26/turns/').json()
+        self.assertEqual(len(turns['compactions']), 1)
+        self.assertIn('Banjo setlist', turns['compactions'][0]['html'])
+        self.assertEqual([t['text'] for t in turns['turns']], ['Before.'])  # no stray "Compacted" turn
+        # The pie: about the summary's size, until a turn measures it.
+        context = turns['agents']['magent']['context']
+        self.assertTrue(context['compacted'])
+        self.assertLess(context['tokens'], 100)
+
 
 @override_settings(MOTION_RUNNER_KEYS={'magent': KEY})
 class PulseAndQuietTest(TestCase):
