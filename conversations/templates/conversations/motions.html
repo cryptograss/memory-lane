@@ -675,20 +675,33 @@
     renderNav();
   }
 
-  async function refreshBadges() {
-    badges = {};
-    if (!me) { renderNav(); setTitle(); return; }
-    // Look back as far as the oldest lastSeen we have, else a week.
+  // Unread mentions of `me` in other Moods. Asked every 30 s, not every poll,
+  // and only for what's new since the last ask: the first ask looks back to
+  // the oldest Mood seen (else a week), which costs the server a scan.
+  const BADGE_MS = 30000;
+  let badgeCursor = null, badgeAt = 0;
+  const counted = new Set();  // mentions already counted, by id
+  function resetBadges() { badges = {}; badgeCursor = null; badgeAt = 0; counted.clear(); }
+  async function refreshBadges(force) {
+    if (!me) { badges = {}; renderNav(); setTitle(); return; }
+    if (!force && Date.now() - badgeAt < BADGE_MS) return;
+    badgeAt = Date.now();
     const seen = Object.values(lastSeen).sort();
-    const since = seen[0] || new Date(Date.now() - 7 * 86400 * 1000).toISOString();
+    const since = badgeCursor || seen[0] || new Date(Date.now() - 7 * 86400 * 1000).toISOString();
+    // Next time, from a little before now: overlap is counted once (by id),
+    // and a clock a few minutes off still misses nothing.
+    const next = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     try {
       const r = await fetch('/api/mentions/' + encodeURIComponent(me) + '/?since=' + encodeURIComponent(since) + '&limit=200');
       if (!r.ok) return;
       for (const m of (await r.json()).mentions) {
+        if (counted.has(m.turn.id)) continue;
+        counted.add(m.turn.id);
         if (m.motion === current) continue;
         const floor = lastSeen[m.motion];
         if (!floor || m.turn.created_at > floor) badges[m.motion] = (badges[m.motion] || 0) + 1;
       }
+      badgeCursor = next;
     } catch (e) {}
     renderNav(); setTitle();
   }
@@ -699,13 +712,50 @@
     if (badges[slug]) { delete badges[slug]; renderNav(); setTitle(); }
   }
 
+  // What's been drawn for each Mood this visit: switching back puts it back at
+  // once and asks only for what's new. The last few Moods are kept.
+  const drawn = new Map();  // slug -> {nodes, lastId, firstId, headMotion, prev, scrollTop}
+  const KEEP_DRAWN = 8;
+  const FIRST_PAGE = 150;   // items on a first load; "Load earlier" for more
+  let gen = 0;              // bumped at every switch: answers for a Mood since left are dropped
+
+  function stash() {
+    if (!current || !document.getElementById('turns')) return;
+    const nodes = document.createDocumentFragment();
+    while (inner.firstChild) nodes.appendChild(inner.firstChild);
+    drawn.delete(current);
+    drawn.set(current, { nodes, lastId, firstId, headMotion, prev, scrollTop: main.scrollTop });
+    while (drawn.size > KEEP_DRAWN) drawn.delete(drawn.keys().next().value);
+  }
+
   async function open(slug, push) {
-    current = slug; lastId = null;
+    if (slug === current && document.getElementById('turns')) return;
+    stash();
+    gen++;
+    current = slug;
     if (push) history.pushState({ slug }, '', '/motions/' + encodeURIComponent(slug) + '/');
     touch(slug);
     renderNav();
-    inner.innerHTML = '<div class="empty">Loading…</div>';
-    await poll(true);
+    // Nothing of the Mood just left may linger: not its agent's work, its
+    // tasks, who was typing there, or its agents' settings.
+    act = null; renderActivity();
+    tasks = []; renderTasks();
+    typingNow = []; renderTyping();
+    renderAgents({});
+    const saved = drawn.get(slug);
+    if (saved) {
+      drawn.delete(slug);
+      inner.replaceChildren(saved.nodes);
+      ({ lastId, firstId, headMotion, prev } = saved);
+      baseTitle = headMotion.title + ' · pickipedia chat';
+      setTitle();
+      main.scrollTop = saved.scrollTop;
+      await poll(false);
+    } else {
+      lastId = null;
+      inner.innerHTML = '<div class="empty">Loading…</div>';
+      await poll(true);
+    }
   }
 
   let firstId = null;      // the oldest item shown, for ?before=
@@ -713,9 +763,11 @@
     const button = document.getElementById('earlier');
     if (!firstId || !button) return;
     button.disabled = true; button.textContent = 'loading…';
+    const mine = gen;
     try {
       const r = await fetch('/api/motions/' + encodeURIComponent(current) + '/turns/?before=' + firstId);
       const data = await r.json();
+      if (mine !== gen) return;  // switched away meanwhile
       const items = itemsOf(data);
       const box = document.createElement('div');
       const saved = prev; prev = null;
@@ -733,7 +785,15 @@
 
   async function poll(full) {
     if (!current) return;
-    const url = '/api/motions/' + encodeURIComponent(current) + '/turns/' + (lastId && !full ? '?after=' + lastId : '');
+    const mine = gen;
+    if (!full && pollingGen === mine) return;  // one poll at a time per Mood: two could draw the same items twice
+    pollingGen = mine;
+    try { await pollOnce(full, mine); } finally { if (pollingGen === mine) pollingGen = null; }
+  }
+  let pollingGen = null;
+  async function pollOnce(full, mine) {
+    const url = '/api/motions/' + encodeURIComponent(current) + '/turns/'
+      + (lastId && !full ? '?after=' + lastId : '?limit=' + FIRST_PAGE);
     let data;
     try {
       const r = await fetch(url);
@@ -741,9 +801,10 @@
       data = await r.json();
       setStatus('live', 'live');
     } catch (e) {
-      setStatus('reconnecting…', 'stale');
+      if (mine === gen) setStatus('reconnecting…', 'stale');
       return;
     }
+    if (mine !== gen) return;  // an answer for a Mood since left: drawing it here would mislead
     if (full) {
       prev = null;
       headMotion = data.motion;
@@ -1053,7 +1114,7 @@
 
   meSelect.addEventListener('change', () => {
     me = meSelect.value; store.set('me', me);
-    renderMe(); remarkAll(); refreshBadges();
+    renderMe(); remarkAll(); resetBadges(); refreshBadges(true);
   });
   onlyMine.addEventListener('change', () => document.body.classList.toggle('only-mine', onlyMine.checked));
   const menu = document.getElementById('menu');
