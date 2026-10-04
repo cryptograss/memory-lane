@@ -651,3 +651,29 @@ def wiki_signin_return(request):
 def _wiki_return(request):
     return request.build_absolute_uri('/motions/auth/wiki/callback')
 
+
+@require_http_methods(['GET', 'POST'])
+def api_seen(request):
+    """How far the device's person has read, in every Mood: {"seen": {slug: iso}}.
+
+    POST {"motion": slug} marks it read up to now (never back). Any signed-in
+    device, either tier: it's their own reading. The page merges these with
+    its own, so a phone's unread counts know what the laptop read.
+    """
+    from .models import ReadMark
+    device = motion_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to keep your place'}, status=401)
+    if request.method == 'POST':
+        try:
+            slug = str(json.loads(request.body or b'{}')['motion'])
+        except (ValueError, KeyError, TypeError):
+            return JsonResponse({'error': 'expected {"motion": slug}'}, status=400)
+        motion = get_object_or_404(Motion, slug=slug)
+        now = timezone.now()
+        mark, made = ReadMark.objects.get_or_create(entity=device.entity, motion=motion, defaults={'seen_at': now})
+        if not made and mark.seen_at < now:
+            ReadMark.objects.filter(pk=mark.pk, seen_at__lt=now).update(seen_at=now)
+    marks = ReadMark.objects.filter(entity=device.entity).values_list('motion_id', 'seen_at')
+    return JsonResponse({'seen': {slug: at.isoformat() for slug, at in marks}})
+

@@ -1295,6 +1295,23 @@ class Device(models.Model):
         return f"{self.entity_id} on {self.label or 'a device'}"
 
 
+class ReadMark(models.Model):
+    """
+    How far one person has read in one Mood: the newest moment they had it
+    open. Kept here rather than in a browser, so a phone knows what the
+    laptop read -- every device's unread counts start from the same place.
+    Only ever moves forward.
+    """
+
+    entity = models.ForeignKey(ThinkingEntity, models.CASCADE, related_name='read_marks')
+    motion = models.ForeignKey('Motion', models.CASCADE, related_name='read_marks')
+    seen_at = models.DateTimeField()
+
+    class Meta:
+        db_table = 'read_marks'
+        constraints = [models.UniqueConstraint(fields=['entity', 'motion'], name='one_read_mark_per_person_per_mood')]
+
+
 class LoginCode(models.Model):
     """A one-time link that turns a proven SSH signature into a Device."""
 

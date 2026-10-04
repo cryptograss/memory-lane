@@ -1566,9 +1566,38 @@
     store.set('lastSeen', lastSeen);
     if (unread[slug]) delete unread[slug];
     if (badges[slug]) { delete badges[slug]; renderNav(); setTitle(); }
+    pushSeen(slug);
   }
+  // Where you've read up to is kept on the server too (POST/GET /api/seen/), so
+  // a phone's counts know what the laptop read: pushed when a Mood is read (at
+  // most every 15 s each), pulled on load, every minute, and on coming back.
+  const pushedSeen = {};
+  function pushSeen(slug) {
+    if (!viewer || me !== viewer || Date.now() - (pushedSeen[slug] || 0) < 15000) return;
+    pushedSeen[slug] = Date.now();
+    fetch('/api/seen/', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+                          body: JSON.stringify({ motion: slug }) }).catch(() => {});
+  }
+  async function pullSeen() {
+    if (!viewer || me !== viewer) return;
+    let marks;
+    try {
+      const r = await fetch('/api/seen/');
+      if (!r.ok) return;
+      marks = (await r.json()).seen || {};
+    } catch (e) { return; }
+    let changed = false;
+    for (const [slug, at] of Object.entries(marks)) {
+      if (!lastSeen[slug] || at > lastSeen[slug]) { lastSeen[slug] = at; changed = true; }
+      const ids = unread[slug];  // read elsewhere since these were counted: not unread any more
+      if (ids) for (const [id, created] of ids) if (created <= lastSeen[slug]) ids.delete(id);
+    }
+    if (changed) store.set('lastSeen', lastSeen);
+    countBadges(); renderNav(); setTitle();
+  }
+  setInterval(pullSeen, 60000);
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && current) { touch(current); refreshBadges(true); }
+    if (!document.hidden) pullSeen().then(() => { if (current) touch(current); refreshBadges(true); });
   });
 
   // Bring a message into view, reaching back a few pages if need be.
@@ -2154,7 +2183,14 @@
     sayBox.selectionStart = sayBox.selectionEnd = at + text.length;
   }
   function imagesIn(list) { return [...(list || [])].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type)); }
+  // Android hands an image-only picker to its photo picker (Google Photos); with
+  // no filter it offers its full chooser -- Files, Camera, Photos. Only images are taken either way.
+  if (/Android/i.test(navigator.userAgent)) fileInput.removeAttribute('accept');
   document.getElementById('attach').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    const skipped = [...fileInput.files].length - imagesIn(fileInput.files).length;
+    if (skipped) showError(`only images can be added (PNG, JPEG, GIF, WebP): ${skipped} file${skipped > 1 ? 's' : ''} left out`);
+  });
   fileInput.addEventListener('change', () => { imagesIn(fileInput.files).forEach(upload); fileInput.value = ''; });
   sayBox.addEventListener('paste', e => {
     const files = imagesIn([...(e.clipboardData?.items || [])].map(i => i.getAsFile()).filter(Boolean));
@@ -2338,6 +2374,7 @@
 
   (async function start() {
     try { await loadMotions(); } catch (e) { setStatus('cannot reach memory-lane', 'stale'); return; }
+    await pullSeen();  // where you've read up to, on every device, before anything is counted
     const slug = initialSlug || (motions[0] && motions[0].slug);
     if (!slug) { inner.innerHTML = '<div class="empty">No Moods yet.</div>'; setStatus('live', 'live'); return; }
     await open(slug, false);

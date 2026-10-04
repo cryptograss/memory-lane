@@ -160,3 +160,39 @@ class TiersTest(TestCase):
         page = self.client_for('skyler', 'wiki').get('/motions/m26/').content.decode()
         self.assertIn('const viewerTier = "wiki"', page)
         self.assertIn('"skyler": "SkymanJenkins"', page)
+
+
+class ReadMarksTest(TestCase):
+    """Where someone has read up to is kept on the server, so every device of theirs agrees."""
+
+    @classmethod
+    def setUpTestData(cls):
+        ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        Motion.objects.create(slug='m26')
+        Motion.objects.create(slug='general')
+
+    def device(self, tier='key'):
+        _, token = motion_auth.enrol_device(ThinkingEntity.objects.get(name='justin'), 'test', tier=tier)
+        client = Client()
+        client.cookies[motion_auth.COOKIE] = token
+        client.get('/motions/')
+        return client
+
+    def test_read_on_the_laptop_known_on_the_phone(self):
+        laptop, phone = self.device(), self.device('wiki')
+        self.assertEqual(Client().get('/api/seen/').status_code, 401)
+        self.assertEqual(phone.get('/api/seen/').json(), {'seen': {}})
+        marked = laptop.post('/api/seen/', json.dumps({'motion': 'm26'}), content_type='application/json',
+                             HTTP_X_CSRFTOKEN=laptop.cookies['csrftoken'].value).json()['seen']
+        self.assertEqual(list(marked), ['m26'])
+        self.assertEqual(phone.get('/api/seen/').json()['seen'], marked)  # the phone knows
+        # It only moves forward, and once per person per Mood.
+        from conversations.models import ReadMark
+        from django.utils import timezone
+        from datetime import timedelta
+        ReadMark.objects.update(seen_at=timezone.now() + timedelta(hours=1))
+        later = phone.get('/api/seen/').json()['seen']['m26']
+        phone.post('/api/seen/', json.dumps({'motion': 'm26'}), content_type='application/json',
+                   HTTP_X_CSRFTOKEN=phone.cookies['csrftoken'].value)
+        self.assertEqual(phone.get('/api/seen/').json()['seen']['m26'], later)
+        self.assertEqual(ReadMark.objects.count(), 1)
