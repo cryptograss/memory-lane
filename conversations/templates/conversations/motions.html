@@ -787,11 +787,14 @@
     speaking.button.classList.remove('playing'); speaking.button.textContent = '▶';
     speaking = null;
   }
+  let speakAsk = 0;  // the newest ▶ pressed: only it may play, when its audio arrives
   document.addEventListener('click', async e => {
     const b = e.target.closest('.turn .speak');
     if (!b) return;
+    if (b.classList.contains('busy')) return;  // already on its way: a second press would play it twice
     if (speaking && speaking.button === b) { stopSpeaking(); return; }
     stopSpeaking();
+    const ask = ++speakAsk;
     // A voice memo is heard as it was spoken: ▶ plays the recording, never a voice reading its transcript.
     const memo = b.closest('.turn').querySelector('.body audio');
     if (memo) {
@@ -807,6 +810,7 @@
         method: 'POST', headers: { 'X-CSRFToken': csrf() } });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || r.status);
+      if (ask !== speakAsk) { b.textContent = '▶'; return; }  // another ▶ was pressed meanwhile: that one plays
       const audio = new Audio(body.url);
       speaking = { audio, button: b };
       audio.addEventListener('ended', stopSpeaking);
