@@ -159,12 +159,21 @@ def voices(http=requests):
     if cached is not None:
         return cached
     response = http.get(f'{API}/voices', headers=_headers(), timeout=30)
+    refused = None
+    if response.status_code in (401, 403):
+        # Kept: ElevenLabs' own words for why (a permission, an IP allowlist...).
+        refused = f'ElevenLabs answered {response.status_code} for the voice list: {_why(response)}'
+        cache.set('voice:refused', refused, VOICES_FOR)
+        # Its standard voices are listed to anyone, key or none: names still work.
+        response = http.get(f'{API}/voices', timeout=30)
     if response.status_code != 200:
-        raise VoiceError(f'ElevenLabs answered {response.status_code} for the voice list')
+        raise VoiceError(refused or f'ElevenLabs answered {response.status_code} for the voice list: {_why(response)}')
     found = [{'name': v.get('name', ''), 'voice_id': v.get('voice_id', ''),
               'description': v.get('description') or '', 'labels': v.get('labels') or {}}
              for v in response.json().get('voices', [])]
     cache.set('voice:voices', found, VOICES_FOR)
+    if not refused:
+        cache.delete('voice:refused')
     return found
 
 

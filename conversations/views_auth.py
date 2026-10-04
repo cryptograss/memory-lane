@@ -547,13 +547,16 @@ def api_voices(request):
     from .services import voice
     if not voice.enabled():
         return JsonResponse({'enabled': False, 'voices': []})
+    from django.core.cache import cache
     note = ''
     try:
         listed = voice.voices()
+        if cache.get('voice:refused'):
+            note = f"{cache.get('voice:refused')} -- so these are ElevenLabs' standard voices, listed to anyone"
     except voice.VoiceError as e:
         listed = []
-        note = (f"{e}: this key may not read the voice list (ElevenLabs' \"Voices: read\"), so voices are named "
-                f"by id, and the house voice is {knobs.global_value('voice') or voice.FALLBACK_VOICE_ID + ' (George)'}")
+        note = (f"{e} -- so voices are named by id, and the house voice is "
+                f"{knobs.global_value('voice') or voice.FALLBACK_VOICE_ID + ' (George)'}")
     return JsonResponse({'enabled': True, 'model': voice.TTS_MODEL, 'house_voice': knobs.global_value('voice'),
                          'spent_today_usd': voice.spent_today(),
                          'usd_per_day': knobs.global_value('voice_usd_per_day'), 'voices': listed,
