@@ -81,14 +81,24 @@ def _headers():
 # --- a message's direction ------------------------------------------------------
 
 def split_voice(text):
-    """(the text without its voice block, the direction or None).
+    """(the text without its voice blocks, the first block's direction or None)."""
+    rest, directions = split_voices(text)
+    return rest, (directions[0] if directions else None)
 
-    The direction is {'script': str, 'voice': str, 'settings': {name: float}};
+
+def split_voices(text):
+    """(the text without its voice blocks, a direction for each, in order).
+
+    A message may carry several -- auditions, a dialogue -- each with its own
+    ▶. A direction is {'script': str, 'voice': str, 'settings': {name: float}};
     settings out of range or unknown are dropped, never guessed at."""
-    match = _VOICE_BLOCK.search(text or '')
-    if not match:
-        return text, None
-    body = match.group(1)
+    directions = [_direction(m.group(1)) for m in _VOICE_BLOCK.finditer(text or '')]
+    if not directions:
+        return text, []
+    return re.sub(r'\n{3,}', '\n\n', _VOICE_BLOCK.sub('\n\n', text)).strip(), directions
+
+
+def _direction(body):
     head, sep, script = body.partition('\n---\n') if '\n---\n' in body else ('', '', body)
     if not sep and body.startswith('---\n'):
         head, script = '', body[4:]
@@ -106,17 +116,42 @@ def split_voice(text):
             low, high = SETTING_RANGES[key]
             if low <= number <= high:
                 direction['settings'][key] = number
-    rest = (text[:match.start()] + text[match.end():]).strip()
-    return rest, direction
+    return direction
+
+
+# What a person reading aloud would say for the page's own symbols.
+SPOKEN_SYMBOLS = {'▶': 'play', '■': 'stop', '✎': 'the pencil', '⚙': 'the gear', '🎙': 'the microphone',
+                  '📌': 'the pin', '⌕': 'search', '＋': 'plus', '✓': '', '✗': '', '✦': '', '⟲': '', '→': 'to',
+                  '←': 'from', '≥': 'at least', '≤': 'at most', '≈': 'about', '×': 'times', '…': '...'}
+_MOOD_LINK = re.compile(r'(?:https?://\S+?)?/motions/([\w-]+)/#m-[0-9a-f-]{36}', re.I)
+_UUID = re.compile(r'(?:#m-)?\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b', re.I)
+_HASH = re.compile(r'\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}\b', re.I)  # commits, digests
+_LONG_TOKEN = re.compile(r'(?<!\S)[^\s]{33,}(?!\S)')  # keys, base64, anything nobody would read out
+_PATH = re.compile(r'(?<![\w/.:])(?:~|\.{1,2})?(?:/?[\w.-]+/){1,}([\w.-]+)')  # a path: its last part
+
+
+def _spoken_link(match):
+    from urllib.parse import urlparse
+    host = urlparse(match.group(0)).netloc.lower().removeprefix('www.')
+    return f' a link to {host} ' if host else ' a link '
 
 
 def plain(text):
-    """A message as it would be read out: its markdown taken away, code and links named, not spelled."""
-    text = re.sub(r'```.*?```', ' (code) ', text or '', flags=re.S)
+    """A message as it would be read out: markdown taken away; code, links, ids,
+    hashes and paths named rather than spelled; the page's symbols said in words."""
+    text = re.sub(r'```.*?```', ' (some code) ', text or '', flags=re.S)
     text = re.sub(r'!\[[^\]]*\]\([^)]*\)', ' ', text)               # images
     text = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', text)             # links: their words
-    text = re.sub(r'https?://\S+', ' (a link) ', text)
+    text = _MOOD_LINK.sub(r' a message in \1 ', text)
+    text = re.sub(r'https?://[^\s)>\]]+', _spoken_link, text)
+    text = _UUID.sub(lambda m: ' a message link ' if m.group(0).startswith('#m-') else ' an ID ', text)
     text = re.sub(r'`([^`]*)`', r'\1', text)
+    text = _HASH.sub(' a hash ', text)
+    text = _PATH.sub(lambda m: m.group(1), text)
+    text = _LONG_TOKEN.sub(' a long string ', text)
+    text = re.sub(r'(?<![\w&])#(\d+)\b', r'number \1', text)             # #69: "number 69", not "hashtag"
+    for symbol, words in SPOKEN_SYMBOLS.items():
+        text = text.replace(symbol, f' {words} ' if words else ' ')
     text = re.sub(r'^\s{0,3}#{1,6}\s*', '', text, flags=re.M)        # headings
     text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.M)             # bullets
     text = re.sub(r'(\*\*|__|\*|_|~~)(?=\S)(.+?)(?<=\S)\1', r'\2', text)
@@ -206,20 +241,23 @@ def voice_id_for(name, http=requests):
 
 # --- reading a message aloud --------------------------------------------------------
 
-def script_for(text):
-    """(what to say, voice name, settings) for a message's text."""
-    rest, direction = split_voice(text)
-    if direction and direction['script']:
-        return direction['script'][:MAX_SCRIPT_CHARS], direction['voice'], direction['settings']
+def script_for(text, part=0):
+    """(what to say, voice name, settings) for a message's text: its `part`th
+    voice block, or, with none, the message as written."""
+    rest, directions = split_voices(text)
+    if directions:
+        direction = directions[min(max(part, 0), len(directions) - 1)]
+        if direction['script']:
+            return direction['script'][:MAX_SCRIPT_CHARS], direction['voice'], direction['settings']
     return plain(rest)[:MAX_SCRIPT_CHARS], '', {}
 
 
-def speak(message, by, http=requests):
-    """The URL of `message` read aloud: made once, kept. VoiceError if it can't be."""
+def speak(message, by, http=requests, part=0):
+    """The URL of `message` (its `part`th voice block) read aloud: made once, kept.
+    VoiceError if it can't be."""
     from conversations.models import Media, Message
-    from conversations.services import media as media_store
     from conversations.services.motion_view import prose
-    script, voice_name, voice_settings = script_for(prose(message.content))
+    script, voice_name, voice_settings = script_for(prose(message.content), part)
     if not script.strip():
         raise VoiceError('nothing in that message to read aloud', status=400)
     voice_id = voice_id_for(voice_name, http)
@@ -228,10 +266,34 @@ def speak(message, by, http=requests):
         names = {'similarity': 'similarity_boost'}
         body['voice_settings'] = {names.get(k, k): v for k, v in voice_settings.items()}
     key = hashlib.sha256(json.dumps([voice_id, body], sort_keys=True).encode()).hexdigest()
-    done = (Message.objects.filter(source_file=SOURCE, content__type='spoken', content__key=key)
-            .values_list('content', flat=True).first())
-    if done and Media.objects.filter(sha256=done.get('media')).exists():
-        return Media.objects.get(sha256=done['media']).url
+
+    def made():
+        done = (Message.objects.filter(source_file=SOURCE, content__type='spoken', content__key=key)
+                .values_list('content', flat=True).first())
+        if done and Media.objects.filter(sha256=done.get('media')).exists():
+            return Media.objects.get(sha256=done['media']).url
+        return None
+    if made():
+        return made()
+    # One making at a time per message and voice: a second press (or another
+    # person's) while it's being made waits for that one, never pays twice.
+    from django.core.cache import cache
+    if not cache.add(f'voice:making:{key}', 1, 120):
+        for _ in range(110):
+            time.sleep(1)
+            if made():
+                return made()
+            if cache.get(f'voice:making:{key}') is None:
+                break
+        raise VoiceError('it is still being read aloud for someone else; try again in a moment', status=409)
+    try:
+        return made() or _make(message, by, key, voice_id, body, script, http)
+    finally:
+        cache.delete(f'voice:making:{key}')
+
+
+def _make(message, by, key, voice_id, body, script, http):
+    from conversations.services import media as media_store
     usd = round(len(script) / 1000 * TTS_USD_PER_KCHAR, 4)
     check_budget(usd)
     response = http.post(f'{API}/text-to-speech/{voice_id}', params={'output_format': 'mp3_44100_128'},

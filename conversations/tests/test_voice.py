@@ -66,7 +66,15 @@ class DirectionTest(TestCase):
     def test_plain_reading_drops_markdown_and_names_code_and_links(self):
         said = voice.plain('## Done\n- **Merged** [#69](https://github.com/x/69)\n```py\nx = 1\n```\n'
                            'See https://example.com and `make test`. [[Banjo]] too.')
-        self.assertEqual(said, 'Done\nMerged #69\n (code) \nSee (a link) and make test. Banjo too.')
+        self.assertEqual(said, 'Done\nMerged number 69\n (some code) \nSee a link to example.com and make test. Banjo too.')
+
+    def test_ids_hashes_paths_and_symbols_are_said_not_spelled(self):
+        said = voice.plain('Read /motions/magenta-26-million/#m-b1623e2c-24ba-4f1c-bac1-237ee20110a2 and '
+                           'session 7ba09e1d-b666-4416-bf15-c4fb9beddc1e; commit 85d0964, in '
+                           'conversations/services/voice.py. Press ▶, or ■ to stop; key AAAAC3NzaC1lZDI1NTE5AAAAINKHaQ2Nt6I.')
+        self.assertEqual(said, 'Read a message in magenta-26-million and session an ID ; commit a hash , in '
+                               'voice.py. Press play , or stop to stop; key a long string')
+        self.assertEqual(voice.plain('a decade of bluegrass, 1975 to 1985'), 'a decade of bluegrass, 1975 to 1985')
 
 
 @override_settings(ELEVENLABS_API_KEY='test-eleven-key')
@@ -100,6 +108,35 @@ class SpeakAndTranscribeTest(TestCase):
         self.assertEqual(len(fake.asked), asked)
         row = Message.objects.get(source_file='voice')
         self.assertEqual((row.content['type'], row.content['by'], row.content['chars']), ('spoken', 'justin', 21))
+
+    def test_each_block_of_several_is_its_own_part(self):
+        fake = FakeEleven()
+        message = self.say('Two auditions.\n```voice\nvoice: Aria\n---\n[softly] One.\n```\n'
+                           'And another.\n```voice\nvoice: George\nspeed: 1.1\n---\n[laughs] Two.\n```')
+        voice.speak(message, 'justin', http=fake, part=1)
+        self.assertTrue(fake.asked[-1][1].endswith('/v-george'))
+        self.assertEqual(fake.asked[-1][2]['json']['text'], '[laughs] Two.')
+        voice.speak(message, 'justin', http=fake, part=0)
+        self.assertEqual((fake.asked[-1][1][-6:], fake.asked[-1][2]['json']['text']), ('v-aria', '[softly] One.'))
+        from conversations.services.motion_view import prose
+        self.assertEqual(voice.script_for(prose(message.content), 9)[0], '[laughs] Two.')  # out of range: the last
+
+    def test_two_presses_at_once_pay_once(self):
+        from django.core.cache import cache as shared
+        fake = FakeEleven()
+        message = self.say('Soundcheck at five.')
+        first = voice.speak(message, 'justin', http=fake)
+        key = Message.objects.get(source_file='voice').content['key']
+        Message.objects.filter(source_file='voice').delete()
+        shared.add(f'voice:making:{key}', 1, 120)  # someone else's press is mid-way
+
+        def finished(_):
+            voice.record(self.motion, 'spoken', 'skyler', message=str(message.id), key=key,
+                         media=first.split('/')[-1].split('.')[0], chars=19, usd=0.0015)
+        asked = len(fake.asked)
+        with mock.patch('conversations.services.voice.time.sleep', side_effect=finished):
+            self.assertEqual(voice.speak(message, 'justin', http=fake), first)  # waited for theirs
+        self.assertEqual(len(fake.asked), asked)  # and asked ElevenLabs nothing
 
     def test_the_house_voice_then_the_first(self):
         from conversations.services import settings as knobs
@@ -143,7 +180,7 @@ class SpeakAndTranscribeTest(TestCase):
         from conversations.services import settings as knobs
         knobs.change('voice_usd_per_day', 0.01)
         with self.assertRaises(voice.VoiceError) as caught:
-            voice.speak(self.say('x' * 500), 'justin', http=FakeEleven())  # 500 chars: $0.04
+            voice.speak(self.say('banjo ' * 84), 'justin', http=FakeEleven())  # 503 chars: $0.04
         self.assertEqual(caught.exception.status, 429)
 
     def test_a_memo_is_transcribed_expecting_the_projects_words(self):
@@ -189,6 +226,15 @@ class PageTest(TestCase):
         turn = self.client.get('/api/motions/m26/turns/').json()['turns'][0]
         self.assertEqual((turn['text'], turn['voiced']), ('Done.', True))
         self.assertNotIn('sighs', turn['html'])
+
+    def test_several_blocks_each_get_a_play_button_named_for_its_voice(self):
+        magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+        motion = Motion.objects.create(slug='m26')
+        Message.objects.create(id=uuid.uuid4(), sender=magent, motion=motion, timestamp=1, stop_reason='end_turn',
+                               content=[{'type': 'text', 'text': 'Auditions:\n```voice\nvoice: River\n---\nHi.\n```\n'
+                                                                 '```voice\n---\nHello.\n```\nPick one.'}])
+        turn = self.client.get('/api/motions/m26/turns/').json()['turns'][0]
+        self.assertEqual((turn['text'], turn['voices']), ('Auditions:\n\nPick one.', ['River', 'the house voice']))
 
     def test_a_memo_is_a_player_and_other_local_links_are_not(self):
         from conversations.services.motion_view import render_html

@@ -535,7 +535,11 @@ def api_speak(request, slug, message_id):
     if not _under_limit(f'voice:{device.pk}', VOICE_PER_MINUTE):
         return JsonResponse({'error': 'slow down'}, status=429)
     try:
-        return JsonResponse({'url': voice.speak(message, device.entity_id)})
+        part = int(request.GET.get('part') or 0)
+    except ValueError:
+        part = 0
+    try:
+        return JsonResponse({'url': voice.speak(message, device.entity_id, part=part)})
     except voice.VoiceError as e:
         return JsonResponse({'error': str(e)}, status=e.status)
 

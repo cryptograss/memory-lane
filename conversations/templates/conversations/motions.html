@@ -426,6 +426,8 @@
                  color: var(--muted); cursor: pointer; padding: 2px 7px; }
   .turn .speak:hover, .turn .speak.playing { color: var(--accent); border-color: var(--accent); }
   .turn .speak.directed::after { content: ' ✦'; }
+  .turn .voices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .turn .voices .speak { font-size: 12px; padding: 3px 9px; }
   .turn .speak.busy { cursor: progress; opacity: .6; }
   .turn .speak.mini { display: none; }
   .turn.cont .speak.mini { display: inline-block; position: absolute; right: -19px; top: 20px; opacity: 0; padding: 1px 4px; border: 0; }
@@ -784,14 +786,17 @@
   function stopSpeaking() {
     if (!speaking) return;
     speaking.audio.pause();
-    speaking.button.classList.remove('playing'); speaking.button.textContent = '▶';
+    speaking.button.classList.remove('playing'); speaking.button.textContent = speaking.button.dataset.label || '▶';
     speaking = null;
   }
+  let speakAsk = 0;  // the newest ▶ pressed: only it may play, when its audio arrives
   document.addEventListener('click', async e => {
     const b = e.target.closest('.turn .speak');
     if (!b) return;
+    if (b.classList.contains('busy')) return;  // already on its way: a second press would play it twice
     if (speaking && speaking.button === b) { stopSpeaking(); return; }
     stopSpeaking();
+    const ask = ++speakAsk;
     // A voice memo is heard as it was spoken: ▶ plays the recording, never a voice reading its transcript.
     const memo = b.closest('.turn').querySelector('.body audio');
     if (memo) {
@@ -803,18 +808,19 @@
     }
     b.classList.add('busy'); b.textContent = '…';
     try {
-      const r = await fetch(`/api/motions/${encodeURIComponent(current)}/speak/${encodeURIComponent(b.dataset.id)}/`, {
+      const r = await fetch(`/api/motions/${encodeURIComponent(current)}/speak/${encodeURIComponent(b.dataset.id)}/?part=${encodeURIComponent(b.dataset.part || 0)}`, {
         method: 'POST', headers: { 'X-CSRFToken': csrf() } });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || r.status);
+      if (ask !== speakAsk) { b.textContent = b.dataset.label || '▶'; return; }  // another ▶ was pressed meanwhile: that one plays
       const audio = new Audio(body.url);
       speaking = { audio, button: b };
       audio.addEventListener('ended', stopSpeaking);
-      b.classList.add('playing'); b.textContent = '■';
+      b.classList.add('playing'); b.textContent = b.dataset.label ? b.dataset.label.replace(/^▶/, '■') : '■';
       await audio.play();
     } catch (err) {
       showError('read aloud: ' + err.message);
-      b.textContent = '▶';
+      b.textContent = b.dataset.label || '▶';
     } finally { b.classList.remove('busy'); }
   });
 
@@ -835,6 +841,10 @@
       + `<a class="permalink mini" href="#m-${esc(t.id)}" title="${esc(stamp(t.created_at))} · this message's link: click to copy">#</a>`
       + (voiceOn && viewer ? speakButton(t, true) : '') + `<div class="body">${t.html}</div>`;
     if (voiceOn && viewer) el.querySelector('.who').insertAdjacentHTML('beforeend', speakButton(t, false));
+    if (voiceOn && viewer && (t.voices || []).length) {  // several voice blocks: a ▶ for each, by its voice
+      el.insertAdjacentHTML('beforeend', '<div class="voices">' + t.voices.map((v, i) =>
+        `<button type="button" class="speak part" data-id="${esc(t.id)}" data-part="${i}" data-label="▶ ${esc(v)}" title="Read aloud: part ${i + 1}">▶ ${esc(v)}</button>`).join('') + '</div>');
+    }
     if (t.attested) el._proof = t.attested;
     markTurn(el, t.mentions || []);
     return el;
