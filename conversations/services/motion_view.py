@@ -550,6 +550,7 @@ def turn_payload(msg, text, mentionable=()):
     text, directions = split_voices(text)
     return {
         'voiced': bool(directions),
+        'mobile': (msg.client_version or '').endswith('/mobile'),  # posted from a phone or tablet
         # Several blocks (auditions, a dialogue): one ▶ each, named for its voice.
         'voices': [d['voice'] or 'the house voice' for d in directions] if len(directions) > 1 else [],
         'attested': attestation_of(msg),
