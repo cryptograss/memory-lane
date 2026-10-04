@@ -81,14 +81,24 @@ def _headers():
 # --- a message's direction ------------------------------------------------------
 
 def split_voice(text):
-    """(the text without its voice block, the direction or None).
+    """(the text without its voice blocks, the first block's direction or None)."""
+    rest, directions = split_voices(text)
+    return rest, (directions[0] if directions else None)
 
-    The direction is {'script': str, 'voice': str, 'settings': {name: float}};
+
+def split_voices(text):
+    """(the text without its voice blocks, a direction for each, in order).
+
+    A message may carry several -- auditions, a dialogue -- each with its own
+    ▶. A direction is {'script': str, 'voice': str, 'settings': {name: float}};
     settings out of range or unknown are dropped, never guessed at."""
-    match = _VOICE_BLOCK.search(text or '')
-    if not match:
-        return text, None
-    body = match.group(1)
+    directions = [_direction(m.group(1)) for m in _VOICE_BLOCK.finditer(text or '')]
+    if not directions:
+        return text, []
+    return re.sub(r'\n{3,}', '\n\n', _VOICE_BLOCK.sub('\n\n', text)).strip(), directions
+
+
+def _direction(body):
     head, sep, script = body.partition('\n---\n') if '\n---\n' in body else ('', '', body)
     if not sep and body.startswith('---\n'):
         head, script = '', body[4:]
@@ -106,8 +116,7 @@ def split_voice(text):
             low, high = SETTING_RANGES[key]
             if low <= number <= high:
                 direction['settings'][key] = number
-    rest = (text[:match.start()] + text[match.end():]).strip()
-    return rest, direction
+    return direction
 
 
 # What a person reading aloud would say for the page's own symbols.
@@ -232,19 +241,23 @@ def voice_id_for(name, http=requests):
 
 # --- reading a message aloud --------------------------------------------------------
 
-def script_for(text):
-    """(what to say, voice name, settings) for a message's text."""
-    rest, direction = split_voice(text)
-    if direction and direction['script']:
-        return direction['script'][:MAX_SCRIPT_CHARS], direction['voice'], direction['settings']
+def script_for(text, part=0):
+    """(what to say, voice name, settings) for a message's text: its `part`th
+    voice block, or, with none, the message as written."""
+    rest, directions = split_voices(text)
+    if directions:
+        direction = directions[min(max(part, 0), len(directions) - 1)]
+        if direction['script']:
+            return direction['script'][:MAX_SCRIPT_CHARS], direction['voice'], direction['settings']
     return plain(rest)[:MAX_SCRIPT_CHARS], '', {}
 
 
-def speak(message, by, http=requests):
-    """The URL of `message` read aloud: made once, kept. VoiceError if it can't be."""
+def speak(message, by, http=requests, part=0):
+    """The URL of `message` (its `part`th voice block) read aloud: made once, kept.
+    VoiceError if it can't be."""
     from conversations.models import Media, Message
     from conversations.services.motion_view import prose
-    script, voice_name, voice_settings = script_for(prose(message.content))
+    script, voice_name, voice_settings = script_for(prose(message.content), part)
     if not script.strip():
         raise VoiceError('nothing in that message to read aloud', status=400)
     voice_id = voice_id_for(voice_name, http)

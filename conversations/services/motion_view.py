@@ -546,10 +546,12 @@ def attestation_of(msg):
 
 def turn_payload(msg, text, mentionable=()):
     # A ```voice block is how its writer wants it read aloud: performed, not shown.
-    from .voice import split_voice
-    text, direction = split_voice(text)
+    from .voice import split_voices
+    text, directions = split_voices(text)
     return {
-        'voiced': direction is not None,
+        'voiced': bool(directions),
+        # Several blocks (auditions, a dialogue): one ▶ each, named for its voice.
+        'voices': [d['voice'] or 'the house voice' for d in directions] if len(directions) > 1 else [],
         'attested': attestation_of(msg),
         **how_payload(msg),
         'id': str(msg.id),

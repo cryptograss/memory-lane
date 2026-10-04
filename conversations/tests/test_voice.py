@@ -109,6 +109,18 @@ class SpeakAndTranscribeTest(TestCase):
         row = Message.objects.get(source_file='voice')
         self.assertEqual((row.content['type'], row.content['by'], row.content['chars']), ('spoken', 'justin', 21))
 
+    def test_each_block_of_several_is_its_own_part(self):
+        fake = FakeEleven()
+        message = self.say('Two auditions.\n```voice\nvoice: Aria\n---\n[softly] One.\n```\n'
+                           'And another.\n```voice\nvoice: George\nspeed: 1.1\n---\n[laughs] Two.\n```')
+        voice.speak(message, 'justin', http=fake, part=1)
+        self.assertTrue(fake.asked[-1][1].endswith('/v-george'))
+        self.assertEqual(fake.asked[-1][2]['json']['text'], '[laughs] Two.')
+        voice.speak(message, 'justin', http=fake, part=0)
+        self.assertEqual((fake.asked[-1][1][-6:], fake.asked[-1][2]['json']['text']), ('v-aria', '[softly] One.'))
+        from conversations.services.motion_view import prose
+        self.assertEqual(voice.script_for(prose(message.content), 9)[0], '[laughs] Two.')  # out of range: the last
+
     def test_two_presses_at_once_pay_once(self):
         from django.core.cache import cache as shared
         fake = FakeEleven()
@@ -214,6 +226,15 @@ class PageTest(TestCase):
         turn = self.client.get('/api/motions/m26/turns/').json()['turns'][0]
         self.assertEqual((turn['text'], turn['voiced']), ('Done.', True))
         self.assertNotIn('sighs', turn['html'])
+
+    def test_several_blocks_each_get_a_play_button_named_for_its_voice(self):
+        magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+        motion = Motion.objects.create(slug='m26')
+        Message.objects.create(id=uuid.uuid4(), sender=magent, motion=motion, timestamp=1, stop_reason='end_turn',
+                               content=[{'type': 'text', 'text': 'Auditions:\n```voice\nvoice: River\n---\nHi.\n```\n'
+                                                                 '```voice\n---\nHello.\n```\nPick one.'}])
+        turn = self.client.get('/api/motions/m26/turns/').json()['turns'][0]
+        self.assertEqual((turn['text'], turn['voices']), ('Auditions:\n\nPick one.', ['River', 'the house voice']))
 
     def test_a_memo_is_a_player_and_other_local_links_are_not(self):
         from conversations.services.motion_view import render_html
