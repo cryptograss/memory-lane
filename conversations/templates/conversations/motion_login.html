@@ -46,6 +46,14 @@
   <p>A phone's home-screen app keeps its own sign-in, apart from the browser. To sign it in, run <code>magenta.sh login</code> again, copy the link, and paste it in the app's menu (your name or "read-only", top right), under "Have a sign-in link?".</p>
   {% endif %}
   <p><a href="/motions/">Open magenta</a></p>
+{% elif state == 'wiki-refused' %}
+  <h1>That PickiPedia sign-in didn't go through</h1>
+  <p class="ok">{{ why }}</p>
+  <p><a href="/motions/auth/wiki/">Try again</a> · <a href="/motions/">Read magenta</a></p>
+{% elif state == 'no-wiki' %}
+  <h1>Signing in with PickiPedia isn't set up here yet</h1>
+  <p>For now, sign in with your SSH key: run <code>magenta.sh login</code>.</p>
+  <p><a href="/motions/">Read magenta</a></p>
 {% elif state == 'expired' %}
   <h1>This link has expired</h1>
   <p>Sign-in links last 15 minutes, and work once. Run <code>magenta.sh login</code> again for a fresh one.</p>

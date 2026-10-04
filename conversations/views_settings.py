@@ -54,9 +54,9 @@ def api_settings(request):
     from .views_admin import locked_response
     if locked_response():
         return locked_response()
-    device = motion_auth.device_for(request)
-    if device is None:
-        return JsonResponse({'error': 'sign in to change settings'}, status=401)
+    device, refused = motion_auth.key_device(request, 'change settings')
+    if refused:
+        return refused
     if not device.entity.is_biological_human:
         return JsonResponse({'error': 'settings are for the people in a Motion to change'}, status=403)
     try:

@@ -1266,15 +1266,23 @@ class Device(models.Model):
     """
     A browser or phone allowed to write into Motions as one person.
 
-    Reading Motions needs nothing. Writing needs a device, and a device is
-    enrolled by proving the person's SSH key (see services/motion_auth.py):
-    the same key hunter already knows them by. Only a hash of the token is
-    stored; the token itself lives in the device's cookie.
+    Reading Motions needs nothing. Writing needs a device, enrolled one of
+    two ways, which decides its tier:
+
+      key   the person's SSH key, the one hunter knows them by
+            (services/motion_auth.py): everything, including what makes
+            the machines act -- waking agents, starting and archiving Moods
+      wiki  signing in with PickiPedia (services/wiki_auth.py): chatting,
+            and mentioning people; an @agent from a wiki device is just text
+
+    Only a hash of the token is stored; the token lives in the device's cookie.
     """
+    TIERS = (('key', 'SSH key'), ('wiki', 'PickiPedia'))
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     entity = models.ForeignKey(ThinkingEntity, models.CASCADE, related_name='devices')
     label = models.CharField(max_length=100, blank=True)
+    tier = models.CharField(max_length=10, choices=TIERS, default='key')
     token_hash = models.CharField(max_length=64, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
