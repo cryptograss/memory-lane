@@ -7,6 +7,8 @@ Each tool handler:
 3. Returns MCP-formatted results
 """
 
+import datetime
+
 import mcp.types as types
 from asgiref.sync import sync_to_async
 from django.db import close_old_connections
@@ -52,10 +54,12 @@ async def handle_get_message_by_id(arguments):
     if not message_id:
         return [types.TextContent(type="text", text="Error: message_id is required")]
 
-    message = await sync_to_async(with_fresh_connection(lambda: MemoryService.get_message_by_id(message_id)))()
+    from conversations.services.memory import resolve_message
+    message, candidates, problem = await sync_to_async(with_fresh_connection(lambda: resolve_message(message_id)))()
 
     if not message:
-        return [types.TextContent(type="text", text=f"Message '{message_id}' not found")]
+        text = problem + ''.join(f"\n  {c.id}  {c.created_at.isoformat()[:16]}Z  [{c.sender_id}]" for c in candidates)
+        return [types.TextContent(type="text", text=text)]
 
     lines = [
         f"Message ID: {message.id}",
@@ -132,18 +136,38 @@ async def handle_get_context_heap(arguments):
 
 
 async def handle_search_messages(arguments):
-    """Search for messages"""
-    query = arguments.get("query")
-    limit = arguments.get("limit", 50) if arguments else 50
+    """Search for messages: each hit with its id, kind, Mood and the text around the match"""
+    from conversations.services.memory import search
+    arguments = arguments or {}
+    query = arguments.get("query", "")
+    exact = bool(arguments.get("exact", False))
+    sender = arguments.get("sender") or None
+    limit = arguments.get("limit", 20)
 
-    messages = await sync_to_async(with_fresh_connection(lambda: MemoryService.search_messages(query, limit)))()
+    hits = await sync_to_async(with_fresh_connection(lambda: search(query, limit=limit, exact=exact, sender=sender)))()
 
-    lines = [f"Search results for '{query}' ({len(messages)} messages):\n"]
-    for msg in messages[:20]:
-        lines.append(f"[{msg.sender_id}] {msg.created_at.isoformat()}")
-        lines.append(f"{str(msg.content)[:200]}...\n")
-
+    how = 'exact phrase' if exact else 'words'
+    lines = [f"{len(hits)} messages matching '{query}' ({how}"
+             + (f", from {sender}" if sender else '') + ("; newest first" if exact else "; best first") + "):\n"]
+    for i, hit in enumerate(hits, 1):
+        m = hit['message']
+        where = f"Mood {m.motion_id}" if m.motion_id else (f"session {str(m.session_id)[:8]}" if m.session_id else "no session")
+        lines.append(f"[{i}] {m.sender_id} · {hit['kind']} · {m.created_at.isoformat()[:16]}Z · {where} · {m.id}")
+        lines.append(f"    {hit['snippet']}\n")
+    if hits:
+        lines.append("get_message_context with an id (or its first 8 characters) shows what was said around it.")
+    elif not exact:
+        lines.append("Nothing found. For a literal string (a command, a code fragment), try exact: true.")
     return [types.TextContent(type="text", text='\n'.join(lines))]
+
+
+async def handle_get_message_context(arguments):
+    """A message with the messages before and after it in its session (or heap)"""
+    from conversations.services.memory import message_context
+    arguments = arguments or {}
+    text = await sync_to_async(with_fresh_connection(lambda: message_context(
+        arguments.get("message_id", ""), arguments.get("before", 10), arguments.get("after", 10))))()
+    return [types.TextContent(type="text", text=text)]
 
 
 async def handle_get_recent_work(arguments):
@@ -243,6 +267,12 @@ def read_mood_text(slug, start=None, limit=60):
             when = anchor.created_at
         else:
             when = parse_datetime(str(start))
+            if when is None:
+                from django.utils.dateparse import parse_date
+                day = parse_date(str(start))
+                when = datetime.datetime(day.year, day.month, day.day) if day else None
+            if when is not None and when.tzinfo is None:
+                when = when.replace(tzinfo=datetime.timezone.utc)  # a time without an offset is UTC
         if when is None:
             return f"'{start}' is neither a message id nor an ISO time."
         found = [(m, t) for m, t in found if m.created_at >= when][:limit]
@@ -315,6 +345,7 @@ TOOL_HANDLERS = {
     "bootstrap_memory": handle_bootstrap_memory,
     "get_latest_continuation": handle_get_latest_continuation,
     "get_message_by_id": handle_get_message_by_id,
+    "get_message_context": handle_get_message_context,
     "get_messages_before": handle_get_messages_before,
     "get_era_summary": handle_get_era_summary,
     "get_context_heap": handle_get_context_heap,

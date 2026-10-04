@@ -45,11 +45,24 @@ def create_mcp_server():
             ),
             types.Tool(
                 name="get_message_by_id",
-                description="Get a specific message by its UUID",
+                description="Get a specific message by its id. The first 8 characters of an id, or a #m-<id> link, also work.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "message_id": {"type": "string", "description": "The UUID of the message to retrieve"}
+                        "message_id": {"type": "string", "description": "A message id, its first 8 or more characters, or a #m-<id> link"}
+                    },
+                    "required": ["message_id"]
+                }
+            ),
+            types.Tool(
+                name="get_message_context",
+                description="Read what was said around one message: the messages before and after it in its session (or, for older messages without one, its context heap), with thinking and tool calls shown. Accepts a full id, its first 8 characters, or a #m-<id> link. The usual next step after search_messages.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "message_id": {"type": "string", "description": "A message id, its first 8 or more characters, or a #m-<id> link"},
+                        "before": {"type": "number", "description": "Messages before it (default 10, max 100)", "default": 10},
+                        "after": {"type": "number", "description": "Messages after it (default 10, max 100)", "default": 10}
                     },
                     "required": ["message_id"]
                 }
@@ -89,12 +102,14 @@ def create_mcp_server():
             ),
             types.Tool(
                 name="search_messages",
-                description="Search for messages containing specific content",
+                description="Find messages anywhere in the record. Each hit gives its id, who sent it, its kind (message, thought, tool_use), its Mood or session, and the text around the match. Pass an id to get_message_context to read what was said around it.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Search query"},
-                        "limit": {"type": "number", "description": "Maximum results (default 50)", "default": 50}
+                        "query": {"type": "string", "description": "Words to look for, or with exact: true a literal phrase"},
+                        "exact": {"type": "boolean", "description": "Find this exact phrase, case-insensitively, including inside tool calls; newest first. Use it for commands, code and identifiers. Default false: ranked word search.", "default": False},
+                        "sender": {"type": "string", "description": "Only messages from this participant (e.g. justin, magent)"},
+                        "limit": {"type": "number", "description": "Maximum results (default 20, max 100)", "default": 20}
                     },
                     "required": ["query"]
                 }
