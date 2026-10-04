@@ -27,7 +27,7 @@ COMPACTION_PREFIX = 'This session is being continued from a previous conversatio
 INTERRUPT_SOURCE = 'interrupt'
 # System rows shown as a line in the thread.
 NEW_MOOD_SOURCE = 'motion-new'
-EVENT_SOURCES = ('deploy', INTERRUPT_SOURCE, NEW_MOOD_SOURCE)
+EVENT_SOURCES = ('deploy', INTERRUPT_SOURCE, NEW_MOOD_SOURCE, 'wiki')  # wiki: services/wiki_feed.py
 # Words posted into a Motion directly, not typed into a session: from the
 # composer, or attested with a key (magenta.sh attest).
 POSTED = ('motion-web', 'motion-attest')

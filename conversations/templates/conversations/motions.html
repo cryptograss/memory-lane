@@ -86,7 +86,13 @@
   #serverPop { position: absolute; z-index: 30; top: calc(100% + 6px); right: 120px; min-width: 260px; background: var(--panel);
                border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.14); padding: 8px 12px; font-size: 13px; }
   #serverPop[hidden] { display: none; }
-  #serverPop div { padding: 3px 0; }
+  #serverPop > div { padding: 5px 0; display: flex; gap: 10px; align-items: center; }
+  #serverPop > div + div { border-top: 1px solid var(--line); }
+  /* Each server's art from its PickiPedia page, as a little ASCII portrait. */
+  #serverPop pre.art { margin: 0; flex: none; font-size: 2.6px; line-height: 1.05; letter-spacing: 0; color: var(--ink);
+                       font-family: ui-monospace, Menlo, Consolas, monospace; }
+  #serverPop .role { font-style: italic; color: var(--muted); }
+  #serverPop a { color: inherit; }
   #serverPop .note { color: var(--muted); font-size: 12px; }
   #devicesBox { position: fixed; z-index: 30; top: 44px; right: 12px; width: min(460px, 94vw); max-height: 75vh; overflow-y: auto;
                 background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.18);
@@ -124,6 +130,7 @@
   nav #archived summary { padding: 4px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
                           color: var(--muted); cursor: pointer; }
   nav #archived a.motion { opacity: .75; }
+  nav a.motion .pin { font-size: 11px; margin-right: -4px; }
   nav a.motion {
     display: block; padding: 5px 14px; text-decoration: none; color: inherit;
     border-left: 3px solid transparent;
@@ -290,10 +297,18 @@
   /* A statement signed with someone's SSH key. */
   .signed { font-size: 11.5px; color: #2e9e5b; border: 1px solid currentColor; border-radius: 10px; padding: 0 7px;
             cursor: pointer; background: none; font-family: inherit; }
+  .turn.attested { border-left-color: var(--human); background: linear-gradient(90deg, var(--accent-soft), transparent 60%); }
+  .proof .check { font-size: 13px; margin-bottom: 6px; }
+  .proof .check .bad { color: var(--err, #c0392b); }
   .proof { font-size: 12px; background: var(--code); border-radius: 6px; padding: 8px 10px; margin-top: 6px; }
   .proof pre { white-space: pre-wrap; word-break: break-all; margin: 4px 0; font-size: 11px; }
   .event { margin: 8px 0; font-size: 12.5px; color: var(--muted); text-align: center; }
   .event.failed { color: var(--err); }
+  .event.wiki { text-align: left; font-size: 12px; margin: 4px 0; }
+  .event.wiki a { color: inherit; }
+  .event.wiki .delta { color: var(--muted); text-decoration: none; }
+  .event.wiki summary { cursor: pointer; }
+  .event.wiki .each { margin: 4px 0 0 18px; }
   .event code { font-size: 11.5px; }
   .compaction { margin: 10px 0; font-size: 13px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
   .compaction summary { cursor: pointer; list-style: none; }
@@ -516,7 +531,8 @@
   <input id="renameTitle" maxlength="200" aria-label="Title" placeholder="Title">
   <textarea id="renameDesc" rows="2" maxlength="2000" aria-label="Description" placeholder="What it's about (optional)"></textarea>
   <span><button type="submit">Rename</button> <button type="button" id="renameCancel">Cancel</button>
-    <button type="button" id="archiveBtn" class="archive" title="Out of the Moods list, into Archived. It stays readable, its sessions and container untouched, and a mention there is still answered.">Archive</button></span>
+    <button type="button" id="archiveBtn" class="archive" title="Out of the Moods list, into Archived. It stays readable, its sessions and container untouched, and a mention there is still answered.">Archive</button>
+    <button type="button" id="pinBtn" class="archive" title="At the top of the Moods list, for everyone">Pin</button></span>
 </form>
 <form id="newBox" hidden>
   <input id="newTitle" maxlength="200" aria-label="Title" placeholder="What the new Mood is about">
@@ -636,11 +652,11 @@
   function renderNav() {
     const item = m => `
       <a class="motion ${m.slug === current ? 'active' : ''}" href="/motions/${encodeURIComponent(m.slug)}/" data-slug="${esc(m.slug)}">
-        <div class="title">${esc(m.title)}${badges[m.slug] ? `<span class="badge">${badges[m.slug]}</span>` : ''}</div>
+        <div class="title">${m.pinned && !m.archived ? '<span class="pin" title="Pinned">📌</span>' : ''}${esc(m.title)}${badges[m.slug] ? `<span class="badge">${badges[m.slug]}</span>` : ''}</div>
         <div class="meta">${m.message_count.toLocaleString()} · ${ago(m.last_at)}</div>
         <div class="meta people-line">${peopleLine(m.slug)}</div>
       </a>`;
-    const live = motions.filter(m => !m.archived), archived = motions.filter(m => m.archived);
+    const live = motions.filter(m => !m.archived), archived = motions.filter(m => m.archived);  // pinned come first, from the server
     // The one open stays in view: an archived Mood opened shows its fold open.
     const open = archivedOpen || archived.some(m => m.slug === current);
     document.getElementById('moodList').innerHTML =
@@ -759,8 +775,10 @@
   // player already: the server renders it so.)
   const voiceOn = {{ voice_enabled|yesno:"true,false" }};
   function speakButton(t, mini) {
-    return `<button type="button" class="speak${mini ? ' mini' : ''}${t.voiced ? ' directed' : ''}" data-id="${esc(t.id)}"`
-      + ` title="${t.voiced ? 'Read aloud, as its writer directed' : 'Read aloud'}" aria-label="Read aloud">▶</button>`;
+    const memo = /<audio /.test(t.html);  // a voice memo: ▶ plays the recording itself
+    const title = memo ? 'Play the voice memo' : t.voiced ? 'Read aloud, as its writer directed' : 'Read aloud';
+    return `<button type="button" class="speak${mini ? ' mini' : ''}${t.voiced && !memo ? ' directed' : ''}" data-id="${esc(t.id)}"`
+      + ` title="${title}" aria-label="${title}">▶</button>`;
   }
   let speaking = null;  // {audio, button}
   function stopSpeaking() {
@@ -774,6 +792,15 @@
     if (!b) return;
     if (speaking && speaking.button === b) { stopSpeaking(); return; }
     stopSpeaking();
+    // A voice memo is heard as it was spoken: ▶ plays the recording, never a voice reading its transcript.
+    const memo = b.closest('.turn').querySelector('.body audio');
+    if (memo) {
+      speaking = { audio: memo, button: b };
+      memo.addEventListener('ended', stopSpeaking, { once: true });
+      b.classList.add('playing'); b.textContent = '■';
+      memo.play().catch(err => { showError('play: ' + err.message); stopSpeaking(); });
+      return;
+    }
     b.classList.add('busy'); b.textContent = '…';
     try {
       const r = await fetch(`/api/motions/${encodeURIComponent(current)}/speak/${encodeURIComponent(b.dataset.id)}/`, {
@@ -794,9 +821,10 @@
   function turnEl(t, isNew) {
     const el = document.createElement('article');
     const at = new Date(t.created_at).getTime();
-    const cont = prev && prev.sender === t.sender && at - prev.at < RUN_MS;
-    prev = { sender: t.sender, at };
-    el.className = 'turn ' + (t.is_human ? 'human' : 'agent') + (cont ? ' cont' : '') + (isNew ? ' new' : '');
+    // A signed statement always stands on its own, heading and ✓ in view.
+    const cont = !t.attested && prev && prev.sender === t.sender && at - prev.at < RUN_MS;
+    prev = t.attested ? null : { sender: t.sender, at };
+    el.className = 'turn ' + (t.is_human ? 'human' : 'agent') + (cont ? ' cont' : '') + (t.attested ? ' attested' : '') + (isNew ? ' new' : '');
     if (cont) el.title = t.sender + ' · ' + stamp(t.created_at);
     el.dataset.mentions = JSON.stringify(t.mentions || []);
     el.dataset.id = t.id;
@@ -911,6 +939,29 @@
   }
   function addEvent(e, container) {
     const el = document.createElement('div');
+    if (e.type === 'wiki') {  // a change on PickiPedia (services/wiki_feed.py), at the wiki's own time
+      const page = `${WIKI}/wiki/${encodeURIComponent((e.title || '').replace(/ /g, '_'))}`;
+      const diff = e.revid ? `${WIKI}/index.php?diff=${encodeURIComponent(e.revid)}` : page;
+      const one = `<a href="${esc(page)}" target="_blank" rel="noopener">${esc(e.title)}</a>`
+        + (e.kind === 'new' ? ' (new)' : ` <a class="delta" href="${esc(diff)}" target="_blank" rel="noopener">(${e.delta > 0 ? '+' : ''}${Number(e.delta) || 0})</a>`)
+        + (e.comment ? ` · <i>${esc(e.comment)}</i>` : '');
+      // A run of changes by one account folds into one line, opened on demand.
+      const last = container.lastElementChild;
+      if (last && last.classList.contains('wiki') && last.dataset.user === (e.user || '')) {
+        const n = Number(last.dataset.n) + 1;
+        last.dataset.n = n;
+        if (n === 2) last.innerHTML = `<details><summary></summary><div class="each">${last.dataset.first}</div></details>`;
+        last.querySelector('.each').insertAdjacentHTML('beforeend', `<div>${one}</div>`);
+        last.querySelector('summary').innerHTML = `✎ <b>${esc(e.user || 'someone')}</b> made ${n} changes on PickiPedia · ${esc(stamp(e.at || e.created_at))}`;
+        return;
+      }
+      el.className = 'event wiki';
+      el.dataset.user = e.user || ''; el.dataset.n = 1; el.dataset.first = `<div>${one}</div>`;
+      el.innerHTML = `✎ <b>${esc(e.user || 'someone')}</b> ${e.kind === 'new' ? 'started' : 'edited'} ${one} · ${esc(stamp(e.at || e.created_at))}`;
+      container.appendChild(el);
+      prev = null;
+      return;
+    }
     if (e.type === 'interrupt' || e.type === 'created') {  // someone pressed stop; someone started this Mood
       el.className = 'event';
       el.innerHTML = e.type === 'created'
@@ -945,7 +996,21 @@
       + `Key:<pre>${esc(p.key || '(not on file)')}</pre>To check it: put the key in an allowed_signers line `
       + `(<code>${esc(turn.querySelector('.name').innerText)} ${esc(p.key || '')}</code>), the signature in a file, and run `
       + `<code>ssh-keygen -Y verify -f allowed_signers -I ${esc(turn.querySelector('.name').innerText)} -n ${esc(p.namespace)} -s sig</code> with what was signed on its input.`;
+    // Checked again by the server, now: the signature against the key kept with it, and whether that key is still theirs.
+    box.insertAdjacentHTML('afterbegin', '<div class="check">Checking the signature…</div>');
     turn.appendChild(box);
+    fetch(`/api/motions/${encodeURIComponent(current)}/verify/${encodeURIComponent(turn.dataset.id)}/`)
+      .then(r => r.json()).then(v => {
+        const who = esc(v.signer || '');
+        const lines = v.error ? [`<span class="bad">${esc(v.error)}</span>`] : [
+          v.signature_valid ? `✓ The signature is valid: made with the key below, over exactly what was signed.`
+                            : `<span class="bad">✗ The signature does not verify against the key below.</span>`,
+          v.key_is_current ? `✓ That key is still ${who}'s, as the team's key list has it today.`
+                           : `<span class="bad">That key is not ${who}'s key on the list today (rotated since, or removed).</span>`,
+          v.statement_matches ? `✓ What was signed ends with exactly the words shown, for ${esc(v.origin)}.`
+                              : `<span class="bad">What was signed differs from the words shown.</span>`];
+        box.querySelector('.check').innerHTML = lines.join('<br>') + ` <small>(checked ${esc(stamp(v.checked_at || new Date().toISOString()))})</small>`;
+      }).catch(err => { box.querySelector('.check').textContent = 'Could not check: ' + err.message; });
   });
 
   // --- the servers: four dots, pulsing while one is redeployed ------------------
@@ -974,8 +1039,10 @@
       const d = sv.deploy;
       const last = d ? (d.state === 'started' && sv.deploying ? `redeploying since ${ago(d.at)}`
         : `${d.state === 'failed' ? 'redeploy failed' : 'redeployed'} ${ago(d.at)}${d.commit ? ' · ' + d.commit.slice(0, 8) : ''}`) : 'no redeploy told yet';
-      return `<div><b>${esc(sv.name)}</b> · ${sv.deploying ? 'redeploying' : sv.up ? 'up' : '<b>not answering</b>'}`
-        + `<br><span class="note">${esc(sv.about)} · ${esc(last)}</span></div>`;
+      const name = sv.url ? `<a href="${esc(sv.url)}" target="_blank" rel="noopener" title="${esc(sv.name)} on PickiPedia"><b>${esc(sv.name)}</b></a>` : `<b>${esc(sv.name)}</b>`;
+      return `<div>${sv.art ? `<pre class="art" aria-hidden="true">${esc(sv.art)}</pre>` : ''}<span>${name}`
+        + `${sv.role ? ` <span class="role">${esc(sv.role)}</span>` : ''} · ${sv.deploying ? 'redeploying' : sv.up ? 'up' : '<b>not answering</b>'}`
+        + `<br><span class="note">${esc(sv.about)} · ${esc(last)}</span></span></div>`;
     }).join('');
   }
   serversEl.addEventListener('click', e => {
@@ -1035,12 +1102,14 @@
     if (m) { baseTitle = m.title + ' · magenta'; setTitle(); }
   }
   const isArchived = slug => !!(motions.find(m => m.slug === slug) || {}).archived;
+  const isPinned = slug => !!(motions.find(m => m.slug === slug) || {}).pinned;
   const newBox = document.getElementById('newBox');
   document.addEventListener('click', async e => {
     if (e.target.closest('#rename')) {
       document.getElementById('renameTitle').value = headMotion.title;
       document.getElementById('renameDesc').value = headMotion.description || '';
       document.getElementById('archiveBtn').textContent = isArchived(current) ? 'Unarchive' : 'Archive';
+      document.getElementById('pinBtn').textContent = isPinned(current) ? 'Unpin' : 'Pin';
       renameBox.hidden = false;
       document.getElementById('renameTitle').focus();
     } else if (e.target.closest('#renameCancel')) {
@@ -1051,6 +1120,14 @@
         body: JSON.stringify({ archived: !isArchived(current) }),
       });
       if (!r.ok) { showError('archive: ' + ((await r.json().catch(() => ({}))).error || r.status)); return; }
+      renameBox.hidden = true;
+      loadMotions();
+    } else if (e.target.closest('#pinBtn')) {
+      const r = await fetch(`/api/motions/${encodeURIComponent(current)}/pin/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+        body: JSON.stringify({ pinned: !isPinned(current) }),
+      });
+      if (!r.ok) { showError('pin: ' + ((await r.json().catch(() => ({}))).error || r.status)); return; }
       renameBox.hidden = true;
       loadMotions();
     } else if (e.target.closest('#newMood')) {

@@ -54,6 +54,7 @@ MODERATION_KEYS = ('scram', 'banned')
 # Mood alone (no agent), from the Mood's page, and kept apart from the knobs.
 MOOD_KEYS = {
     'archived': (False, 'Out of the Moods list, into "Archived"; still readable, and still answers mentions.'),
+    'pinned': (False, 'At the top of the Moods list, whatever was said where lately.'),
 }
 
 
@@ -114,10 +115,10 @@ def clean(key, value):
         if len(value) > 4000:
             raise Invalid('rules: at most 4000 characters')
         return value
-    if key == 'archived':
+    if key in ('archived', 'pinned'):
         if isinstance(value, bool):
             return value
-        raise Invalid('archived: true or false')
+        raise Invalid(f'{key}: true or false')
     if key == 'voice':
         value = str(value or '').strip()
         if len(value) > 100:
@@ -176,11 +177,15 @@ def resolve(motion, agent, now=None, rows=None):
     return resolved
 
 
-def archived_slugs():
-    """The Moods archived now: the newest 'archived' row for each says so."""
+def mood_flagged(key):
+    """The Moods where `key` (a MOOD_KEYS flag) is on now: the newest row for each says so."""
     from conversations.models import Setting
-    rows = Setting.objects.filter(key='archived', agent=None, motion__isnull=False)
+    rows = Setting.objects.filter(key=key, agent=None, motion__isnull=False)
     return {slug for (slug, _, _), row in latest(rows).items() if row.value}
+
+
+def archived_slugs():
+    return mood_flagged('archived')
 
 
 def global_value(key):

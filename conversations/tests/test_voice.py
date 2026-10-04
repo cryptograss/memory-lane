@@ -110,6 +110,22 @@ class SpeakAndTranscribeTest(TestCase):
         voice.speak(self.say('Two.'), 'justin', http=fake)
         self.assertTrue(fake.asked[-1][1].endswith('/v-george'))
 
+    def test_a_key_that_cant_read_the_list_still_speaks(self):
+        from conversations.services import settings as knobs
+        class Closed(FakeEleven):
+            def get(self, url, **kw):
+                return Answer(403, {'detail': {'message': 'missing voices_read'}})
+        fake = Closed()
+        voice.speak(self.say('One.'), 'justin', http=fake)
+        self.assertTrue(fake.asked[-1][1].endswith('/' + voice.FALLBACK_VOICE_ID))  # George
+        knobs.change('voice', 'EXAVITQu4vr4xnSDxMaL', by=None)  # the house voice, by id
+        cache.clear()
+        voice.speak(self.say('Two.'), 'justin', http=fake)
+        self.assertTrue(fake.asked[-1][1].endswith('/EXAVITQu4vr4xnSDxMaL'))
+        directed = self.say('Three.\n```voice\nvoice: 21m00Tcm4TlvDq8ikWAM\n---\nThree.\n```')
+        voice.speak(directed, 'justin', http=fake)
+        self.assertTrue(fake.asked[-1][1].endswith('/21m00Tcm4TlvDq8ikWAM'))  # named by id: used as it is
+
     def test_the_days_budget_holds(self):
         from conversations.services import settings as knobs
         knobs.change('voice_usd_per_day', 0.01)

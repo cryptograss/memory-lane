@@ -9,6 +9,7 @@ the Moods it concerns -- hunter's and maybelle's in all of them, the others
 in their own -- as a line in the thread, kept in the record.
 """
 
+import re
 import socket
 import time
 import uuid
@@ -17,14 +18,17 @@ from django.core.cache import cache
 
 SERVERS = [
     {'name': 'hunter', 'check': ('tcp', 'hunter.cryptograss.live', 443), 'moods': '*',
-     'about': 'the containers: people, Moods, the runners'},
+     'about': 'the containers: people, Moods, the runners', 'page': 'Cryptograss:Hunter'},
     {'name': 'maybelle', 'check': ('self',), 'moods': '*',
-     'about': 'the record (memory-lane), the memory server, the wiki builds'},
+     'about': 'the record (memory-lane), the memory server, the wiki builds', 'page': 'Cryptograss:Maybelle'},
     {'name': 'delivery-kid', 'check': ('http', 'https://delivery-kid.cryptograss.live/health'),
-     'moods': ['delivery-kid'], 'about': 'pinning and delivery'},
+     'moods': ['delivery-kid'], 'about': 'pinning and delivery', 'page': 'Cryptograss:Delivery-kid'},
     {'name': 'pickipedia', 'check': ('http', 'https://pickipedia.xyz/api.php?action=query&meta=siteinfo&format=json'),
-     'moods': ['pickipedia-and-rabbithole'], 'about': 'the wiki'},
+     'moods': ['pickipedia-and-rabbithole'], 'about': 'the wiki', 'page': ''},  # it is the wiki: its front page
 ]
+CARD_FOR = 6 * 3600       # seconds a server's PickiPedia card (art, role) is kept
+_INFOBOX_ART = re.compile(r'\|\s*image\s*=\s*<pre[^>]*>\n?(.*?)</pre>', re.S)
+_INFOBOX_ROLE = re.compile(r'\|\s*role\s*=\s*([^\n|]+)')
 NAMES = [s['name'] for s in SERVERS]
 STATES = ('started', 'finished', 'failed')
 SOURCE = 'deploy'
@@ -52,6 +56,34 @@ def probe(check, timeout=4):
         return False, round((time.monotonic() - start) * 1000)
 
 
+def wiki_card(server):
+    """{'url', 'role', 'art'} from a server's PickiPedia page: the ASCII art
+    and role in its infobox, so the dots' popover shows what the wiki does.
+    Kept six hours; a wiki that doesn't answer leaves just the link."""
+    from conversations.services.motion_view import pickipedia_url
+    base, title = pickipedia_url(), server.get('page') or ''
+    url = f"{base}/wiki/{title.replace(' ', '_')}" if title else f'{base}/'
+    if not title:
+        return {'url': url, 'role': '', 'art': ''}
+    key = f'server-card:{title}'
+    card = cache.get(key)
+    if card is None:
+        card = {'url': url, 'role': '', 'art': ''}
+        try:
+            import requests
+            page = requests.get(f'{base}/api.php', timeout=5, headers={'User-Agent': 'memory-lane (magenta)'},
+                                params={'action': 'query', 'titles': title, 'prop': 'revisions', 'rvprop': 'content',
+                                        'rvslots': 'main', 'format': 'json', 'formatversion': 2}).json()
+            text = page['query']['pages'][0]['revisions'][0]['slots']['main']['content']
+            art, role = _INFOBOX_ART.search(text), _INFOBOX_ROLE.search(text)
+            card['art'] = art.group(1).strip('\n').rstrip() if art else ''
+            card['role'] = role.group(1).strip() if role else ''
+            cache.set(key, card, CARD_FOR)
+        except Exception:
+            cache.set(key, card, 600)  # try again in ten minutes
+    return card
+
+
 def last_deploy(name):
     """The newest deploy event told for a server, as stored, or None."""
     from conversations.models import Message
@@ -75,7 +107,8 @@ def status(now=None):
             cache.set(key, checked, CHECK_EVERY)
         deploy = last_deploy(server['name'])
         deploying = bool(deploy and deploy.get('state') == 'started' and now - deploy['at_ts'] < DEPLOY_PATIENCE)
-        out.append({'name': server['name'], 'about': server['about'], **checked, 'deploying': deploying,
+        out.append({'name': server['name'], 'about': server['about'], **wiki_card(server), **checked,
+                    'deploying': deploying,
                     'deploy': {k: v for k, v in (deploy or {}).items() if k != 'at_ts'} or None})
     return out
 

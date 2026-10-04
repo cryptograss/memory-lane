@@ -15,6 +15,7 @@ from django.core.exceptions import ValidationError
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import Message, Motion, ThinkingEntity
+from .services import wiki_feed
 from .services import motion_auth
 from .services.motion_view import (
     MACHINERY_SENDERS, how_payload, activity, background_tasks, is_wrapper, known_names, mentions_in, motion_payload,
@@ -45,12 +46,13 @@ def motions_page(request, slug=None):
 def api_motions(request):
     """Every Motion, most recently active first; archived ones flagged (the page lists them apart)."""
     from .services import settings as knobs
-    archived = knobs.archived_slugs()
+    archived, pinned = knobs.archived_slugs(), knobs.mood_flagged('pinned')
     motions = list(Motion.objects.all())
-    payloads = [{**motion_payload(m), 'archived': m.slug in archived} for m in motions]
+    payloads = [{**motion_payload(m), 'archived': m.slug in archived, 'pinned': m.slug in pinned} for m in motions]
     # A Mood nobody has spoken in yet ranks by when it was started: a new one first.
     started = {m.slug: m.created_at.isoformat() for m in motions}
     payloads.sort(key=lambda p: p['last_at'] or started[p['slug']], reverse=True)
+    payloads.sort(key=lambda p: not p['pinned'])  # pinned first, each part still newest first
     people = ThinkingEntity.objects.order_by('name')
     return JsonResponse({'motions': payloads, 'people': [
         {'name': p.name, 'is_human': p.is_biological_human} for p in people]})
@@ -65,6 +67,8 @@ def api_motion_turns(request, slug):
     that has fallen out of sync recovers rather than stalls.
     """
     motion = get_object_or_404(Motion, slug=slug)
+    if motion.slug in wiki_feed.feed_moods():
+        wiki_feed.nudge()  # what's new on PickiPedia, as lines here (at most once a minute, in the background)
 
     after = before = None
     if request.GET.get('after'):
@@ -94,7 +98,8 @@ def api_motion_turns(request, slug):
                                  'created_at': msg.created_at.isoformat(), 'text': text})
         elif kind == 'event':
             events_out.append({'id': str(msg.id), 'created_at': msg.created_at.isoformat(),
-                               **{k: text.get(k) for k in ('type', 'server', 'state', 'commit', 'by', 'note', 'took', 'agent')}})
+                               **{k: text.get(k) for k in ('type', 'server', 'state', 'commit', 'by', 'note', 'took', 'agent',
+                                                   'kind', 'title', 'user', 'comment', 'delta', 'revid', 'at')}})
         elif kind == 'compaction':
             compactions_out.append({'id': str(msg.id), 'session_id': str(msg.session_id or ''),
                                     'created_at': msg.created_at.isoformat(), 'html': render_html(text)})
@@ -203,6 +208,7 @@ def api_pulse(request):
     agent = request.GET.get('agent', 'magent')
     rows = list(Setting.objects.exclude(key__in=knobs.MODERATION_KEYS))
     archived = knobs.archived_slugs()
+    wiki_feed.nudge()  # asked every second by the runner: the wiki feed's clock (at most once a minute)
     motions = []
     for motion in Motion.objects.all():
         said = motion.messages.filter(is_sidechain=False).exclude(sender_id__in=MACHINERY_SENDERS)
