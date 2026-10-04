@@ -113,6 +113,18 @@ class DevicesTest(SignedInCase):
         # Signed words can't be swapped for others.
         forged = self.signed_post('/api/attest/', 'attest', {'text': 'I owe magent $100.'}, text=words)
         self.assertEqual(forged.status_code, 403)
+        # Checked again on demand, by anyone: the signature, the key still being theirs, the words shown.
+        checked = self.client.get(f'/api/motions/general/verify/{row.id}/').json()
+        self.assertEqual({k: checked[k] for k in ('signer', 'signature_valid', 'key_is_current', 'statement_matches',
+                                                  'origin')},
+                         {'signer': 'justin', 'signature_valid': True, 'key_is_current': True,
+                          'statement_matches': True, 'origin': 'http://testserver'})
+        # Tampered with in the record, it says so.
+        Message.objects.filter(pk=row.pk).update(content={**row.content, 'text': 'I owe magent $100.'})
+        self.assertFalse(self.client.get(f'/api/motions/general/verify/{row.id}/').json()['statement_matches'])
+        Message.objects.filter(pk=row.pk).update(content={**row.content, 'signed': row.content['signed'] + '!'})
+        self.assertFalse(self.client.get(f'/api/motions/general/verify/{row.id}/').json()['signature_valid'])
+        self.assertEqual(self.client.get(f'/api/motions/m26/verify/{row.id}/').status_code, 404)  # not this Mood's
 
 
 @override_settings(MOTION_DEPLOY_KEY='d' * 40)
@@ -128,6 +140,27 @@ class ServersTest(TestCase):
         from django.core.cache import cache
         for s in servers.NAMES:
             cache.delete(f'server-check:{s}')
+        cards = mock.patch('conversations.services.servers.wiki_card',
+                           side_effect=lambda server: {'url': 'u', 'role': '', 'art': ''})
+        cards.start()
+        self.addCleanup(cards.stop)
+
+    def test_a_servers_card_comes_from_its_pickipedia_page(self):
+        from django.core.cache import cache
+        mock.patch.stopall()
+        cache.delete('server-card:Cryptograss:Hunter')
+        page = {'query': {'pages': [{'revisions': [{'slots': {'main': {'content': (
+            '{{Infobox resource\n| image = <pre style="font-size:5px">\n  ▓▒▒\n ▒▒▒▒\n</pre>\n'
+            '| role = the storyteller\n| type = Server\n}}\nHunter is...')}}}]}]}}
+        answer = mock.Mock(json=lambda: page)
+        hunter = servers.SERVERS[0]
+        with mock.patch('requests.get', return_value=answer) as get:
+            card = servers.wiki_card(hunter)
+            self.assertEqual(servers.wiki_card(hunter), card)  # kept: asked once
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(card, {'url': 'https://pickipedia.xyz/wiki/Cryptograss:Hunter', 'role': 'the storyteller',
+                                'art': '  ▓▒▒\n ▒▒▒▒'})
+        self.assertEqual(servers.wiki_card(servers.SERVERS[3]), {'url': 'https://pickipedia.xyz/', 'role': '', 'art': ''})
 
     def deploy(self, body, key='d' * 40):
         return self.client.post('/api/deploys/', json.dumps(body), content_type='application/json',
@@ -237,6 +270,17 @@ class NewAndArchivedMoodsTest(SignedInCase):
         events = self.client.get('/api/motions/fiddle-tunes-in-c/turns/').json()['events']
         self.assertEqual([(e['type'], e['by']) for e in events], [('created', 'justin')])
 
+    def test_a_pinned_mood_leads_the_list_for_everyone(self):
+        Motion.objects.create(slug='general', title='general')
+        client = self.sign_in()
+        self.assertEqual(self.client.post('/api/motions/general/pin/', '{}', content_type='application/json').status_code, 401)
+        self.assertEqual(self.post(client, '/api/motions/general/pin/', {'pinned': True}).json(),
+                         {'slug': 'general', 'pinned': True})
+        listed = self.client.get('/api/motions/').json()['motions']  # someone else's view: the same order
+        self.assertEqual((listed[0]['slug'], listed[0]['pinned']), ('general', True))
+        self.post(client, '/api/motions/general/pin/', {'pinned': False})
+        self.assertFalse(any(m['pinned'] for m in self.client.get('/api/motions/').json()['motions']))
+
     def test_archiving_takes_a_mood_out_of_the_list_and_back(self):
         self.assertEqual(self.client.post('/api/motions/m26/archive/', '{}', content_type='application/json').status_code, 401)
         client = self.sign_in()
@@ -290,3 +334,43 @@ class LoginLinkStatesTest(SignedInCase):
     def test_a_live_link_still_asks_first(self):
         response = Client().get(self.link())
         self.assertContains(response, 'Write as justin on this device?')
+
+
+class WikiFeedTest(TestCase):
+    """PickiPedia's recent changes, as lines in #general: new ones only, once each, never a turn."""
+
+    @classmethod
+    def setUpTestData(cls):
+        Motion.objects.create(slug='general', title='general')
+        ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+
+    def wiki(self, *rcids):
+        changes = [{'type': 'edit', 'title': f'Page {n}', 'rcid': n, 'revid': 900 + n, 'user': 'SkymanJenkins',
+                    'oldlen': 100, 'newlen': 100 + n, 'timestamp': '2026-10-03T23:00:00Z', 'comment': f'why {n}'}
+                   for n in sorted(rcids, reverse=True)]  # the wiki answers newest first
+        return mock.Mock(get=mock.Mock(return_value=mock.Mock(json=lambda: {'query': {'recentchanges': changes}})))
+
+    def test_the_first_look_takes_only_the_latest_then_only_whats_new(self):
+        from conversations.services import wiki_feed
+        self.assertEqual(wiki_feed.refresh(self.wiki(1, 2, 3, 4, 5)), 3)  # not the wiki's history
+        # The wiki answers with older ones too, never shown: history, not news.
+        self.assertEqual(wiki_feed.refresh(self.wiki(1, 2, 3, 4, 5, 6)), 1)
+        self.assertEqual(wiki_feed.refresh(self.wiki(4, 5, 6)), 0)
+        body = self.client.get('/api/motions/general/turns/').json()
+        lines = [(e['type'], e['title'], e['user'], e['delta']) for e in body['events']]
+        self.assertEqual(body['events'][0]['at'], '2026-10-03T23:00:00Z')  # the wiki's own time
+        self.assertEqual(lines, [('wiki', 'Page 3', 'SkymanJenkins', 3), ('wiki', 'Page 4', 'SkymanJenkins', 4),
+                                 ('wiki', 'Page 5', 'SkymanJenkins', 5), ('wiki', 'Page 6', 'SkymanJenkins', 6)])
+        self.assertEqual(body['turns'], [])  # lines, not words: nothing to answer
+        self.assertEqual(self.client.get('/api/motions/').json()['motions'][0]['message_count'], 0)
+
+    def test_at_most_once_a_minute(self):
+        from conversations.services import wiki_feed
+        http = self.wiki(1)
+        self.assertTrue(wiki_feed.nudge(http, wait=True))
+        self.assertFalse(wiki_feed.nudge(http, wait=True))
+        self.assertEqual(http.get.call_count, 1)

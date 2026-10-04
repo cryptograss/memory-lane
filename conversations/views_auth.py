@@ -454,20 +454,30 @@ def api_archive(request, slug):
     readable, its containers and sessions are untouched, and a mention there
     is still answered. Recorded as a setting row: who, and when.
     """
+    return _mood_flag(request, slug, 'archived')
+
+
+@require_POST
+def api_pin(request, slug):
+    """Pin a Mood to the top of the list, or unpin it: POST {"pinned": true|false}. For everyone."""
+    return _mood_flag(request, slug, 'pinned')
+
+
+def _mood_flag(request, slug, key):
     from .services import settings as knobs
     from .views_admin import locked_response
     if locked_response():
         return locked_response()
     device = motion_auth.device_for(request)
     if device is None:
-        return JsonResponse({'error': 'sign in to archive a Mood'}, status=401)
+        return JsonResponse({'error': f'sign in to change what is {key}'}, status=401)
     motion = get_object_or_404(Motion, slug=slug)
     try:
-        archived = json.loads(request.body or b'{}').get('archived', True)
-        knobs.change('archived', archived, motion=motion, by=device.entity, note='from the Mood')
+        value = json.loads(request.body or b'{}').get(key, True)
+        knobs.change(key, value, motion=motion, by=device.entity, note='from the Mood')
     except (ValueError, AttributeError, knobs.Invalid) as e:
-        return JsonResponse({'error': str(e) or 'expected {"archived": true|false}'}, status=400)
-    return JsonResponse({'slug': motion.slug, 'archived': archived})
+        return JsonResponse({'error': str(e) or f'expected {{"{key}": true|false}}'}, status=400)
+    return JsonResponse({'slug': motion.slug, key: value})
 
 
 VOICE_PER_MINUTE = 6
@@ -537,13 +547,20 @@ def api_voices(request):
     from .services import voice
     if not voice.enabled():
         return JsonResponse({'enabled': False, 'voices': []})
+    from django.core.cache import cache
+    note = ''
     try:
         listed = voice.voices()
+        if cache.get('voice:refused'):
+            note = f"{cache.get('voice:refused')} -- so these are ElevenLabs' standard voices, listed to anyone"
     except voice.VoiceError as e:
-        return JsonResponse({'error': str(e)}, status=e.status)
+        listed = []
+        note = (f"{e} -- so voices are named by id, and the house voice is "
+                f"{knobs.global_value('voice') or voice.FALLBACK_VOICE_ID + ' (George)'}")
     return JsonResponse({'enabled': True, 'model': voice.TTS_MODEL, 'house_voice': knobs.global_value('voice'),
                          'spent_today_usd': voice.spent_today(),
-                         'usd_per_day': knobs.global_value('voice_usd_per_day'), 'voices': listed})
+                         'usd_per_day': knobs.global_value('voice_usd_per_day'), 'voices': listed,
+                         **({'note': note} if note else {})})
 
 
 def _uuid_or_none(value):
@@ -551,4 +568,16 @@ def _uuid_or_none(value):
         return uuid.UUID(str(value))
     except ValueError:
         return None
+
+
+@require_GET
+def api_verify(request, slug, message_id):
+    """An attestation, checked again now (motion_auth.verify_attestation): anyone may ask."""
+    from .services.motion_view import attestation_of
+    message = Message.objects.filter(id=_uuid_or_none(message_id), motion_id=slug).first()
+    proof = attestation_of(message) if message else None
+    if proof is None:
+        return JsonResponse({'error': 'no such attestation in this Mood'}, status=404)
+    checked = motion_auth.verify_attestation(message.sender_id, proof, (message.content or {}).get('text', ''))
+    return JsonResponse({'signer': message.sender_id, 'checked_at': timezone.now().isoformat(), **checked})
 

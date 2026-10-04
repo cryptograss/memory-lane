@@ -207,6 +207,37 @@ def attest_message(challenge, origin, text):
     return signed_message(challenge, origin, purpose='attest') + '\n' + text
 
 
+def verify_attestation(name, proof, text):
+    """Check a stored attestation again, now: {'signature_valid', 'key_is_current',
+    'statement_matches', 'origin'}.
+
+    The signature is checked against the key kept with it (so a key rotated
+    since doesn't make an old statement look forged), and separately whether
+    that key is still `name`'s; and that what was signed ends with the words
+    shown, on the server it names."""
+    key = (proof.get('key') or '').strip()
+    signed, signature = proof.get('signed') or '', proof.get('signature') or ''
+    valid = False
+    if key and signed and signature:
+        with tempfile.TemporaryDirectory() as d:
+            signers, sig = os.path.join(d, 'allowed_signers'), os.path.join(d, 'sig')
+            with open(signers, 'w') as f:
+                f.write(f'{name} namespaces="{NAMESPACE}" {key}\n')
+            with open(sig, 'w') as f:
+                f.write(signature)
+            try:
+                result = subprocess.run(['ssh-keygen', '-Y', 'verify', '-f', signers, '-I', name, '-n', NAMESPACE,
+                                         '-s', sig], input=signed, capture_output=True, text=True, timeout=10)
+                valid = result.returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                valid = False
+    lines = signed.split('\n')
+    return {'signature_valid': valid,
+            'key_is_current': bool(key) and public_key_of(name) == ' '.join(key.split()[:2]),
+            'statement_matches': len(lines) >= 4 and '\n'.join(lines[3:]) == text,
+            'origin': lines[1] if len(lines) > 1 else ''}
+
+
 def public_key_of(name):
     """The key line allowed_signers holds for `name` (to show beside what it signed)."""
     path = allowed_signers_path()

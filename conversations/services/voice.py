@@ -44,6 +44,11 @@ STT_USD_PER_HOUR = 0.22    # Scribe v2
 MAX_SCRIPT_CHARS = 10_000  # one generation's limit
 SOURCE = 'voice'           # source_file of the system rows that keep the record
 VOICES_FOR = 3600          # seconds the voice list is cached
+# The voice when the list can't be read (a key without "Voices: read") and
+# none is named by its id: George, ElevenLabs' quickstart voice, offered
+# until the end of 2026 -- name another by id with the 'voice' knob.
+FALLBACK_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'
+_VOICE_ID = re.compile(r'^[A-Za-z0-9]{20}$')
 
 # Words a transcription should expect: instruments, the project's names.
 # The people, agents and Moods are added to these when a memo is transcribed.
@@ -154,23 +159,44 @@ def voices(http=requests):
     if cached is not None:
         return cached
     response = http.get(f'{API}/voices', headers=_headers(), timeout=30)
+    refused = None
+    if response.status_code in (401, 403):
+        # Kept: ElevenLabs' own words for why (a permission, an IP allowlist...).
+        refused = f'ElevenLabs answered {response.status_code} for the voice list: {_why(response)}'
+        cache.set('voice:refused', refused, VOICES_FOR)
+        # Its standard voices are listed to anyone, key or none: names still work.
+        response = http.get(f'{API}/voices', timeout=30)
     if response.status_code != 200:
-        raise VoiceError(f'ElevenLabs answered {response.status_code} for the voice list')
+        raise VoiceError(refused or f'ElevenLabs answered {response.status_code} for the voice list: {_why(response)}')
     found = [{'name': v.get('name', ''), 'voice_id': v.get('voice_id', ''),
               'description': v.get('description') or '', 'labels': v.get('labels') or {}}
              for v in response.json().get('voices', [])]
     cache.set('voice:voices', found, VOICES_FOR)
+    if not refused:
+        cache.delete('voice:refused')
     return found
 
 
 def voice_id_for(name, http=requests):
     """The voice called `name` (or with that id); else the house voice (the
-    'voice' knob); else the first there is."""
+    'voice' knob); else the first there is.
+
+    A voice given by its id is used as it is, list or no list. A key that may
+    not read the list (403) still speaks: named voices it can't resolve fall
+    back to the house voice's id, or George."""
     from conversations.services import settings as knobs
-    listed = voices(http)
+    house = (knobs.global_value('voice') or '').strip()
+    if _VOICE_ID.match((name or '').strip()):
+        return name.strip()
+    try:
+        listed = voices(http)
+    except VoiceError as e:
+        if 'answered 401' in str(e) or 'answered 403' in str(e):
+            return house if _VOICE_ID.match(house) else FALLBACK_VOICE_ID
+        raise
     if not listed:
-        raise VoiceError('ElevenLabs offers no voices to this key')
-    for wanted in (name, knobs.global_value('voice')):
+        return house if _VOICE_ID.match(house) else FALLBACK_VOICE_ID
+    for wanted in (name, house):
         wanted = (wanted or '').strip().lower()
         for v in listed if wanted else ():
             if wanted in (v['name'].lower(), v['voice_id'].lower()) or v['name'].lower().startswith(wanted + ' '):
