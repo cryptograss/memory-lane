@@ -391,3 +391,44 @@ class FromPhoneTest(SignedInCase):
         self.assertEqual([t['mobile'] for t in turns], [True, False])
         self.assertEqual(Message.objects.filter(client_version='magenta-web/mobile').count(), 1)
 
+
+
+@override_settings(MOOD_ADMINS=('justin',))
+class EveryonesDevicesTest(TestCase):
+    """An admin, on a key device, sees everyone's live devices of either tier, and can sign out only their own."""
+
+    def setUp(self):
+        self.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        self.skyler = ThinkingEntity.objects.create(name='skyler', is_biological_human=True)
+
+    def client_for(self, entity, label, tier='key'):
+        device, token = mood_auth.enrol_device(entity, label, tier=tier)
+        client = Client()
+        client.cookies[mood_auth.COOKIE] = token
+        return client, device
+
+    def test_an_admin_sees_everyones_live_devices_by_person(self):
+        laptop, _ = self.client_for(self.justin, 'laptop')
+        _, sky_phone = self.client_for(self.skyler, 'PickiPedia sign-in (SkymanJenkins, Android)', tier='wiki')
+        _, gone = self.client_for(self.skyler, 'old laptop')
+        Device.objects.filter(pk=gone.pk).update(revoked_at=timezone.now())
+
+        self.assertTrue(laptop.get('/api/auth/devices/').json()['admin'])
+        people = {p['name']: p['devices'] for p in laptop.get('/api/auth/devices/?all=1').json()['people']}
+        self.assertEqual([(d['label'], d['tier'], d['this']) for d in people['justin']], [('laptop', 'key', True)])
+        self.assertEqual([(d['label'], d['tier']) for d in people['skyler']],
+                         [('PickiPedia sign-in (SkymanJenkins, Android)', 'wiki')])  # the revoked one isn't listed
+
+        # Seeing isn't signing out: someone else's device is still revoked only by a signed kick.
+        revoke = laptop.post(f'/api/auth/devices/{sky_phone.pk}/revoke/')
+        self.assertEqual(revoke.status_code, 404)
+        self.assertIsNone(Device.objects.get(pk=sky_phone.pk).revoked_at)
+
+    def test_only_an_admin_on_a_key_device(self):
+        sky, _ = self.client_for(self.skyler, 'laptop')
+        self.assertFalse(sky.get('/api/auth/devices/').json()['admin'])
+        self.assertEqual(sky.get('/api/auth/devices/?all=1').status_code, 403)
+        wiki, _ = self.client_for(self.justin, 'PickiPedia sign-in (JMyles, Linux)', tier='wiki')
+        self.assertFalse(wiki.get('/api/auth/devices/').json()['admin'])
+        self.assertEqual(wiki.get('/api/auth/devices/?all=1').status_code, 403)
+        self.assertEqual(Client().get('/api/auth/devices/?all=1').status_code, 401)

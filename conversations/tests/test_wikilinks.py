@@ -5,7 +5,7 @@ import uuid
 from django.test import TestCase
 
 from conversations.models import ConversationParticipant, Message, Mood, ThinkingEntity
-from conversations.services.mood_view import wiki_title, wikilinks_in
+from conversations.services.mood_view import pickipedia_page, render_html, wiki_title, wikilinks_in
 
 
 class WikilinksInTest(TestCase):
@@ -28,6 +28,48 @@ class WikilinksInTest(TestCase):
 
     def test_code_is_literal(self):
         self.assertEqual(wikilinks_in('Write `[[Page]]` like this:\n```\n[[Other]]\n```'), [])
+
+
+class PageAddressTest(TestCase):
+    """A PickiPedia page's full address is a wikilink written longhand."""
+
+    def test_an_article_address_is_its_page(self):
+        self.assertEqual(pickipedia_page('https://pickipedia.xyz/wiki/Tony_Rice'), ('Tony Rice', ''))
+        self.assertEqual(pickipedia_page('https://pickipedia.xyz/wiki/Cryptograss:Magenta_26_Million#Speaking_in_a_Mood'),
+                         ('Cryptograss:Magenta 26 Million', 'Speaking in a Mood'))
+        self.assertEqual(pickipedia_page('https://www.pickipedia.xyz/wiki/B%C3%A9la_Fleck'), ('Béla Fleck', ''))
+        self.assertEqual(pickipedia_page('https://pickipedia.cryptograss.live/wiki/Bill_Monroe'), ('Bill Monroe', ''))
+
+    def test_anything_else_is_just_an_address(self):
+        for url in ('https://pickipedia.xyz/index.php?title=Tony_Rice&action=edit',
+                    'https://pickipedia.xyz/wiki/Tony_Rice?action=history',
+                    'https://pickipedia.xyz/', 'https://en.wikipedia.org/wiki/Tony_Rice',
+                    'https://pickipedia.xyz.evil.example/wiki/Tony_Rice'):
+            self.assertIsNone(pickipedia_page(url), url)
+
+    def test_shown_as_a_wikilink_titled_by_its_page(self):
+        html = render_html('Have you heard https://pickipedia.xyz/wiki/Tony_Rice_(guitarist)? And '
+                           'https://pickipedia.xyz/wiki/Cryptograss:Magenta_26_Million#Speaking_in_a_Mood.')
+        self.assertIn('<a class="wikilink" href="https://pickipedia.xyz/wiki/Tony_Rice_(guitarist)" target="_blank" rel="noopener">'
+                      'Tony Rice (guitarist)</a>?', html)
+        self.assertIn('>Cryptograss:Magenta 26 Million § Speaking in a Mood</a>.', html)
+
+    def test_a_labelled_link_keeps_its_label_and_others_stay_addresses(self):
+        html = render_html('[the etiquette](https://pickipedia.xyz/wiki/Cryptograss:Magenta_26_Million) and '
+                           'https://pickipedia.xyz/index.php?title=Tony_Rice&action=edit')
+        self.assertIn('>the etiquette</a>', html)
+        self.assertIn('>https://pickipedia.xyz/index.php?title=Tony_Rice&amp;action=edit</a>', html)
+
+    def test_a_title_can_never_become_markup(self):
+        html = render_html('https://pickipedia.xyz/wiki/%3Cscript%3Ealert(1)%3C/script%3E')
+        self.assertNotIn('<script>', html)
+        self.assertIn('&lt;script&gt;', html)
+
+    def test_addresses_count_as_links_in_order(self):
+        text = ('First https://pickipedia.xyz/wiki/Bill_Monroe, then [[Blue Grass Boys]], then '
+                '[a label](https://pickipedia.xyz/wiki/Tony_Rice) and [[Bill Monroe]] again.')
+        self.assertEqual(wikilinks_in(text), ['Bill Monroe', 'Blue Grass Boys', 'Tony Rice'])
+        self.assertEqual(wikilinks_in('`https://pickipedia.xyz/wiki/Example`'), [])
 
 
 class WikilinksEndpointTest(TestCase):

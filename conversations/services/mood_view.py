@@ -13,6 +13,7 @@ produces HTML, escaped first so nothing in a message can inject markup, with
 
 import html
 import re
+from urllib.parse import unquote, urlparse
 
 from django.conf import settings
 
@@ -148,18 +149,43 @@ def _is_table_separator(cells):
     return all(_TABLE_SEP_CELL.match(c) for c in cells if c) and any(cells)
 
 
+# Every link in what was said opens beside the Mood, never in its place.
+# Installed as an app, a link that navigated in place would take over the
+# app's own window; this way it opens in the browser instead.
+_OUT = ' target="_blank" rel="noopener"'
+
+
 def _wikilink(match):
     target = match.group(1).strip()
     label = (match.group(2) or target).strip()
     href = f"{pickipedia_url()}/wiki/{target.replace(' ', '_')}"
-    return f'<a class="wikilink" href="{href}">{label}</a>'
+    return f'<a class="wikilink" href="{href}"{_OUT}>{label}</a>'
+
+
+# A PickiPedia page's full address is a wikilink written longhand: shown as
+# one, titled by its page, and counted as one. Only an article's own
+# address -- /wiki/<Title>, perhaps with a #section -- not an edit, a diff
+# or anything else with a query.
+PICKIPEDIA_HOSTS = {'pickipedia.xyz', 'www.pickipedia.xyz', 'pickipedia.cryptograss.live'}
+_PAGE_URL = re.compile(r'https?://([A-Za-z0-9.-]+)/wiki/([^\s?#<>"]+)(?:#([^\s<>"]*))?$')
+
+
+def pickipedia_page(url):
+    """(title, section) when url is a PickiPedia article's address, else None."""
+    match = _PAGE_URL.match(html.unescape(url))
+    hosts = PICKIPEDIA_HOSTS | {urlparse(pickipedia_url()).netloc.lower()}
+    if not match or match.group(1).lower() not in hosts:
+        return None
+    title = wiki_title(unquote(match.group(2)))
+    section = unquote(match.group(3) or '').replace('_', ' ').strip()
+    return (title, section) if title else None
 
 
 def _image(match):
     alt, url = match.group(1), match.group(2)
     if url.startswith('/') or _image_host_allowed(url):
         return f'<a class="img" href="{url}"><img src="{url}" alt="{alt}" loading="lazy"></a>'
-    return f'<a href="{url}">{alt or url}</a>'
+    return f'<a href="{url}"{_OUT}>{alt or url}</a>'
 
 
 def _image_host_allowed(url):
@@ -201,15 +227,20 @@ def wiki_title(target):
 
 
 def wikilinks_in(text):
-    """Ordered, de-duplicated PickiPedia titles a text links to with [[...]].
+    """Ordered, de-duplicated PickiPedia titles a text links to, with [[...]] or a page's full address.
 
     Code is literal, as in the renderer: a [[link]] inside backticks is an
     example, not a link.
     """
     text = _INLINE_CODE.sub('', _FENCE.sub('', text))
+    found = [(m.start(), wiki_title(m.group(1))) for m in _WIKILINK.finditer(text)]
+    # A page's full address counts too, labelled or not.
+    for match in _URL.finditer(text):
+        page = pickipedia_page(_trim_url(match.group(1))[0])
+        if page:
+            found.append((match.start(), page[0]))
     seen, out = set(), []
-    for match in _WIKILINK.finditer(text):
-        title = wiki_title(match.group(1))
+    for _, title in sorted(found):
         if title and title not in seen:
             seen.add(title)
             out.append(title)
@@ -270,12 +301,27 @@ def from_wiki_tier(msg):
     return 'wiki' in client_parts(msg)
 
 
+def _trim_url(url):
+    """(url, tail): sentence punctuation after a URL isn't part of it. A
+    closing parenthesis is, when it closes one the URL opened, as in
+    /wiki/Tony_Rice_(guitarist)."""
+    tail = ''
+    while url and url[-1] in _TRAILING_PUNCT:
+        if url[-1] == ')' and url.count('(') >= url.count(')'):
+            break
+        tail, url = url[-1] + tail, url[:-1]
+    return url, tail
+
+
 def _link_url(match):
     """Link a bare URL, leaving sentence punctuation outside the anchor."""
-    url, tail = match.group(1), ''
-    while url and url[-1] in _TRAILING_PUNCT:
-        tail, url = url[-1] + tail, url[:-1]
-    return f'<a href="{url}">{url}</a>{tail}'
+    url, tail = _trim_url(match.group(1))
+    page = pickipedia_page(url)
+    if page:
+        title, section = page
+        label = html.escape(title + (f' § {section}' if section else ''), quote=False)
+        return f'<a class="wikilink" href="{url}"{_OUT}>{label}</a>{tail}'
+    return f'<a href="{url}"{_OUT}>{url}</a>{tail}'
 
 
 def _inline(text, mentionable=()):
@@ -301,7 +347,7 @@ def _inline(text, mentionable=()):
     text = _WIKILINK.sub(lambda m: stash(_wikilink(m)), text)
     text = _AUDIO.sub(lambda m: stash(f'<span class="memo">{m.group(1)}</span>'
                                       f'<audio controls preload="none" src="{m.group(2)}" title="{m.group(1)}"></audio>'), text)
-    text = _MD_LINK.sub(lambda m: stash(f'<a href="{m.group(2)}">{m.group(1)}</a>'), text)
+    text = _MD_LINK.sub(lambda m: stash(f'<a href="{m.group(2)}"{_OUT}>{m.group(1)}</a>'), text)
     text = _URL.sub(lambda m: stash(_link_url(m)), text)
     if mentionable:
         text = _MENTION.sub(_mention(mentionable, stash), text)
