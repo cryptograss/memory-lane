@@ -180,12 +180,17 @@ class ServersTest(TestCase):
         self.assertIsNotNone(events[1]['took'])
         self.assertEqual(self.client.get('/api/moods/m26/turns/').json()['turns'], [])  # not a turn
 
-    def test_a_delivery_kid_redeploy_stays_in_its_own_mood(self):
-        self.assertEqual(self.deploy({'server': 'delivery-kid', 'state': 'started'}).json()['moods'], 1)
-        self.assertEqual(self.client.get('/api/moods/m26/turns/').json()['events'], [])
-        self.assertEqual(len(self.client.get('/api/moods/delivery-kid/turns/').json()['events']), 1)
+    def test_every_servers_redeploy_is_told_everywhere(self):
+        moods = len(self.client.get('/api/moods/').json()['moods'])
+        for server in ('delivery-kid', 'pickipedia'):
+            with self.subTest(server=server):
+                self.assertEqual(self.deploy({'server': server, 'state': 'started'}).json()['moods'], moods)
+        for slug in ('m26', 'delivery-kid', 'pickipedia-and-rabbithole'):
+            self.assertEqual([e['server'] for e in self.client.get(f'/api/moods/{slug}/turns/').json()['events']],
+                             ['delivery-kid', 'pickipedia'])
+        # Told once in the recent-events list, not once per Mood.
         recent = self.client.get('/api/moods/recent/').json()['events']
-        self.assertEqual([e['kind'] for e in recent].count('deploy'), 1)
+        self.assertEqual([e['kind'] for e in recent].count('deploy'), 2)
 
     def test_a_redeploy_doesnt_make_a_mood_look_active(self):
         before = {m['slug']: (m['last_at'], m['message_count']) for m in self.client.get('/api/moods/').json()['moods']}

@@ -389,9 +389,13 @@ class LastSaidTest(TestCase):
 
 class DeployNoticesFollowRenamesTest(TestCase):
 
-    def test_a_renamed_servers_mood_still_hears_its_deploys(self):
+    def test_a_server_listing_moods_finds_them_by_any_name(self):
+        from unittest import mock
         from conversations.models import MoodAlias
-        from conversations.services.servers import moods_for
+        from conversations.services import servers
         mood = Mood.objects.create(slug='uploads-and-embeds', title='uploads-and-embeds')
+        Mood.objects.create(slug='elsewhere')
         MoodAlias.objects.create(slug='delivery-kid', mood=mood)
-        self.assertEqual(moods_for('delivery-kid'), [mood])
+        listed = [{**s, 'moods': ['delivery-kid']} if s['name'] == 'delivery-kid' else s for s in servers.SERVERS]
+        with mock.patch.object(servers, 'SERVERS', listed):
+            self.assertEqual(servers.moods_for('delivery-kid'), [mood])
