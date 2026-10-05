@@ -192,6 +192,13 @@ class ServersTest(TestCase):
         recent = self.client.get('/api/moods/recent/').json()['events']
         self.assertEqual([e['kind'] for e in recent].count('deploy'), 2)
 
+    def test_an_open_page_can_tell_its_code_has_changed(self):
+        page = self.client.get('/moods/').content.decode()
+        with mock.patch('conversations.services.servers.probe', return_value=(True, 5)):
+            now = self.client.get('/api/servers/').json()['page']
+        self.assertRegex(now, r'^[0-9a-f]{12}$')
+        self.assertIn(f'const PAGE_VERSION = "{now}";', page)  # the same code: no reload offered
+
     def test_a_redeploy_doesnt_make_a_mood_look_active(self):
         before = {m['slug']: (m['last_at'], m['message_count']) for m in self.client.get('/api/moods/').json()['moods']}
         self.deploy({'server': 'maybelle', 'state': 'finished'})

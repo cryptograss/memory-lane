@@ -5,6 +5,9 @@ is a projection: nothing here writes, and nothing a reader does can change
 the conversation.
 """
 
+import functools
+import hashlib
+
 from django.conf import settings
 from django.db.models import Max
 from django.http import Http404, JsonResponse
@@ -48,7 +51,16 @@ def moods_page(request, slug=None):
         'wiki_signin': wiki_auth.enabled(),
         # PickiPedia names, shown for the names here (from hunter's inventory).
         'wiki_names': wiki_auth.names(),
+        'page_version': page_version(),
     })
+
+
+@functools.cache
+def page_version():
+    """This page's code as served now. A page left open compares it (api/servers) and offers a reload."""
+    from django.template.loader import get_template
+    with open(get_template('conversations/moods.html').origin.name, 'rb') as f:
+        return hashlib.sha256(f.read()).hexdigest()[:12]
 
 
 @require_GET
