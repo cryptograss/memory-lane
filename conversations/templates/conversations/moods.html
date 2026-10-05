@@ -2151,20 +2151,20 @@
     return titles;
   }
 
-  // /yarn <name> and /yarn forget <name>: the team's saved clips, by name.
-  let yarnCache = null;
-  async function yarnClips() {
-    if (yarnCache && Date.now() - yarnCache.at < 60000) return yarnCache.clips;
+  // /clips <name> and /clips forget <name>: the team's saved clips, by name (/yarn, as it was first called, too).
+  let clipsCache = null;
+  async function savedClips() {
+    if (clipsCache && Date.now() - clipsCache.at < 60000) return clipsCache.clips;
     try {
-      const clips = (await (await fetch('/api/yarn/')).json()).clips || [];
-      yarnCache = { at: Date.now(), clips };
+      const clips = (await (await fetch('/api/clips/')).json()).clips || [];
+      clipsCache = { at: Date.now(), clips };
       return clips;
     } catch (e) { return []; }
   }
   function wordAtCaret() {
     const upto = sayBox.value.slice(0, sayBox.selectionStart);
-    const y = upto.match(/^\/yarn(?:\s+forget)?\s+([a-z0-9_-]*)$/i);
-    if (y) return { kind: 'yarn', start: upto.length - y[1].length, prefix: y[1].toLowerCase() };
+    const y = upto.match(/^\/(?:clips|yarn)(?:\s+forget)?\s+([a-z0-9_-]*)$/i);
+    if (y) return { kind: 'clips', start: upto.length - y[1].length, prefix: y[1].toLowerCase() };
     const w = upto.match(/\[\[([^\[\]|\n]{1,100})$/);
     if (w) return { kind: 'wiki', start: upto.length - w[1].length, prefix: w[1] };
     let m = upto.match(/(^|[^\w@\/.])@([A-Za-z][\w.-]*)?$/);
@@ -2193,11 +2193,11 @@
       }, wikiCache.has(prefix) ? 0 : 150);
       return;
     }
-    if (at.kind === 'yarn') {
+    if (at.kind === 'clips') {
       const prefix = at.prefix;
-      yarnClips().then(clips => {
+      savedClips().then(clips => {
         const still = wordAtCaret();
-        if (!still || still.kind !== 'yarn' || still.prefix !== prefix) return;  // they've typed on
+        if (!still || still.kind !== 'clips' || still.prefix !== prefix) return;  // they've typed on
         choices = clips.filter(c => c.name.startsWith(prefix)).slice(0, 8)
           .map(c => ({ insert: c.name, html: `<span class="emo">🎬</span>${esc(c.name)}<small>${esc(shown(c.by))}</small>` }));
         if (!choices.length) return closeSuggest();
@@ -2579,8 +2579,8 @@
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
       const done = await r.json().catch(() => ({}));
       sayBox.value = ''; fitSay(); typingSent = 0; sendTyping(false); cancelReply();
-      if (/^\/yarn\s+(save|forget)\b/i.test(text)) yarnCache = null;  // the library changed
-      if (done.note) {  // what a /yarn command did, for whoever sent it
+      if (/^\/(?:clips|yarn)\s+(save|forget)\b/i.test(text)) clipsCache = null;  // the library changed
+      if (done.note) {  // what a /clips command did, for whoever sent it
         composer.insertAdjacentHTML('beforeend', `<span class="note">${esc(done.note)}</span>`);
         const note = composer.querySelector('.note:last-of-type');
         setTimeout(() => note && note.remove(), 8000);
