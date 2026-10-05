@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 
 EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 LISTENING = ('on', 'mentions', 'off')
+DISCRETIONS = ('reserved', 'normal', 'chatty')
+VERBOSITIES = ('brief', 'normal', 'thorough')
 
 # key: (default, help). Validation per key is in clean().
 KNOBS = {
@@ -39,6 +41,10 @@ KNOBS = {
     'catch_up_tokens': (10_000, "How much of what was said here since it last spoke a wake reads word for word, "
                                 "in tokens (about 4 characters each); what's older is summarized. A post that links "
                                 "a message has it read from that message on."),
+    'discretion': ('normal', "How readily it speaks up unasked here. reserved: only when something changes a "
+                             "decision or is plainly for it. normal: when it would genuinely help; mostly quiet. "
+                             "chatty: joins in as a teammate would, small talk and kind words included."),
+    'verbosity': ('normal', 'How long its replies run here: brief, normal or thorough.'),
     'rules': ('', 'How it should carry itself here, in a few lines. It reads this at every wake.'),
     'ultracode': (False, "Its full-tools mention wakes here run with Claude Code's ultracode on: standing "
                          "multi-agent workflows, at any effort. Thorough, and costly."),
@@ -92,6 +98,11 @@ def clean(key, value):
             raise Invalid(f'{key}: a whole number')
         if not limits[0] <= value <= limits[1]:
             raise Invalid(f'{key}: from {limits[0]} to {limits[1]}')
+        return value
+    if key in ('discretion', 'verbosity'):
+        allowed = DISCRETIONS if key == 'discretion' else VERBOSITIES
+        if value not in allowed:
+            raise Invalid(f"{key}: one of {', '.join(allowed)}")
         return value
     if key in ('mention_effort', 'consider_effort'):
         if value not in EFFORTS:

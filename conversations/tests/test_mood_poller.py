@@ -1084,6 +1084,42 @@ class SettingsInTheRunnerTest(TestCase):
         self.assertEqual(self.waker.options, {'effort': 'low', 'budget': 3.0, 'model': 'sonnet'})
         self.assertIn('This is the casual channel: be light.', self.waker.woken[0][1])
 
+    def test_chatty_skips_the_screen_and_asks_it_to_join_in(self):
+        api = MentionsAndPulse(settings={'discretion': 'chatty'})
+        screen = FakeScreen('dismiss', 'small talk')  # would let it pass by
+        poller = self.make(api, screen)
+        api.add(post('a', 1, text="gm y'all, travel day for me"))
+        self.at(minutes=1, seconds=30)
+        self.assertEqual(poller.cycle()[1], [('m26', 'silent')])
+        self.assertEqual(screen.prompts, [])  # nobody screened it out
+        self.assertIn('join in as a teammate would', self.waker.woken[0][1])
+        self.assertNotIn('Most of the time the right answer is to stay quiet', self.waker.woken[0][1])
+
+    def test_reserved_still_screens_and_asks_for_less(self):
+        api = MentionsAndPulse(settings={'discretion': 'reserved'})
+        screen = FakeScreen('pass')
+        poller = self.make(api, screen)
+        api.add(post('a', 1))
+        self.at(minutes=1, seconds=30)
+        poller.cycle()
+        self.assertEqual(len(screen.prompts), 1)
+        self.assertIn('Speak only if something here changes a decision', self.waker.woken[0][1])
+
+    def test_verbosity_reaches_every_wake_and_normal_adds_nothing(self):
+        api = MentionsAndPulse(settings={'verbosity': 'brief'})
+        poller = self.make(api, FakeScreen('pass'))
+        api.mention(post('a', 1, text='@magent quick one?', mentions=['magent']))
+        self.at(minutes=1)
+        poller.cycle()
+        self.assertIn('Keep replies here short', self.waker.woken[0][1])
+        api.settings = {}
+        api.add(post('b', 3))
+        self.at(minutes=4)
+        poller.cycle()
+        last = self.waker.woken[-1][1]
+        self.assertNotIn('Keep replies here short', last)
+        self.assertNotIn('longer replies are welcome', last)
+
     def test_no_long_quiet_looks_where_they_are_turned_off(self):
         api = MentionsAndPulse([post('a', -10)], human_at=(T0 - timedelta(minutes=10)).isoformat(),
                                settings={'idle_after': 0})

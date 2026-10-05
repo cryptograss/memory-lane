@@ -49,6 +49,7 @@ class ResolveTest(TestCase):
     def test_values_are_checked(self):
         for key, value in (('listening', 'asleep'), ('consider_after', 'soon'), ('consider_after', 99999),
                            ('mention_effort', 'huge'), ('model', 'Opus 5.5!'), ('rules', 'x' * 5000),
+                           ('discretion', 'loud'), ('verbosity', 'epic'),
                            ('nonsense', 1)):
             with self.subTest(key=key):
                 with self.assertRaises(knobs.Invalid):

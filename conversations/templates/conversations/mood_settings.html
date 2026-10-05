@@ -71,7 +71,7 @@
   const LABELS = {
     listening: 'listening', consider_after: 'consider after (s)', idle_after: 'first unprompted look (min)',
     considers_per_hour: 'considerations / hour', mention_effort: 'effort when mentioned',
-    consider_effort: 'effort when considering', model: 'model', rules: 'rules here', ultracode: 'ultracode', catch_up_tokens: 'reads (tokens)',
+    consider_effort: 'effort when considering', model: 'model', rules: 'rules here', ultracode: 'ultracode', catch_up_tokens: 'reads (tokens)', discretion: 'discretion', verbosity: 'verbosity',
   };
   // As the terminal names them.
   const EFFORT_LABELS = { xhigh: 'extra' };
@@ -106,6 +106,8 @@
         + (v.until ? ` <span class="note">until ${esc(when(v.until))}</span>` : '');
     } else if (key === 'mention_effort' || key === 'consider_effort') {
       input = `<select ${attrs}>${state.efforts.map(e => `<option value="${e}" ${e === value ? 'selected' : ''}>${EFFORT_LABELS[e] || e}</option>`).join('')}</select>`;
+    } else if (key === 'discretion' || key === 'verbosity') {
+      input = `<select ${attrs}>${state.choices[key].map(c => `<option value="${c}" ${c === value ? 'selected' : ''}>${c}</option>`).join('')}</select>`;
     } else if (key === 'ultracode') {
       input = `<label class="note"><input type="checkbox" ${attrs} ${value ? 'checked' : ''}> on for full-tools mention wakes</label>`;
     } else if (key === 'rules') {

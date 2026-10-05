@@ -91,6 +91,15 @@ class WakeFramesTest(TestCase):
         self.assertIn(CONSIDER_ASK, frames['consider'])
         self.assertIn('\n'.join(rules_block('Be brief.')), frames['quiet'])
 
+    def test_the_dials_show_as_they_are_sent(self):
+        from poller.mood_poller import CONSIDER_ASKS, VERBOSITY_LINES, wake_frames
+        frames = {f['kind']: f for f in wake_frames('m26', discretion='chatty', verbosity='thorough')}
+        self.assertIn(CONSIDER_ASKS['chatty'], frames['consider']['text'])
+        self.assertIn('no screen', frames['consider']['when'])
+        self.assertTrue(frames['screen']['when'].startswith('Not here'))
+        for kind in ('mention-full', 'mention-look', 'consider', 'quiet'):
+            self.assertIn(VERBOSITY_LINES['thorough'], frames[kind]['text'], kind)
+
 
 class OpenWorkTest(TestCase):
     """Open work: what the forge has open, and who asked for it, from the record."""
