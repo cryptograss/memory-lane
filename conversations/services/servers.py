@@ -118,7 +118,8 @@ def moods_for(name):
     server = next(s for s in SERVERS if s['name'] == name)
     if server['moods'] == '*':
         return list(Mood.objects.all())
-    return list(Mood.objects.filter(slug__in=server['moods']))
+    # By any name the Mood has gone by: renaming it mustn't stop its notices.
+    return [m for m in (Mood.by_slug(slug) for slug in server['moods']) if m is not None]
 
 
 def record_deploy(name, state, commit='', by='', note=''):

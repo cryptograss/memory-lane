@@ -358,3 +358,40 @@ class YarnClipTest(TestCase):
         for attack in (f'https://www.yarn.co/yarn-clip/{self.CLIP}"onmouseover="alert(1)',
                        f'https://www.yarn.co/yarn-clip/{self.CLIP}?x=" data-yarn="javascript:alert(1)'):
             RenderHtmlTest.assertSafe(self, render_html(attack), attack)
+
+
+class LastSaidTest(TestCase):
+    """A Mood's 'ago' is when something was last said, not an agent's quiet look."""
+
+    def test_silences_and_working_steps_dont_make_a_mood_look_active(self):
+        from conversations.models import Thought, ToolUse
+        from conversations.services.mood_view import last_said, mood_payload
+        justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+        mood = Mood.objects.create(slug='magent-self')
+        now = timezone.now()
+
+        def at(minutes_ago, model=Message, sender=justin, **fields):
+            m = model.objects.create(id=uuid.uuid4(), sender=sender, mood=mood, **fields)
+            Message.objects.filter(pk=m.pk).update(created_at=now - timedelta(minutes=minutes_ago))
+            return now - timedelta(minutes=minutes_ago)
+
+        said = at(30, content='gm, anyone around?')
+        at(20, model=Thought, sender=magent, content=[{'type': 'thinking', 'thinking': 'nothing to add'}])
+        at(19, model=ToolUse, sender=magent, content={}, tool_name='Read', tool_id='t1')
+        at(18, sender=magent, content=[{'type': 'text', 'text': '<silent>just a greeting</silent>'}], stop_reason='end_turn')
+        at(10, sender=magent, content='<silent by="screen">small talk</silent>', stop_reason='end_turn')
+        self.assertEqual(last_said(mood), said)
+        self.assertEqual(mood_payload(mood)['last_at'], said.isoformat())
+        spoke = at(5, sender=magent, content=[{'type': 'text', 'text': 'Morning!'}], stop_reason='end_turn')
+        self.assertEqual(last_said(mood), spoke)
+
+
+class DeployNoticesFollowRenamesTest(TestCase):
+
+    def test_a_renamed_servers_mood_still_hears_its_deploys(self):
+        from conversations.models import MoodAlias
+        from conversations.services.servers import moods_for
+        mood = Mood.objects.create(slug='uploads-and-embeds', title='uploads-and-embeds')
+        MoodAlias.objects.create(slug='delivery-kid', mood=mood)
+        self.assertEqual(moods_for('delivery-kid'), [mood])

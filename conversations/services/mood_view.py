@@ -963,12 +963,27 @@ def models_q(**kwargs):
     return Q(**kwargs)
 
 
+def last_said(mood, scan=200):
+    """When something was last said here: a person's post, or an agent speaking.
+    Not an agent's silences (the dots), nor its thinking and tool calls on the
+    way to one, nor the system's rows (a redeploy, a rename, a turn's tally):
+    a Mood where an agent quietly looked and let it pass hasn't become active."""
+    rows = (mood.messages.filter(is_sidechain=False, thought__isnull=True, tooluse__isnull=True, toolresult__isnull=True)
+            .exclude(sender_id__in=MACHINERY_SENDERS).order_by('-created_at').only('content', 'created_at')[:scan])
+    oldest = None
+    for msg in rows:
+        oldest = msg.created_at
+        text = prose(msg.content)
+        if text and not is_wrapper(text) and quiet_reason(text) is None:
+            return msg.created_at
+    return oldest  # nothing said in the latest `scan` rows: as good a guess as any
+
+
 def mood_payload(mood):
-    from django.db.models import Max
     # What was said, not the system's own rows (a redeploy announced in every
     # Mood, a rename, a turn's tally): those mustn't make a Mood look active.
     said = mood.messages.exclude(sender_id='system')
-    last = said.aggregate(last=Max('created_at'))['last']
+    last = last_said(mood)
     return {
         'slug': mood.slug,
         'title': mood.title or mood.slug,
