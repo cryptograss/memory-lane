@@ -313,9 +313,26 @@ def _trim_url(url):
     return url, tail
 
 
+# A Yarn clip (a line from a film or show, as a short video): a card that
+# plays the clip in place when pressed. Nothing is fetched from Yarn until
+# someone presses it -- a reader's browser doesn't call on a site nobody
+# chose -- and the page builds the player from the id alone (moods.html).
+YARN_HOSTS = {'yarn.co', 'www.yarn.co', 'getyarn.io', 'www.getyarn.io'}
+_YARN_CLIP = re.compile(r'https://([a-z.]+)/yarn-clip/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/?$')
+
+
+def yarn_clip(url):
+    """The clip id when url is a Yarn clip's page, else None."""
+    match = _YARN_CLIP.match(url)
+    return match.group(2) if match and match.group(1) in YARN_HOSTS else None
+
+
 def _link_url(match):
     """Link a bare URL, leaving sentence punctuation outside the anchor."""
     url, tail = _trim_url(match.group(1))
+    clip = yarn_clip(url)
+    if clip:
+        return f'<a class="yarn" href="{url}" data-yarn="{clip}"{_OUT}>▶ Yarn clip</a>{tail}'
     page = pickipedia_page(url)
     if page:
         title, section = page
