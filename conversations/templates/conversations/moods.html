@@ -104,6 +104,9 @@
   #devicesBox .devwhich { margin-bottom: 6px; }
   #devicesBox .devperson { margin-top: 10px; }
   #devicesBox .tier { font-size: 11px; letter-spacing: .04em; color: var(--muted); }
+  #devicesBox .devid { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; background: none;
+    color: var(--muted); padding: 0 4px; cursor: pointer; }
+  #devicesBox .devid[data-copied]::after { content: ' copied'; color: var(--accent); }
   #devicesBox .dev.revoked, #devicesBox .dev.timed { opacity: .65; }
   #devicesBox button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel);
                        color: var(--ink); cursor: pointer; }
@@ -2415,13 +2418,16 @@
       + `</div>` : '';
     if (devicesAll) {
       const n = d.people.reduce((sum, p) => sum + p.devices.length, 0);
-      list.innerHTML = which + `<div class="meta">${n} device${n === 1 ? '' : 's'} signed in. To sign someone out everywhere: `
-        + `<code>magenta.sh kick &lt;name&gt;</code>.</div>` + d.people.map(p =>
-          `<div class="devperson"><b>${icon(p.name, true)}${esc(p.name)}</b></div>` + p.devices.map(v =>
-            `<div class="dev"><b>${esc(v.label)}</b> · <span class="tier">${v.tier === 'wiki' ? 'WIKI' : 'KEY'}</span>`
+      list.innerHTML = which + `<div class="meta">${n} device${n === 1 ? '' : 's'} signed in. To sign someone out: `
+        + `<code>magenta.sh kick &lt;name&gt; --all</code>, or one device: click its id to copy the command.</div>` + d.people.map(p =>
+          `<div class="devperson"><b>${icon(p.name, true)}${esc(p.name)}</b></div>` + p.devices.map(v => {
+            const short = v.id.replace(/-/g, '').slice(0, 8);
+            return `<div class="dev"><b>${esc(v.label)}</b> · <span class="tier">${v.tier === 'wiki' ? 'WIKI' : 'KEY'}</span>`
             + (v.this ? ' · this device' : '')
-            + (p.name === d.name ? ` <button type="button" data-revoke="${esc(v.id)}" data-this="${v.this ? 1 : ''}">revoke</button>` : '')
-            + `<div class="meta">signed in ${esc(ago(v.signed_in_at))} · last used ${esc(ago(v.last_used_at))}</div></div>`).join('')
+            + (p.name === d.name ? ` <button type="button" data-revoke="${esc(v.id)}" data-this="${v.this ? 1 : ''}">revoke</button>`
+               : ` · <button type="button" class="devid" data-copy="magenta.sh kick ${esc(p.name)} --device ${short}" title="Copy the command that signs out just this device">${short}</button>`)
+            + `<div class="meta">signed in ${esc(ago(v.signed_in_at))} · last used ${esc(ago(v.last_used_at))}</div></div>`;
+          }).join('')
         ).join('');
       return;
     }
@@ -2440,6 +2446,12 @@
   document.getElementById('devicesLink').addEventListener('click', e => { e.preventDefault(); showDevices(); });
   document.getElementById('devicesClose').addEventListener('click', () => { devicesBox.hidden = true; });
   devicesBox.addEventListener('click', async e => {
+    const c = e.target.closest('.devid[data-copy]');
+    if (c) {
+      try { await navigator.clipboard.writeText(c.dataset.copy); c.dataset.copied = ''; setTimeout(() => delete c.dataset.copied, 1500); }
+      catch (err) { prompt('Copy this command:', c.dataset.copy); }
+      return;
+    }
     const w = e.target.closest('[data-devices]');
     if (w) { e.preventDefault(); devicesAll = w.dataset.devices === 'all'; showDevices(); return; }
     const b = e.target.closest('[data-revoke]');
