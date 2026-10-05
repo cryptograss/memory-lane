@@ -101,6 +101,9 @@
   #devicesBox .head { display: flex; justify-content: space-between; margin-bottom: 6px; }
   #devicesBox .dev { border-top: 1px solid var(--line); padding: 7px 0; }
   #devicesBox .dev .meta { color: var(--muted); font-size: 12px; }
+  #devicesBox .devwhich { margin-bottom: 6px; }
+  #devicesBox .devperson { margin-top: 10px; }
+  #devicesBox .tier { font-size: 11px; letter-spacing: .04em; color: var(--muted); }
   #devicesBox .dev.revoked, #devicesBox .dev.timed { opacity: .65; }
   #devicesBox button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel);
                        color: var(--ink); cursor: pointer; }
@@ -538,7 +541,7 @@
   </span>
 </header>
 <div id="devicesBox" hidden role="dialog" aria-label="Your devices">
-  <div class="head"><b>Your devices</b> <button type="button" id="devicesClose">close</button></div>
+  <div class="head"><b id="devicesTitle">Your devices</b> <button type="button" id="devicesClose">close</button></div>
   <div id="devicesList"></div>
 </div>
 <form id="renameBox" hidden>
@@ -2300,15 +2303,34 @@
   }
   // Your devices: when each signed in, last wrote, and times out; revoke any.
   const devicesBox = document.getElementById('devicesBox');
+  // An admin can also see everyone's live devices, either tier. Seeing only:
+  // signing someone else out is magenta.sh kick, signed with a key.
+  let devicesAll = false;
   async function showDevices() {
     userMenu.hidden = true;
     devicesBox.hidden = false;
     const list = document.getElementById('devicesList');
     list.textContent = 'Loading…';
-    const r = await fetch('/api/auth/devices/');
-    if (!r.ok) { list.textContent = 'Could not load your devices.'; return; }
+    document.getElementById('devicesTitle').textContent = devicesAll ? "Everyone's devices" : 'Your devices';
+    const r = await fetch('/api/auth/devices/' + (devicesAll ? '?all=1' : ''));
+    if (!r.ok) { list.textContent = 'Could not load the devices.'; return; }
     const d = await r.json();
-    list.innerHTML = `<div class="meta">A device unused for ${d.idle_days} days times out; bring it back with `
+    const which = (d.admin || devicesAll) ? `<div class="meta devwhich">`
+      + (devicesAll ? `<a href="#" data-devices="mine">mine</a> · <b>everyone</b>` : `<b>mine</b> · <a href="#" data-devices="all">everyone</a>`)
+      + `</div>` : '';
+    if (devicesAll) {
+      const n = d.people.reduce((sum, p) => sum + p.devices.length, 0);
+      list.innerHTML = which + `<div class="meta">${n} device${n === 1 ? '' : 's'} signed in. To sign someone out everywhere: `
+        + `<code>magenta.sh kick &lt;name&gt;</code>.</div>` + d.people.map(p =>
+          `<div class="devperson"><b>${icon(p.name, true)}${esc(p.name)}</b></div>` + p.devices.map(v =>
+            `<div class="dev"><b>${esc(v.label)}</b> · <span class="tier">${v.tier === 'wiki' ? 'WIKI' : 'KEY'}</span>`
+            + (v.this ? ' · this device' : '')
+            + (p.name === d.name ? ` <button type="button" data-revoke="${esc(v.id)}" data-this="${v.this ? 1 : ''}">revoke</button>` : '')
+            + `<div class="meta">signed in ${esc(ago(v.signed_in_at))} · last used ${esc(ago(v.last_used_at))}</div></div>`).join('')
+        ).join('');
+      return;
+    }
+    list.innerHTML = which + `<div class="meta">A device unused for ${d.idle_days} days times out; bring it back with `
       + `<code>magenta.sh renew &lt;its name&gt;</code>.</div>` + d.devices.map(v => {
         const state = v.state === 'live' ? (v.this ? 'this device' : 'signed in')
           : v.state === 'timed out' ? 'timed out' : 'revoked';
@@ -2323,6 +2345,8 @@
   document.getElementById('devicesLink').addEventListener('click', e => { e.preventDefault(); showDevices(); });
   document.getElementById('devicesClose').addEventListener('click', () => { devicesBox.hidden = true; });
   devicesBox.addEventListener('click', async e => {
+    const w = e.target.closest('[data-devices]');
+    if (w) { e.preventDefault(); devicesAll = w.dataset.devices === 'all'; showDevices(); return; }
     const b = e.target.closest('[data-revoke]');
     if (!b) return;
     if (!confirm(b.dataset.this ? 'Sign this device out?' : 'Sign that device out, for good?')) return;

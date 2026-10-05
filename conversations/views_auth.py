@@ -273,13 +273,32 @@ def _device_payload(device, this):
 
 @require_GET
 def api_devices(request):
-    """The signed-in person's devices: when each signed in, last wrote, and times out."""
+    """The signed-in person's devices: when each signed in, last wrote, and times out.
+
+    ?all=1, for an admin (settings.MOOD_ADMINS) on an SSH-key device: everyone's
+    live devices, either tier, by person. Seeing only: signing someone else
+    out stays a signed admin action (magenta.sh kick), never a cookie's.
+    """
     from .models import Device
     device = mood_auth.device_for(request)
     if device is None:
         return JsonResponse({'error': 'sign in to see your devices'}, status=401)
+    if request.GET.get('all'):
+        device, refused = mood_auth.key_device(request, "see everyone's devices")
+        if refused:
+            return refused
+        if device.entity_id not in getattr(settings, 'MOOD_ADMINS', ()):
+            return JsonResponse({'error': "only an admin can see everyone's devices"}, status=403)
+        people = {}
+        for d in Device.objects.filter(revoked_at__isnull=True).order_by('entity_id', '-created_at'):
+            if mood_auth.device_state(d) == 'live':
+                people.setdefault(d.entity_id, []).append(
+                    {**_device_payload(d, d.pk == device.pk), 'tier': d.tier})
+        return JsonResponse({'name': device.entity_id, 'idle_days': mood_auth.DEVICE_IDLE_LIMIT.days,
+                             'people': [{'name': n, 'devices': ds} for n, ds in people.items()]})
     mine = Device.objects.filter(entity=device.entity).order_by('-created_at')
     return JsonResponse({'name': device.entity_id, 'idle_days': mood_auth.DEVICE_IDLE_LIMIT.days,
+                         'admin': device.tier == 'key' and device.entity_id in getattr(settings, 'MOOD_ADMINS', ()),
                          'devices': [_device_payload(d, d.pk == device.pk) for d in mine]})
 
 
