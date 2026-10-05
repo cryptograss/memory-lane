@@ -237,13 +237,12 @@
     border-radius: 8px; background: var(--panel); color: var(--ink); text-decoration: none; font-size: .95em; }
   .turn .body a.yarn:hover { border-color: var(--accent); }
   .turn .body .yarnbox { width: min(480px, 100%); aspect-ratio: 16 / 9; margin: 4px 0; }
-  .turn .body .yarnbox { position: relative; }
-  .turn .body .yarnbox video { width: 100%; height: 100%; border-radius: 8px; background: #000; object-fit: contain; }
-  .turn .body .yarnplay { position: absolute; inset: 0; margin: auto; width: 64px; height: 64px; border: 0; border-radius: 50%;
-    background: rgba(0,0,0,.55); color: #fff; font-size: 26px; line-height: 64px; padding-left: 5px; cursor: pointer; }
-  .turn .body .yarnplay:hover { background: var(--accent); }
-  .turn .body .yarnsrc { position: absolute; top: 6px; right: 8px; font-size: 12px; color: #fff; text-decoration: none;
-    background: rgba(0,0,0,.45); padding: 1px 6px; border-radius: 4px; }
+  .turn .body .yarnbox video { width: 100%; height: 100%; border-radius: 8px; background: #000; }
+  .turn .body a.yarn.thumb { position: relative; padding: 0; overflow: hidden; line-height: 0; max-width: min(480px, 100%); }
+  .turn .body a.yarn.thumb img { display: block; width: 100%; height: auto; }
+  .turn .body a.yarn .yarnplay { position: absolute; inset: 0; margin: auto; width: 56px; height: 56px; border-radius: 50%;
+    background: rgba(0,0,0,.55); color: #fff; font-size: 24px; line-height: 56px; text-align: center; padding-left: 4px; }
+  .turn .body a.yarn.thumb:hover .yarnplay { background: var(--accent); }
   .mention { background: var(--code); border-radius: 4px; padding: 0 4px; font-weight: 600; }
   .mention.me { background: var(--mention); }
   .turn.new { animation: arrive .6s ease-out; }
@@ -867,62 +866,50 @@
 
   // --- Yarn clips ----------------------------------------------------------
   // The server marks a pasted Yarn clip as a card (a.yarn, data-yarn = its id,
-  // checked as a UUID). Coming into view, the card becomes the clip's frame
-  // half a second in, with ▶ over it; pressed, it plays in place. Yarn's own
-  // player refuses to be framed, so this is the clip's video file in the
-  // browser's own player, built from the id alone. Nothing loads from Yarn
-  // until a clip is near the screen. If the file won't play, it's a link.
+  // checked as a UUID). The card shows Yarn's captioned GIF of the clip,
+  // which the browser fetches only as it nears the screen; if it won't load,
+  // the card is plain text again. Pressed, the card becomes the clip's video
+  // file, playing, in the browser's own player (Yarn's player refuses to be
+  // framed). Built from the id alone; a file that won't play becomes a link.
   const YARN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-  let yarnWatch = null;
-  function watchYarn(a) {
-    if (!YARN_ID.test(a.dataset.yarn || '')) return;
-    if (!('IntersectionObserver' in window)) return;  // stays a card; pressing it still plays
-    yarnWatch = yarnWatch || new IntersectionObserver(seen => seen.forEach(s => {
-      if (!s.isIntersecting) return;
-      yarnWatch.unobserve(s.target);
-      yarnPreview(s.target, false);
-    }), { rootMargin: '400px 0px' });
-    yarnWatch.observe(a);
-  }
-  function yarnPreview(a, playNow) {
+  function decorateYarn(a) {
     const id = a.dataset.yarn;
-    if (!a.isConnected || !YARN_ID.test(id || '')) return;
-    const box = document.createElement('div');
-    box.className = 'yarnbox';
-    const video = document.createElement('video');
-    video.preload = 'metadata';
-    video.playsInline = true;
-    video.src = `https://y.yarn.co/${id}.mp4#t=0.5`;  // that frame stands as the preview
-    const play = document.createElement('button');
-    play.type = 'button'; play.className = 'yarnplay'; play.textContent = '▶';
-    play.title = 'Play the clip'; play.setAttribute('aria-label', 'Play the clip');
-    const src = document.createElement('a');
-    src.className = 'yarnsrc'; src.href = a.href; src.target = '_blank'; src.rel = 'noopener';
-    src.textContent = 'Yarn ↗'; src.title = 'Open the clip on Yarn';
-    const start = () => {
-      play.remove();
-      video.controls = true;
-      video.currentTime = 0;
-      video.play().catch(() => {});
-    };
-    play.addEventListener('click', start);
-    video.addEventListener('error', () => {
-      const why = document.createElement('a');
-      why.className = 'yarn'; why.href = a.href; why.target = '_blank'; why.rel = 'noopener';
-      why.textContent = "Couldn't play it here: open the clip on Yarn";
-      box.replaceWith(why);
-    });
-    box.append(video, play, src);
-    a.replaceWith(box);
-    if (playNow) start();
+    if (!YARN_ID.test(id || '') || a.querySelector('img')) return;
+    const label = a.textContent;
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = 'Yarn clip: press to play';
+    img.src = `https://y.yarn.co/${id}_text.gif`;
+    img.addEventListener('error', () => { a.classList.remove('thumb'); a.textContent = label; });
+    const play = document.createElement('span');
+    play.className = 'yarnplay'; play.textContent = '▶'; play.setAttribute('aria-hidden', 'true');
+    a.textContent = '';
+    a.classList.add('thumb');
+    a.title = 'Play the clip (ctrl-click: open it on Yarn)';
+    a.append(img, play);
   }
-  // Pressing a card that hasn't become a preview yet plays it straight away
-  // (a modified click still opens it on Yarn).
   document.addEventListener('click', e => {
     const a = e.target.closest('a.yarn[data-yarn]');
     if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+    const id = a.dataset.yarn;
+    if (!YARN_ID.test(id)) return;
     e.preventDefault();
-    yarnPreview(a, true);
+    const box = document.createElement('div');
+    box.className = 'yarnbox';
+    const video = document.createElement('video');
+    video.src = `https://y.yarn.co/${id}.mp4`;
+    video.controls = true;
+    video.autoplay = true;  // pressed to play: a click lets it start with sound
+    video.playsInline = true;
+    video.addEventListener('error', () => {
+      const why = document.createElement('a');
+      why.className = 'yarn';
+      why.href = a.href; why.target = '_blank'; why.rel = 'noopener';
+      why.textContent = "Couldn't play it here: open the clip on Yarn";
+      box.replaceWith(why);
+    });
+    box.appendChild(video);
+    a.replaceWith(box);
   });
 
   function turnEl(t, isNew) {
@@ -952,7 +939,7 @@
     }
     if (t.attested) el._proof = t.attested;
     markTurn(el, t.mentions || []);
-    el.querySelectorAll('a.yarn[data-yarn]').forEach(watchYarn);
+    el.querySelectorAll('a.yarn[data-yarn]').forEach(decorateYarn);
     return el;
   }
 
