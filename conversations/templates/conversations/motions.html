@@ -204,6 +204,12 @@
   .turn.agent .who .name { color: var(--agent); }
   .turn .who time { font-size: 12px; color: var(--muted); }
   .turn .who .from-phone { font-size: 11px; margin-left: -4px; opacity: .75; }
+  .turn .who .name a { color: inherit; text-decoration: none; }
+  .turn .who .name a:hover { text-decoration: underline; }
+  /* Signed in with PickiPedia rather than an SSH key. */
+  .turn .who .tier { font-size: 10.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; border-radius: 6px;
+                     padding: 0 5px; margin-left: -2px; border: 1px solid var(--line); color: var(--muted); }
+  #userMenu .wikiin { display: inline-block; margin: 6px 0 2px; font-weight: 600; color: var(--accent); }
   .turn .who .how, .work .who .how { font-size: 11px; color: var(--muted); background: var(--code); border-radius: 8px; padding: 0 7px; }
   .turn .body > :first-child { margin-top: 0; }
   .turn .body > :last-child { margin-bottom: 0; }
@@ -578,6 +584,7 @@
   </main>
 </div>
 
+{{ wiki_names|json_script:"wiki-names" }}
 <script>
 (function () {
   const POLL_MS = 4000;
@@ -591,6 +598,14 @@
   // Signed in only if this browser was enrolled with an SSH key; see
   // services/motion_auth.py. Reading never needs it.
   const viewer = "{{ viewer|escapejs }}" || null;
+  // 'key' (SSH key: everything) or 'wiki' (PickiPedia: chat and mention people only).
+  const viewerTier = "{{ viewer_tier|escapejs }}" || null;
+  const keyHolder = !!viewer && viewerTier === 'key';
+  const wikiSignin = {{ wiki_signin|yesno:"true,false" }};
+  // PickiPedia names for the names here (hunter's inventory); shown wherever a person is named.
+  const WIKI_NAMES = JSON.parse(document.getElementById('wiki-names').textContent || '{}');
+  const shown = n => WIKI_NAMES[n] || n;
+  const userPage = n => WIKI_NAMES[n] ? `${"{{ pickipedia_url|escapejs }}" || 'https://pickipedia.xyz'}/wiki/User:${encodeURIComponent(WIKI_NAMES[n].replace(/ /g, '_'))}` : '';
   const auth = document.getElementById('auth');
   const composer = document.getElementById('composer');
   const sayBox = document.getElementById('say');
@@ -663,7 +678,7 @@
     // The one open stays in view: an archived Mood opened shows its fold open.
     const open = archivedOpen || archived.some(m => m.slug === current);
     document.getElementById('moodList').innerHTML =
-      `<div class="label">Moods${viewer ? '<button type="button" id="newMood" title="Start a Mood" aria-label="Start a Mood">＋</button>' : ''}</div>`
+      `<div class="label">Moods${keyHolder ? '<button type="button" id="newMood" title="Start a Mood" aria-label="Start a Mood">＋</button>' : ''}</div>`
       + live.map(item).join('')
       + (archived.length ? `<details id="archived"${open ? ' open' : ''}><summary>Archived (${archived.length})</summary>`
          + archived.map(item).join('') + '</details>' : '');
@@ -684,7 +699,7 @@
   }
   function peopleLine(slug) {
     const { names, active } = aroundIn(slug);
-    return names.map(n => `<span class="nm${active.has(n) ? ' live' : ''}" data-who="${esc(n)}">${esc(n)}</span>`).join(', ');
+    return names.map(n => `<span class="nm${active.has(n) ? ' live' : ''}" data-who="${esc(n)}">${esc(shown(n))}</span>`).join(', ');
   }
   function markLive() {
     nav.querySelectorAll('a.motion').forEach(a => {
@@ -766,7 +781,7 @@
       <div class="meta">${block ? block + ' · ' : ''}${m.message_count} messages in the record ·
         <a href="/motions/${encodeURIComponent(m.slug)}/rules/" title="What magent is told here: this Mood's rules, its settings, what each wake says">rules</a></div>
       <div class="people" id="people">${m.participants.map(n =>
-        `<span class="who ${human[n] ? 'human' : 'agent'}" data-who="${esc(n)}">${icon(n)}${esc(n)}</span>`).join('')}</div>
+        `<span class="who ${human[n] ? 'human' : 'agent'}" data-who="${esc(n)}">${icon(n)}${esc(shown(n))}</span>`).join('')}</div>
     </div><button id="earlier" type="button" hidden>Load earlier</button><div id="turns"></div>`;
   }
 
@@ -839,7 +854,10 @@
     if (forMe.has(t.id)) el.classList.add('for-me');
     const signed = t.attested ? `<button type="button" class="signed" title="Signed with ${esc(t.sender)}'s SSH key: click for the proof">✓ signed</button>` : '';
     const phone = t.mobile ? '<span class="from-phone" title="sent from a phone" aria-label="sent from a phone">📱</span>' : '';
-    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${esc(t.sender)}</span>${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${how(t)}${signed}</div>`
+    const page = userPage(t.sender);
+    const named = page ? `<a href="${esc(page)}" target="_blank" rel="noopener" title="${esc(shown(t.sender))} on PickiPedia">${esc(shown(t.sender))}</a>` : esc(shown(t.sender));
+    const tier = t.tier === 'wiki' ? '<span class="tier wiki" title="Signed in with PickiPedia: chats and mentions people; @agents from here wake nobody">wiki</span>' : '';
+    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${how(t)}${signed}</div>`
       + `<a class="permalink mini" href="#m-${esc(t.id)}" title="${esc(stamp(t.created_at))} · this message's link: click to copy">#</a>`
       + (voiceOn && viewer ? speakButton(t, true) : '') + `<div class="body">${t.html}</div>`;
     if (voiceOn && viewer) el.querySelector('.who').insertAdjacentHTML('beforeend', speakButton(t, false));
@@ -1108,7 +1126,7 @@
   const renameBox = document.getElementById('renameBox');
   function showMotionName(m) {
     headMotion = m;
-    crumb.innerHTML = m ? esc(m.title) + (viewer ? '<button type="button" id="rename" title="Rename this Mood" aria-label="Rename this Mood">✎</button>' : '') : '';
+    crumb.innerHTML = m ? esc(m.title) + (keyHolder ? '<button type="button" id="rename" title="Rename this Mood" aria-label="Rename this Mood">✎</button>' : '') : '';
     const h1 = document.querySelector('.motion-head h1');
     if (h1 && m) h1.textContent = m.title;
     if (m) { baseTitle = m.title + ' · magenta'; setTitle(); }
@@ -1814,7 +1832,7 @@
     return Object.entries(agents).map(([agent, a]) => {
       const l = a.listening, ctx = a.context || {};
       const row = `<span class="agent${l.mode === 'on' ? '' : ' off'}" data-who="${esc(agent)}">${icon(agent, false)}${esc(agent)}: `;
-      if (!viewer) {
+      if (!keyHolder) {
         return row
           + `${esc(describeListening(l))} · ${esc(a.model || 'default model')} · effort ${esc(EFFORT_LABELS[a.effort] || a.effort)} · reads ${esc(kTokens(a.reads || 10000))}`
           + (a.ultracode ? ' · ultracode' : '') + '</span>';
@@ -1880,7 +1898,7 @@
   function renderTyping() {
     document.querySelectorAll('.people .who').forEach(el => el.classList.toggle('typing', typingNow.includes(el.dataset.who)));
     typingEl.classList.toggle('on', typingNow.length > 0);
-    typingEl.innerHTML = typingNow.map(n => `${icon(n, true)}<b>${esc(n)}</b>`).join(', ')
+    typingEl.innerHTML = typingNow.map(n => `${icon(n, true)}<b>${esc(shown(n))}</b>`).join(', ')
       + (typingNow.length ? (typingNow.length > 1 ? ' are typing…' : ' is typing…') : '');
     markLive();
   }
@@ -1889,7 +1907,7 @@
   // and a mention it hasn't answered yet is let go (POST .../interrupt/).
   const stopBtn = document.getElementById('stopBtn');
   async function interrupt() {
-    if (!act || act.doing === 'held' || !viewer || !current) return false;
+    if (!act || act.doing === 'held' || !keyHolder || !current) return false;
     stopBtn.disabled = true;
     try {
       const r = await fetch('/api/motions/' + encodeURIComponent(current) + '/interrupt/', {
@@ -1913,7 +1931,7 @@
     activityEl.classList.toggle('on', !!act);
     activityEl.classList.toggle('held', !!act && act.doing === 'held');
     markLive();
-    stopBtn.hidden = !(viewer && act && act.doing !== 'held');
+    stopBtn.hidden = !(keyHolder && act && act.doing !== 'held');
     if (!act) return;
     const hhmm = iso => new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     activityText.innerHTML = act.doing === 'waking'
@@ -2014,9 +2032,11 @@
       choices = hits.map(([name, char]) => ({ insert: char, html: `<span class="emo">${char}</span>:${esc(name)}:` }));
     } else {
       const here = new Set((motions.find(m => m.slug === current) || {}).participants || []);
-      choices = people.map(p => p.name).filter(n => n.startsWith(at.prefix))
+      // By either name; what's put in is the PickiPedia name, where there is one (the server knows both).
+      const typed = at.prefix.toLowerCase();
+      choices = people.map(p => p.name).filter(n => n.startsWith(typed) || shown(n).toLowerCase().startsWith(typed))
         .sort((a, b) => (here.has(b) - here.has(a)) || a.localeCompare(b)).slice(0, 8)
-        .map(n => ({ insert: n + ' ', html: `${icon(n)}@${esc(n)}<small>${human[n] ? 'person' : 'agent'}${here.has(n) ? '' : ' · not here yet'}</small>` }));
+        .map(n => ({ insert: shown(n) + ' ', html: `${icon(n)}@${esc(shown(n))}<small>${shown(n) !== n ? esc(n) + ' · ' : ''}${human[n] ? 'person' : 'agent'}${here.has(n) ? '' : ' · not here yet'}</small>` }));
     }
     if (!choices.length) return closeSuggest();
     chosen = Math.min(chosen, choices.length - 1);
@@ -2205,8 +2225,10 @@
   const userMenu = document.getElementById('userMenu');
   if (viewer) {
     document.body.classList.add('writer');
-    userBtn.textContent = viewer + ' ▾';
-    auth.innerHTML = `signed in as <b>${esc(viewer)}</b>`;
+    userBtn.textContent = shown(viewer) + ' ▾';
+    auth.innerHTML = keyHolder ? `signed in as <b>${esc(shown(viewer))}</b>`
+      : `signed in as <b>${esc(shown(viewer))}</b> with PickiPedia: you can chat and mention people. To wake agents `
+        + `or start and archive Moods, sign in with your SSH key (<code>magenta.sh login</code>).`;
     document.getElementById('signout').hidden = false;
     document.getElementById('devicesLink').hidden = false;
     document.getElementById('signout').addEventListener('click', async e => {
@@ -2216,7 +2238,8 @@
     });
   } else {
     userBtn.textContent = 'read-only ▾';
-    auth.innerHTML = 'To write, run <code>magenta.sh login</code> on a machine with your SSH key.'
+    auth.innerHTML = (wikiSignin ? '<a class="wikiin" href="/motions/auth/wiki/">Sign in with PickiPedia</a> to chat.<br>' : '')
+      + 'To wake agents and run Moods, run <code>magenta.sh login</code> on a machine with your SSH key.'
       + '<form id="pasteLink"><label for="pasted">Have a sign-in link? Paste it here:</label>'
       + '<span><input id="pasted" type="url" autocomplete="off" placeholder="…/motions/login/…/"><button type="submit">Go</button></span></form>';
     // A home-screen app has no address bar, and keeps its own sign-in apart

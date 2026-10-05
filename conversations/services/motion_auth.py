@@ -190,6 +190,28 @@ def device_for(request):
     return device
 
 
+def key_device(request, doing='do that'):
+    """(device, None) for an SSH-key device; else (None, the response to give):
+    401 signed out, 403 for a PickiPedia (wiki-tier) device. For what makes the
+    machines act -- waking agents, Moods, stops, settings."""
+    from django.http import JsonResponse
+    device = device_for(request)
+    if device is None:
+        return None, JsonResponse({'error': f'sign in to {doing}'}, status=401)
+    if device.tier != 'key':
+        return None, JsonResponse({'error': f'to {doing}, sign in with your SSH key (magenta.sh login): '
+                                            f'a PickiPedia sign-in can chat and mention people'}, status=403)
+    return device, None
+
+
+def enrol_device(entity, label, tier='key'):
+    """(Device, token) for a new device of `entity`'s; the token goes in its cookie."""
+    from conversations.models import Device
+    token = secrets.token_urlsafe(32)
+    device = Device.objects.create(entity=entity, label=label[:100], token_hash=digest(token), tier=tier)
+    return device, token
+
+
 def renew_device(entity, label):
     """Bring `entity`'s device of that name back (a timed-out one included); it or None."""
     from conversations.models import Device

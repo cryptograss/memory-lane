@@ -15,9 +15,10 @@ from django.core.exceptions import ValidationError
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import Message, Motion, ThinkingEntity
-from .services import wiki_feed
+from .services import wiki_auth, wiki_feed
 from .services import motion_auth
 from .services.motion_view import (
+    from_wiki_tier,
     MACHINERY_SENDERS, how_payload, activity, background_tasks, is_wrapper, known_names, mentions_in, motion_payload,
     prose, render_html, step_detail, step_images, step_payload, timeline, turn_payload, turns, wiki_title, wikilinks_in,
 )
@@ -39,6 +40,11 @@ def motions_page(request, slug=None):
         'pickipedia_url': getattr(settings, 'PICKIPEDIA_URL', 'https://pickipedia.xyz').rstrip('/'),
         # Voice memos and reading aloud, if an ElevenLabs key is set (services/voice.py).
         'voice_enabled': bool(getattr(settings, 'ELEVENLABS_API_KEY', '')),
+        # 'key' or 'wiki' (services/wiki_auth.py): a wiki sign-in chats and mentions people only.
+        'viewer_tier': device.tier if device else '',
+        'wiki_signin': wiki_auth.enabled(),
+        # PickiPedia names, shown for the names here (from hunter's inventory).
+        'wiki_names': wiki_auth.names(),
     })
 
 
@@ -575,6 +581,7 @@ def api_mentions(request, name):
         limit = 50
 
     names = known_names()
+    is_agent = not ThinkingEntity.objects.get(name=name).is_biological_human
     messages = (
         Message.objects.filter(motion__isnull=False, is_sidechain=False)
         .exclude(sender_id__in=MACHINERY_SENDERS)
@@ -588,6 +595,8 @@ def api_mentions(request, name):
     for msg in messages.iterator():
         if msg.sender_id not in names:
             continue
+        if is_agent and from_wiki_tier(msg):
+            continue  # signed in with PickiPedia: an @agent is just text, it wakes nobody
         text = prose(msg.content)
         if not text or is_wrapper(text):
             continue

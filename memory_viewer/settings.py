@@ -223,6 +223,13 @@ MOTION_DEPLOY_KEY = os.getenv('MOTION_DEPLOY_KEY', '')
 # (speech to text) and reading messages aloud. Unset: no voice, and the
 # page offers none.
 ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY', '')
+# Signing in with PickiPedia (conversations/services/wiki_auth.py): the
+# client registered at the wiki's Special:OAuthConsumerRegistration. Unset:
+# no wiki sign-in, only SSH keys.
+PICKIPEDIA_OAUTH_CLIENT_ID = os.getenv('PICKIPEDIA_OAUTH_CLIENT_ID', '')
+PICKIPEDIA_OAUTH_CLIENT_SECRET = os.getenv('PICKIPEDIA_OAUTH_CLIENT_SECRET', '')
+# Each person's PickiPedia name, from hunter's inventory: "<name> <WikiName>" lines.
+MOTION_WIKI_NAMES = os.getenv('MOTION_WIKI_NAMES', '')
 
 # Who may kick, ban, scram (AZ5) and lift, with their SSH key
 # (conversations/views_admin.py): "justin,skyler". Unset, nobody can.

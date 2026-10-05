@@ -224,30 +224,50 @@ def mentions_in(text, mentionable):
     canonical (lowercase) name is returned.
     """
     lowered = {n.lower() for n in mentionable}
+    known_as = _aliases(lowered)  # PickiPedia names: @JMyles is @justin
     # Code is literal for the renderer, so it must be literal here too, or
     # the mention count and the highlighted text disagree.
     text = _INLINE_CODE.sub('', _FENCE.sub('', text))
     seen, out = set(), []
     for match in _MENTION.finditer(text):
         name = match.group(1).rstrip('.').lower()
+        name = known_as.get(name, name)
         if name in lowered and name not in seen:
             seen.add(name)
             out.append(name)
     return out
 
 
+def _aliases(lowered):
+    """{lowercased PickiPedia name: name here}, for the names that can be mentioned."""
+    from .wiki_auth import aliases
+    return {wiki: here for wiki, here in aliases().items() if here in lowered}
+
+
 def _mention(mentionable, stash=lambda markup: markup):
     lowered = {n.lower() for n in mentionable}
+    known_as = _aliases(lowered)
 
     def repl(match):
         raw = match.group(1)
         trailing = ''
         if raw.endswith('.'):
             raw, trailing = raw[:-1], '.'
-        if raw.lower() not in lowered:
+        who = known_as.get(raw.lower(), raw.lower())
+        if who not in lowered:
             return match.group(0)
-        return stash(f'<span class="mention" data-who="{raw.lower()}">@{raw}</span>') + trailing
+        return stash(f'<span class="mention" data-who="{who}">@{raw}</span>') + trailing
     return repl
+
+
+def client_parts(msg):
+    """What wrote a web post, from its client_version: {'mobile', 'wiki'} or fewer."""
+    return set((msg.client_version or '').split('/')[1:])
+
+
+def from_wiki_tier(msg):
+    """Posted from a PickiPedia (wiki-tier) device: its @agent is just text."""
+    return 'wiki' in client_parts(msg)
 
 
 def _link_url(match):
@@ -550,7 +570,9 @@ def turn_payload(msg, text, mentionable=()):
     text, directions = split_voices(text)
     return {
         'voiced': bool(directions),
-        'mobile': (msg.client_version or '').endswith('/mobile'),  # posted from a phone or tablet
+        'mobile': 'mobile' in client_parts(msg),  # posted from a phone or tablet
+        # Signed in with PickiPedia, not an SSH key: chat and mentions of people only.
+        'tier': 'wiki' if from_wiki_tier(msg) else None,
         # Several blocks (auditions, a dialogue): one ▶ each, named for its voice.
         'voices': [d['voice'] or 'the house voice' for d in directions] if len(directions) > 1 else [],
         'attested': attestation_of(msg),
@@ -750,7 +772,8 @@ def _activity(motion, now=None):
     newest = recent[0]
 
     if newest.source_file in POSTED:
-        named = [n for n in mentions_in(prose(newest.content), agents)]
+        # A wiki-tier post's @agent is just text: no agent is waking for it.
+        named = [] if from_wiki_tier(newest) else [n for n in mentions_in(prose(newest.content), agents)]
         if not named:
             return None
         # Held only if the runner said so after this post: a newer post is

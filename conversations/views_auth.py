@@ -188,7 +188,7 @@ def api_say(request, slug):
     text, _ = redact(text)
     message = Message.objects.create(
         id=uuid.uuid4(), sender=device.entity, content=text, motion=motion,
-        timestamp=int(time.time() * 1000), source_file=WEB_SOURCE, client_version=web_client(request),
+        timestamp=int(time.time() * 1000), source_file=WEB_SOURCE, client_version=web_client(request, device),
     )
     return JsonResponse({'id': str(message.id)}, status=201)
 
@@ -196,10 +196,16 @@ def api_say(request, slug):
 _MOBILE_AGENT = re.compile(r'Mobi|Android|iPhone|iPad|iPod', re.I)
 
 
-def web_client(request):
-    """What a web post was written on, kept as its client_version: 'magenta-web/mobile'
-    from a phone or tablet (the thread marks those), else 'magenta-web'."""
-    return 'magenta-web/mobile' if _MOBILE_AGENT.search(request.META.get('HTTP_USER_AGENT', '')) else 'magenta-web'
+def web_client(request, device=None):
+    """What a web post was written on, kept as its client_version: 'magenta-web',
+    then '/mobile' from a phone or tablet, and '/wiki' from a PickiPedia sign-in
+    (its @agent wakes nobody). The thread marks both."""
+    parts = ['magenta-web']
+    if _MOBILE_AGENT.search(request.META.get('HTTP_USER_AGENT', '')):
+        parts.append('mobile')
+    if device is not None and device.tier == 'wiki':
+        parts.append('wiki')
+    return '/'.join(parts)
 
 
 @require_POST
@@ -214,9 +220,9 @@ def api_rename(request, slug):
     from .views_admin import locked_response
     if locked_response():
         return locked_response()
-    device = motion_auth.device_for(request)
-    if device is None:
-        return JsonResponse({'error': 'sign in to rename'}, status=401)
+    device, refused = motion_auth.key_device(request, 'rename a Mood')
+    if refused:
+        return refused
     motion = get_object_or_404(Motion, slug=slug)
     try:
         body = json.loads(request.body)
@@ -400,9 +406,9 @@ def api_interrupt(request, slug):
         return JsonResponse({'scram': knobs.scram(), 'interrupt': latest_interrupt(motion, request.GET.get('agent'))})
     if locked_response():
         return locked_response()
-    device = motion_auth.device_for(request)
-    if device is None:
-        return JsonResponse({'error': 'sign in to stop an agent'}, status=401)
+    device, refused = motion_auth.key_device(request, 'stop an agent')
+    if refused:
+        return refused
     try:
         agent = str(json.loads(request.body or b'{}').get('agent') or 'magent').lower()
     except (ValueError, AttributeError):
@@ -431,9 +437,9 @@ def api_new_motion(request):
     from .views_admin import locked_response
     if locked_response():
         return locked_response()
-    device = motion_auth.device_for(request)
-    if device is None:
-        return JsonResponse({'error': 'sign in to start a Mood'}, status=401)
+    device, refused = motion_auth.key_device(request, 'start a Mood')
+    if refused:
+        return refused
     try:
         body = json.loads(request.body or b'{}')
         title = str(body.get('title') or '').replace('\x00', '').strip()
@@ -478,9 +484,9 @@ def _mood_flag(request, slug, key):
     from .views_admin import locked_response
     if locked_response():
         return locked_response()
-    device = motion_auth.device_for(request)
-    if device is None:
-        return JsonResponse({'error': f'sign in to change what is {key}'}, status=401)
+    device, refused = motion_auth.key_device(request, f'change what is {key}')
+    if refused:
+        return refused
     motion = get_object_or_404(Motion, slug=slug)
     try:
         value = json.loads(request.body or b'{}').get(key, True)
@@ -594,4 +600,54 @@ def api_verify(request, slug, message_id):
         return JsonResponse({'error': 'no such attestation in this Mood'}, status=404)
     checked = motion_auth.verify_attestation(message.sender_id, proof, (message.content or {}).get('text', ''))
     return JsonResponse({'signer': message.sender_id, 'checked_at': timezone.now().isoformat(), **checked})
+
+
+# --- signing in with PickiPedia (services/wiki_auth.py) ------------------------
+
+@require_GET
+def wiki_signin(request):
+    """Off to PickiPedia to say who you are; back at wiki_signin_return."""
+    from .services import wiki_auth
+    if not wiki_auth.enabled():
+        return render(request, 'conversations/motion_login.html', {'state': 'no-wiki'}, status=404)
+    state = wiki_auth.new_state()
+    response = HttpResponseRedirect(wiki_auth.authorize_url(_wiki_return(request), state))
+    response.set_cookie(wiki_auth.STATE_COOKIE, state, max_age=wiki_auth.STATE_AGE, httponly=True,
+                        secure=not settings.DEBUG, samesite='Lax')
+    return response
+
+
+@require_GET
+def wiki_signin_return(request):
+    """PickiPedia vouched (or didn't): enrol this browser as a wiki-tier device."""
+    from .services import wiki_auth
+    from .views_admin import locked_response
+    if not wiki_auth.enabled():
+        return render(request, 'conversations/motion_login.html', {'state': 'no-wiki'}, status=404)
+    if locked_response():
+        return locked_response()
+    expected = request.COOKIES.get(wiki_auth.STATE_COOKIE, '')
+    if not expected or request.GET.get('state') != expected or not request.GET.get('code'):
+        why = request.GET.get('error_description') or request.GET.get('error') or 'the sign-in went stale; try again'
+        return render(request, 'conversations/motion_login.html', {'state': 'wiki-refused', 'why': why}, status=400)
+    try:
+        profile = wiki_auth.profile_for(request.GET['code'], _wiki_return(request))
+        entity = wiki_auth.entity_for(profile['username'])
+        from .services import settings as knobs
+        if knobs.banned(entity.name):
+            raise wiki_auth.SignInRefused('signing in is barred for this name; ask an admin')
+    except wiki_auth.SignInRefused as e:
+        return render(request, 'conversations/motion_login.html', {'state': 'wiki-refused', 'why': str(e)}, status=403)
+    agent = request.META.get('HTTP_USER_AGENT', '')
+    where = 'phone' if re.search(r'Mobi|Android|iPhone|iPad', agent, re.I) else 'browser'
+    device, token = motion_auth.enrol_device(entity, f"PickiPedia sign-in ({profile['username']}, {where})", tier='wiki')
+    response = HttpResponseRedirect('/motions/')
+    response.set_cookie(motion_auth.COOKIE, token, max_age=motion_auth.COOKIE_AGE,
+                        httponly=True, secure=not settings.DEBUG, samesite='Lax')
+    response.delete_cookie(wiki_auth.STATE_COOKIE)
+    return response
+
+
+def _wiki_return(request):
+    return request.build_absolute_uri('/motions/auth/wiki/callback')
 

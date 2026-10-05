@@ -71,7 +71,7 @@ class SettingsAPITest(TestCase):
 
     def as_(self, entity):
         return mock.patch('conversations.services.motion_auth.device_for',
-                          return_value=mock.Mock(entity=entity, entity_id=entity.name))
+                          return_value=mock.Mock(entity=entity, entity_id=entity.name, tier='key'))
 
     def post(self, body):
         return self.client.post('/api/settings/', json.dumps(body), content_type='application/json')
