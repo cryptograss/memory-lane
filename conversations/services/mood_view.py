@@ -271,9 +271,11 @@ def mentions_in(text, mentionable):
 
 # --- replies -----------------------------------------------------------------
 # A reply is a post that opens with '↩ #m-<id>' (the composer writes it). It
-# answers that message, and addresses its author as an @mention would:
-# notified, and an agent woken. It lives in the post itself, like any #m-
-# link, so a woken agent reads from the message replied to.
+# answers that message, and addresses its author if that's a person: they're
+# notified as if @mentioned. A reply to an agent's message wakes nobody --
+# only an @mention does -- though the agent may take it up, like any post.
+# It lives in the post itself, like any #m- link, so a woken agent reads from
+# the message replied to.
 _REPLY = re.compile(r'^↩ #m-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})[ \t]*\n?')
 
 
@@ -289,20 +291,23 @@ def replied(message_id):
     target = Message.objects.filter(id=message_id).first()
     if target is None:
         return None
+    from conversations.models import ThinkingEntity
     _, said = reply_to(prose(target.content) or '')
-    return {'id': str(target.id), 'sender': target.sender_id, 'snippet': re.sub(r'\s+', ' ', said).strip()[:140]}
+    return {'id': str(target.id), 'sender': target.sender_id, 'snippet': re.sub(r'\s+', ' ', said).strip()[:140],
+            'is_human': ThinkingEntity.objects.filter(name=target.sender_id, is_biological_human=True).exists()}
 
 
 def addressed_in(text, mentionable, answered=None, by=None):
-    """Who a post addresses: whoever it @mentions and, for a reply, the author of
-    what it answers -- unless that's `by`, its own author: replying to yourself
-    addresses nobody. What notifications, wakes and the PickiPedia-tier check
-    all go by, so they can't disagree. `answered`: replied(), if already looked up."""
+    """Who a post addresses: whoever it @mentions and, for a reply, the person
+    who wrote what it answers -- not an agent (only an @mention wakes one), and
+    not `by`, its own author (replying to yourself addresses nobody). What
+    notifications, wakes and the PickiPedia-tier check all go by, so they can't
+    disagree. `answered`: replied(), if already looked up."""
     out = mentions_in(text, mentionable)
     target, _ = reply_to(text)
     if target:
         answered = answered or replied(target)
-        sender = (answered or {}).get('sender')
+        sender = (answered or {}).get('sender') if (answered or {}).get('is_human') else None
         if sender and sender != by and sender in {n.lower() for n in mentionable} and sender not in out:
             out = [sender] + out
     return out

@@ -42,7 +42,7 @@ class RepliesTest(TestCase):
         self.assertEqual(r.status_code, 201)
         turn = self.turn(r.json()['id'])
         self.assertEqual(turn['reply'], {'id': str(self.sky_said.id), 'sender': 'skyler',
-                                         'snippet': 'Who has the capo tonight?'})
+                                         'snippet': 'Who has the capo tonight?', 'is_human': True})
         self.assertEqual(turn['mentions'], ['skyler'])
         self.assertEqual(turn['html'], '<p>I do!</p>')  # the marker isn't shown; the page draws the quote
 
@@ -52,17 +52,21 @@ class RepliesTest(TestCase):
         self.assertIn(('mention', f'↩ #m-{self.sky_said.id}\nI do!'), [(n['kind'], n['turn']['text']) for n in notices])
         self.assertNotIn('mention', [n['kind'] for n in self.client.get('/api/notices/justin/').json()['notices']])
 
-    def test_a_reply_to_an_agent_wakes_it(self):
-        r = self.reply(self.client_for(self.justin), self.i_said, 'Nine sharp?')
+    def test_a_reply_to_an_agent_wakes_nobody_but_an_at_mention_still_does(self):
+        justin = self.client_for(self.justin)
+        quiet = self.reply(justin, self.i_said, 'Nine sharp?')
+        self.assertEqual(self.turn(quiet.json()['id'])['mentions'], [])
+        self.assertEqual(self.client.get('/api/mentions/magent/').json()['mentions'], [])
+        loud = self.reply(justin, self.i_said, '@magent nine sharp?')
         mentions = self.client.get('/api/mentions/magent/').json()['mentions']
-        self.assertEqual([m['turn']['id'] for m in mentions], [r.json()['id']])
+        self.assertEqual([m['turn']['id'] for m in mentions], [loud.json()['id']])
 
-    def test_a_pickipedia_sign_in_cant_reply_to_an_agent_but_can_to_people(self):
+    def test_a_pickipedia_sign_in_can_reply_to_anyone_but_still_cant_mention_an_agent(self):
         wiki = self.client_for(self.skyler, tier='wiki')
-        refused = self.reply(wiki, self.i_said, 'Nine sharp?')
-        self.assertEqual(refused.status_code, 403)
-        self.assertEqual(refused.json()['agents'], ['magent'])
+        self.assertEqual(self.reply(wiki, self.i_said, 'Nine sharp?').status_code, 201)
         self.assertEqual(self.reply(wiki, self.sky_said, 'answering myself').status_code, 201)
+        refused = self.reply(wiki, self.i_said, '@magent nine sharp?')
+        self.assertEqual((refused.status_code, refused.json()['agents']), (403, ['magent']))
 
     def test_a_reply_to_something_gone_is_just_a_post(self):
         r = self.client_for(self.justin).post('/api/moods/general/say/', json.dumps(

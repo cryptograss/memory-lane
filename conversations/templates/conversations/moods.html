@@ -945,9 +945,8 @@
     const page = userPage(t.sender);
     const named = page ? `<a href="${esc(page)}" target="_blank" rel="noopener" title="${esc(shown(t.sender))} on PickiPedia">${esc(shown(t.sender))}</a>` : esc(shown(t.sender));
     const tier = t.tier === 'wiki' ? '<span class="tier wiki" title="Signed in with PickiPedia: chats and mentions people; @agents from here wake nobody">wiki</span>' : '';
-    // ↩ for anyone signed in -- but a PickiPedia sign-in can't address an agent, a reply included.
-    const canReply = viewer && !(viewerTier === 'wiki' && !t.is_human);
-    const replyBtn = canReply ? `<button type="button" class="replybtn" data-reply="${esc(t.id)}" title="Reply" aria-label="Reply">↩</button>` : '';
+    // ↩ for anyone signed in. A reply addresses a person, never an agent (only an @mention wakes one).
+    const replyBtn = viewer ? `<button type="button" class="replybtn" data-reply="${esc(t.id)}" title="Reply" aria-label="Reply">↩</button>` : '';
     const answers = t.reply ? `<a class="replyto" href="#m-${esc(t.reply.id)}" data-reveal="${esc(t.reply.id)}" title="Go to the message this replies to">`
       + `↩ ${icon(t.reply.sender, human[t.reply.sender] !== false)}<b>${esc(shown(t.reply.sender))}</b> ${esc(t.reply.snippet || '(a message)')}</a>` : '';
     el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${how(t)}${signed}${replyBtn}</div>`
@@ -2490,7 +2489,7 @@
   }
   // --- replies: ↩ on a message, then whatever is sent answers it -----------
   // The post opens with '↩ #m-<id>' (services/mood_view.py): the server shows
-  // what it answers above it, and addresses that message's author.
+  // what it answers above it, and notifies its author if that's a person.
   let replyTo = null;
   const replying = document.getElementById('replying');
   function setReply(id) {

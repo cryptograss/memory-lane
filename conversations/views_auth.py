@@ -185,7 +185,7 @@ def api_say(request, slug):
         # on as text, so nobody believes an agent was asked.
         from .services.mood_view import addressed_in, known_names
         agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
-        addressed = [n for n in addressed_in(text, known_names(), by=device.entity_id) if n in agents]  # a reply to one, too
+        addressed = [n for n in addressed_in(text, known_names(), by=device.entity_id) if n in agents]
         if addressed:
             return JsonResponse({'error': f"signed in with PickiPedia, you can't address agents "
                                           f"(@{', @'.join(addressed)}): take the mention out, or sign in with "
