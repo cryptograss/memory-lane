@@ -254,6 +254,11 @@ def api_deploys(request):
 
 @require_GET
 def api_servers(request):
-    """Every server: whether it answers (checked at most once a minute), and its newest redeploy."""
+    """Every server: whether it answers (checked at most once a minute), and its newest redeploy.
+
+    'page' is the Moods page's code as this server has it now: a page opened
+    before a redeploy sees it differ and offers a reload.
+    """
     from .services import servers
-    return JsonResponse({'servers': servers.status()})
+    from .views_moods import page_version
+    return JsonResponse({'servers': servers.status(), 'page': page_version()})

@@ -83,6 +83,10 @@
   .servers .srv.up { background: #2e9e5b; }
   .servers .srv.down { background: #d13b30; }
   .servers .srv.deploying { background: #d08b00; animation: pulse 1s ease-in-out infinite; }
+  /* This page's code changed on the server since it was opened (api/servers 'page'). */
+  #reloadNudge { border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; background: none;
+                 color: var(--ink); font: inherit; font-size: 12px; cursor: pointer; }
+  #reloadNudge[hidden] { display: none; }
   #serverPop { position: absolute; z-index: 30; top: calc(100% + 6px); right: 120px; min-width: 260px; background: var(--panel);
                border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.14); padding: 8px 12px; font-size: 13px; }
   #serverPop[hidden] { display: none; }
@@ -553,6 +557,7 @@
   <span class="grow"></span>
   <span class="block" id="block" title="Ethereum mainnet's block height"></span>
   <span class="servers" id="servers" title="Servers"></span>
+  <button id="reloadNudge" type="button" title="This page changed since you opened it: reload for the new one" hidden>↻ new version</button>
   <button id="searchBtn" type="button" title="Search what was said (/)">⌕</button>
   <span class="status" id="status" title="connecting…"></span>
   <span class="account">
@@ -1117,6 +1122,13 @@
       prev = null;
       return;
     }
+    if (e.type !== 'deploy') {  // something newer than this page: say so, rather than guess
+      el.className = 'event';
+      el.textContent = `· something this page can't show yet (${e.type || 'unknown'}): reload to see it · ${stamp(e.created_at)}`;
+      container.appendChild(el);
+      prev = null;
+      return;
+    }
     el.className = 'event ' + (e.state || '');
     const commit = e.commit ? ` · <code>${esc(e.commit.slice(0, 8))}</code>` : '';
     const by = e.by ? ` · by ${esc(e.by)}` : '';
@@ -1165,13 +1177,18 @@
   serverPop.id = 'serverPop'; serverPop.hidden = true;
   document.querySelector('header').appendChild(serverPop);
   let serversAt = 0, serverList = [];
+  const PAGE_VERSION = "{{ page_version|escapejs }}";
+  const reloadNudge = document.getElementById('reloadNudge');
+  reloadNudge.addEventListener('click', () => location.reload());
   async function refreshServers(force) {
     if (!force && Date.now() - serversAt < 60000) return;
     serversAt = Date.now();
     try {
       const r = await fetch('/api/servers/');
       if (!r.ok) return;
-      serverList = (await r.json()).servers;
+      const got = await r.json();
+      serverList = got.servers;
+      if (got.page && got.page !== PAGE_VERSION) reloadNudge.hidden = false;
     } catch (e) { return; }
     serversEl.innerHTML = serverList.map(sv => {
       const state = sv.deploying ? 'deploying' : sv.up ? 'up' : 'down';
