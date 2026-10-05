@@ -1,18 +1,18 @@
-"""Agent turns launched for a Motion stream straight into it.
+"""Agent turns launched for a Mood stream straight into it.
 
-The runner (poller/motion_poller.py) launches an agent's turn headless --
+The runner (poller/mood_poller.py) launches an agent's turn headless --
 `claude -p --output-format stream-json` -- and posts each event as it comes
 out of the process. Three things follow from the runner having launched the
 turn itself:
 
-  - The turn's session is claimed for this Motion outright. Nothing is
+  - The turn's session is claimed for this Mood outright. Nothing is
     inferred from transcript files, which is how a woken reply once landed
-    in no Motion at all.
+    in no Mood at all.
   - What the agent says arrives as it says it, not when a watcher next
     reads a file.
   - The turn's end is known exactly: the `result` event. Stream events carry
     no stop_reason, so the result stamps the turn's last message, and the
-    Motion stops showing the agent at work the moment it is done.
+    Mood stops showing the agent at work the moment it is done.
 
 The same turn's transcript still reaches the record through the watcher. Its
 lines carry the same uuids, so they find these rows rather than adding new
@@ -20,7 +20,7 @@ ones, and fill in what only a transcript has (effort, cwd, parents): the
 transcript is metadata now, the stream is the conversation.
 
 A runner proves itself with a key from the vault, bound to the agent it
-speaks for (settings.MOTION_RUNNER_KEYS).
+speaks for (settings.MOOD_RUNNER_KEYS).
 """
 
 import hmac
@@ -33,9 +33,9 @@ from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import ConversationParticipant, Message, Motion, MotionSession
+from .models import ConversationParticipant, Message, Mood, MoodSession
 
-SOURCE = 'motion-runner'  # rows are filed as 'ingest-motion-runner'
+SOURCE = 'mood-runner'  # rows are filed as 'ingest-mood-runner'
 MAX_EVENTS = 500
 TURN_ENDS = {'end_turn', 'refusal', 'stop_sequence', 'max_tokens'}
 
@@ -43,7 +43,7 @@ TURN_ENDS = {'end_turn', 'refusal', 'stop_sequence', 'max_tokens'}
 def runner_agent(request):
     """The agent a valid runner key speaks for, or None."""
     header = request.headers.get('Authorization', '').encode()
-    for agent, key in getattr(settings, 'MOTION_RUNNER_KEYS', {}).items():
+    for agent, key in getattr(settings, 'MOOD_RUNNER_KEYS', {}).items():
         if key and hmac.compare_digest(header, f'Bearer {key}'.encode()):
             return agent
     return None
@@ -77,7 +77,7 @@ def stream_line(event, now_iso):
     return json.dumps(line)
 
 
-def finish_turn(motion, session_id, agent, result):
+def finish_turn(mood, session_id, agent, result):
     """The run is over: stamp the turn's last message, and keep what it cost."""
     stop = result.get('stop_reason') if result.get('stop_reason') in TURN_ENDS else 'end_turn'
     last = (Message.objects.filter(session_id=session_id, sender_id=agent, is_sidechain=False)
@@ -97,7 +97,7 @@ def finish_turn(motion, session_id, agent, result):
     }
     row_id = result.get('uuid') or uuid.uuid5(uuid.NAMESPACE_URL, f'turn-result:{session_id}')
     Message.objects.get_or_create(id=row_id, defaults={
-        'sender': system, 'content': summary, 'motion': motion, 'session_id': session_id,
+        'sender': system, 'content': summary, 'mood': mood, 'session_id': session_id,
         'source_file': f'ingest-{SOURCE}',
     })
 
@@ -105,14 +105,14 @@ def finish_turn(motion, session_id, agent, result):
 @csrf_exempt  # authenticated by the runner's key, not a browser session
 @require_POST
 def api_stream(request, slug):
-    """Events from a turn a runner launched for this Motion.
+    """Events from a turn a runner launched for this Mood.
 
     Body: {"harness": "claude-code", "session_id": "<the turn's session>",
            "events": [<stream-json event>, ...]}
     """
     from .views import import_lines
 
-    if not getattr(settings, 'MOTION_RUNNER_KEYS', {}):
+    if not getattr(settings, 'MOOD_RUNNER_KEYS', {}):
         return JsonResponse({'error': 'no runners are configured'}, status=503)
     agent = runner_agent(request)
     if agent is None:
@@ -120,7 +120,7 @@ def api_stream(request, slug):
     # The Claude Code importer speaks for magent; another agent needs its own.
     if agent != 'magent':
         return JsonResponse({'error': f'no importer speaks for {agent} yet'}, status=400)
-    motion = get_object_or_404(Motion, slug=slug)
+    mood = Mood.by_slug_or_404(slug)
 
     try:
         body = json.loads(request.body)
@@ -134,9 +134,9 @@ def api_stream(request, slug):
     if len(events) > MAX_EVENTS:
         return JsonResponse({'error': f'at most {MAX_EVENTS} events per post'}, status=413)
 
-    # Launched for this Motion: it belongs here, whatever else might be guessed.
-    if MotionSession.motion_for(session_id) != motion:
-        motion.claim(session_id)
+    # Launched for this Mood: it belongs here, whatever else might be guessed.
+    if MoodSession.mood_for(session_id) != mood:
+        mood.claim(session_id)
 
     from django.utils import timezone
     now_iso = timezone.now().isoformat()
@@ -146,7 +146,7 @@ def api_stream(request, slug):
     finished = False
     for event in events:
         if isinstance(event, dict) and event.get('type') == 'result':
-            finish_turn(motion, session_id, agent, event)
+            finish_turn(mood, session_id, agent, event)
             finished = True
 
     return JsonResponse({'imported': imported, 'skipped': skipped, 'errors': errors[:10], 'finished': finished})
@@ -166,12 +166,12 @@ def api_quiet(request, slug):
     import time
     from .services.redaction import redact
 
-    if not getattr(settings, 'MOTION_RUNNER_KEYS', {}):
+    if not getattr(settings, 'MOOD_RUNNER_KEYS', {}):
         return JsonResponse({'error': 'no runners are configured'}, status=503)
     agent = runner_agent(request)
     if agent is None:
         return JsonResponse({'error': 'unauthorized'}, status=401)
-    motion = get_object_or_404(Motion, slug=slug)
+    mood = Mood.by_slug_or_404(slug)
     try:
         body = json.loads(request.body)
         reason = str(body.get('reason', ''))
@@ -186,7 +186,7 @@ def api_quiet(request, slug):
     if sender is None:
         return JsonResponse({'error': f'no entity {agent}'}, status=400)
     message = Message.objects.create(
-        id=uuid.uuid4(), sender=sender, motion=motion, content=f'<silent by="{by}">{reason}</silent>',
+        id=uuid.uuid4(), sender=sender, mood=mood, content=f'<silent by="{by}">{reason}</silent>',
         timestamp=int(time.time() * 1000), source_file=f'ingest-{SOURCE}', stop_reason='end_turn')
     return JsonResponse({'id': str(message.id)}, status=201)
 
@@ -198,18 +198,18 @@ def api_held(request, slug):
 
     Body: {"reason": "a few words", "until": "<iso>" or null}. An empty
     reason lifts the hold. Not in the record: it's how things stand, like
-    typing, and lapses unless renewed (services/motion_view.py, HELD_FOR).
+    typing, and lapses unless renewed (services/mood_view.py, HELD_FOR).
     """
     import re
     from datetime import datetime
-    from .services.motion_view import set_held
+    from .services.mood_view import set_held
 
-    if not getattr(settings, 'MOTION_RUNNER_KEYS', {}):
+    if not getattr(settings, 'MOOD_RUNNER_KEYS', {}):
         return JsonResponse({'error': 'no runners are configured'}, status=503)
     agent = runner_agent(request)
     if agent is None:
         return JsonResponse({'error': 'unauthorized'}, status=401)
-    get_object_or_404(Motion, slug=slug)
+    Mood.by_slug_or_404(slug)
     try:
         body = json.loads(request.body)
         reason = re.sub(r'<[^>]*>|[<>]', '', str(body.get('reason') or '')).strip()[:200]
@@ -235,7 +235,7 @@ def api_deploys(request):
     """
     from .services import servers
 
-    key = getattr(settings, 'MOTION_DEPLOY_KEY', '')
+    key = getattr(settings, 'MOOD_DEPLOY_KEY', '')
     if not key:
         return JsonResponse({'error': 'no deploy key is configured'}, status=503)
     if not hmac.compare_digest(request.headers.get('Authorization', '').encode(), f'Bearer {key}'.encode()):

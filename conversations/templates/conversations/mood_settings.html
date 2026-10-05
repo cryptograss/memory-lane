@@ -50,16 +50,16 @@
 </head>
 <body>
 <header>
-  <a class="brand" href="/motions/">magenta</a><span>settings</span>
+  <a class="brand" href="/moods/">magenta</a><span>settings</span>
   <span class="who" id="who"></span>
 </header>
 <main>
-  <h1>How each agent carries itself in each Motion</h1>
-  <p class="lede">The most specific setting wins: one agent in one Motion, then everyone in that Motion, then the agent
+  <h1>How each agent carries itself in each Mood</h1>
+  <p class="lede">The most specific setting wins: one agent in one Mood, then everyone in that Mood, then the agent
     everywhere, then the defaults. Grey italic values are inherited. Every change is kept below, with who made it.</p>
   <div id="scram"></div>
   <div class="cards" id="cards">Loading…</div>
-  <h3>Every Motion, every agent</h3>
+  <h3>Every Mood, every agent</h3>
   <div class="cards" id="global"></div>
   <h3>History</h3>
   <table class="history"><thead><tr><th>when</th><th>who</th><th>where</th><th>what</th><th>value</th><th>why</th></tr></thead>
@@ -82,11 +82,11 @@
   function when(iso) { return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
 
   // Is this slot set right here (not inherited)?
-  function setHere(motion, agent, key) {
-    return state.set.some(s => s.key === key && (s.motion || null) === motion && (s.agent || null) === agent);
+  function setHere(mood, agent, key) {
+    return state.set.some(s => s.key === key && (s.mood || null) === mood && (s.agent || null) === agent);
   }
-  function everywhere(agent) {  // what (every Motion, agent) resolves to
-    const pick = (m, a, key) => state.set.find(s => s.key === key && (s.motion || null) === m && (s.agent || null) === a);
+  function everywhere(agent) {  // what (every Mood, agent) resolves to
+    const pick = (m, a, key) => state.set.find(s => s.key === key && (s.mood || null) === m && (s.agent || null) === a);
     const out = {};
     for (const key of Object.keys(state.knobs)) {
       const row = pick(null, agent, key) || pick(null, null, key);
@@ -95,9 +95,9 @@
     return out;
   }
 
-  function field(key, value, motion, agent) {
-    const here = setHere(motion, agent, key);
-    const attrs = `data-key="${key}" data-motion="${esc(motion || '')}" data-agent="${esc(agent || '')}" ${viewer ? '' : 'disabled'}`;
+  function field(key, value, mood, agent) {
+    const here = setHere(mood, agent, key);
+    const attrs = `data-key="${key}" data-mood="${esc(mood || '')}" data-agent="${esc(agent || '')}" ${viewer ? '' : 'disabled'}`;
     let input;
     if (key === 'listening') {
       const v = value || { mode: 'on' };
@@ -121,29 +121,29 @@
       + `<span class="${here ? '' : 'inherited'}">${input}<span class="status"></span></span></div>`;
   }
 
-  function card(title, sub, values, motion, agent) {
+  function card(title, sub, values, mood, agent) {
     return `<div class="card"><h2>${esc(title)}</h2><div class="sub">${esc(sub)}</div>`
-      + Object.keys(state.knobs).map(k => field(k, values[k], motion, agent)).join('') + '</div>';
+      + Object.keys(state.knobs).map(k => field(k, values[k], mood, agent)).join('') + '</div>';
   }
 
   function render() {
     document.getElementById('who').innerHTML = viewer ? `changing as <b>${esc(viewer)}</b>`
-      : 'read-only · <a href="/motions/">sign in</a> to change';
+      : 'read-only · <a href="/moods/">sign in</a> to change';
     const scram = state.scram;
     document.getElementById('scram').innerHTML = scram
       ? `<div class="scram"><b>Locked.</b> AZ5 by ${esc(scram.by)} at ${esc(when(scram.at))}: nobody can post or sign in, and every runner is still, until it's lifted.</div>` : '';
     const cards = [];
-    for (const m of state.motions) {
+    for (const m of state.moods) {
       for (const a of state.agents) cards.push(card(m.title, `${a} in #${m.slug}`, state.resolved[m.slug][a], m.slug, a));
     }
     document.getElementById('cards').innerHTML = cards.join('') || 'No Moods yet.';
-    const globals = state.agents.map(a => card(`${a}, everywhere`, `unless a Motion says otherwise`, everywhere(a), null, a));
+    const globals = state.agents.map(a => card(`${a}, everywhere`, `unless a Mood says otherwise`, everywhere(a), null, a));
     globals.push(`<div class="card"><h2>Budget</h2><div class="sub">for all agents together</div>`
       + `<div class="row"><label title="${esc(state.global_knobs.consider_usd_per_day.help)}">$ a day</label>`
-      + `<span><input type="number" min="0" step="0.5" data-key="consider_usd_per_day" data-motion="" data-agent="" value="${esc(state.global.consider_usd_per_day)}" ${viewer ? '' : 'disabled'}><span class="status"></span></span></div></div>`);
+      + `<span><input type="number" min="0" step="0.5" data-key="consider_usd_per_day" data-mood="" data-agent="" value="${esc(state.global.consider_usd_per_day)}" ${viewer ? '' : 'disabled'}><span class="status"></span></span></div></div>`);
     document.getElementById('global').innerHTML = globals.join('');
     document.getElementById('history').innerHTML = state.history.map(h =>
-      `<tr><td>${esc(when(h.at))}</td><td>${esc(h.set_by || '')}</td><td>${esc(h.motion ? '#' + h.motion : 'everywhere')}${h.agent ? ' · ' + esc(h.agent) : ''}</td>`
+      `<tr><td>${esc(when(h.at))}</td><td>${esc(h.set_by || '')}</td><td>${esc(h.mood ? '#' + h.mood : 'everywhere')}${h.agent ? ' · ' + esc(h.agent) : ''}</td>`
       + `<td>${esc(h.key)}</td><td class="value">${esc(JSON.stringify(h.value))}</td><td>${esc(h.note)}</td></tr>`).join('')
       || '<tr><td colspan="6">Nothing changed yet: everything is at its default.</td></tr>';
   }
@@ -163,7 +163,7 @@
     const status = el.closest('span:not(.note)').querySelector('.status');
     const r = await fetch('/api/settings/', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
-      body: JSON.stringify({ key, value, motion: el.dataset.motion || null, agent: el.dataset.agent || null }),
+      body: JSON.stringify({ key, value, mood: el.dataset.mood || null, agent: el.dataset.agent || null }),
     });
     const body = await r.json().catch(() => ({}));
     if (!r.ok) { status.className = 'status err'; status.textContent = body.error || r.status; return; }

@@ -49,7 +49,7 @@ def _refresh_and_close(http):
 def changes(http=None):
     """The wiki's newest changes by people, oldest first."""
     import requests
-    from conversations.services.motion_view import pickipedia_url
+    from conversations.services.mood_view import pickipedia_url
     http = http or requests
     answer = http.get(f'{pickipedia_url()}/api.php', timeout=8, headers={'User-Agent': 'memory-lane (magenta)'},
                       params={'action': 'query', 'list': 'recentchanges', 'rcshow': '!bot', 'rctype': 'edit|new',
@@ -59,15 +59,15 @@ def changes(http=None):
 
 def refresh(http=None):
     """Add what's new on the wiki to each feed Mood; how many lines were added."""
-    from conversations.models import ConversationParticipant, Message, Motion
-    moods = list(Motion.objects.filter(slug__in=feed_moods()))
+    from conversations.models import ConversationParticipant, Message, Mood
+    moods = list(Mood.objects.filter(slug__in=feed_moods()))
     if not moods:
         return 0
     found = changes(http)
     system, _ = ConversationParticipant.objects.get_or_create(name='system', defaults={'participant_type': 'system'})
     added = 0
     for mood in moods:
-        shown = set(Message.objects.filter(motion=mood, source_file=SOURCE).order_by('-created_at')
+        shown = set(Message.objects.filter(mood=mood, source_file=SOURCE).order_by('-created_at')
                     .values_list('content__rcid', flat=True)[:500])
         shown.discard(None)
         # Only what's newer than the newest line here (rcids only grow): an
@@ -77,7 +77,7 @@ def refresh(http=None):
             if not cache.add(f"wiki-feed:{mood.slug}:{change['rcid']}", 1, 7 * 86400):
                 continue  # another worker took it just now
             Message.objects.create(
-                id=uuid.uuid4(), sender=system, motion=mood, source_file=SOURCE, timestamp=int(time.time() * 1000),
+                id=uuid.uuid4(), sender=system, mood=mood, source_file=SOURCE, timestamp=int(time.time() * 1000),
                 content={'type': 'wiki', 'rcid': change['rcid'], 'kind': change.get('type', 'edit'),
                          'title': change.get('title', ''), 'user': change.get('user', ''),
                          'comment': (change.get('comment') or '')[:300], 'revid': change.get('revid'),

@@ -1,4 +1,4 @@
-"""Images in Motions: recognised by their bytes, stored once by hash.
+"""Images in Moods: recognised by their bytes, stored once by hash.
 
 Three ways in, one store (models.Media):
   - a person pastes, drops or attaches one in the composer (views_auth.api_media);
@@ -8,7 +8,7 @@ Three ways in, one store (models.Media):
 
 The importer lifts image blocks out of each line before anything else
 reads it (lift_images), storing the bytes and leaving markdown in their
-place, ![image](/motions/media/<sha256>.<ext>). So the record's text stays
+place, ![image](/moods/media/<sha256>.<ext>). So the record's text stays
 text, an image pasted twice is stored once, and every view already knows
 how to show a link.
 
@@ -33,8 +33,9 @@ _SIGNATURES = (
     (b'GIF87a', 'image/gif'),
     (b'GIF89a', 'image/gif'),
 )
-MEDIA_PATH = re.compile(r'/motions/media/([0-9a-f]{64})\.(png|jpg|gif|webp)')
-AUDIO_PATH = re.compile(r'/motions/media/([0-9a-f]{64})\.(webm|ogg|m4a|mp3|wav)')
+# /motions/media/ in what was stored before Moods were Moods (October 2026): still found, still served.
+MEDIA_PATH = re.compile(r'/(?:moods|motions)/media/([0-9a-f]{64})\.(png|jpg|gif|webp)')
+AUDIO_PATH = re.compile(r'/(?:moods|motions)/media/([0-9a-f]{64})\.(webm|ogg|m4a|mp3|wav)')
 
 
 def sniff_audio(data):

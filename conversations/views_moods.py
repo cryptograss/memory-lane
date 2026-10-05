@@ -1,4 +1,4 @@
-"""Read-only public view of Motions.
+"""Read-only public view of Moods.
 
 Served by memory-lane because memory-lane is where the record lives. This
 is a projection: nothing here writes, and nothing a reader does can change
@@ -14,23 +14,26 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.core.exceptions import ValidationError
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import Message, Motion, ThinkingEntity
+from .models import Message, Mood, ThinkingEntity, mood_slug
 from .services import wiki_auth, wiki_feed
-from .services import motion_auth
-from .services.motion_view import (
+from .services import mood_auth
+from .services.mood_view import (
     from_wiki_tier,
-    MACHINERY_SENDERS, how_payload, activity, background_tasks, is_wrapper, known_names, mentions_in, motion_payload,
+    MACHINERY_SENDERS, how_payload, activity, background_tasks, is_wrapper, known_names, mentions_in, mood_payload,
     prose, render_html, step_detail, step_images, step_payload, timeline, turn_payload, turns, wiki_title, wikilinks_in,
 )
 
 
 @ensure_csrf_cookie
 @require_GET
-def motions_page(request, slug=None):
-    if slug is not None and not Motion.objects.filter(slug=slug).exists():
-        raise Http404
-    device = motion_auth.device_for(request)
-    return render(request, 'conversations/motions.html', {
+def moods_page(request, slug=None):
+    if slug is not None:
+        found = Mood.by_slug_or_404(slug)
+        if found.slug != slug:  # renamed since: its page now has the new name
+            from django.shortcuts import redirect
+            return redirect(f'/moods/{found.slug}/', permanent=False)
+    device = mood_auth.device_for(request)
+    return render(request, 'conversations/moods.html', {
         'initial_slug': slug or '',
         # A preview can pretend to be someone, to show the composer; its
         # database is read-only, so nothing it sends is kept.
@@ -49,31 +52,31 @@ def motions_page(request, slug=None):
 
 
 @require_GET
-def api_motions(request):
-    """Every Motion, most recently active first; archived ones flagged (the page lists them apart)."""
+def api_moods(request):
+    """Every Mood, most recently active first; archived ones flagged (the page lists them apart)."""
     from .services import settings as knobs
     archived, pinned = knobs.archived_slugs(), knobs.mood_flagged('pinned')
-    motions = list(Motion.objects.all())
-    payloads = [{**motion_payload(m), 'archived': m.slug in archived, 'pinned': m.slug in pinned} for m in motions]
+    moods = list(Mood.objects.all())
+    payloads = [{**mood_payload(m), 'archived': m.slug in archived, 'pinned': m.slug in pinned} for m in moods]
     # A Mood nobody has spoken in yet ranks by when it was started: a new one first.
-    started = {m.slug: m.created_at.isoformat() for m in motions}
+    started = {m.slug: m.created_at.isoformat() for m in moods}
     payloads.sort(key=lambda p: p['last_at'] or started[p['slug']], reverse=True)
     payloads.sort(key=lambda p: not p['pinned'])  # pinned first, each part still newest first
     people = ThinkingEntity.objects.order_by('name')
-    return JsonResponse({'motions': payloads, 'people': [
+    return JsonResponse({'moods': payloads, 'people': [
         {'name': p.name, 'is_human': p.is_biological_human} for p in people]})
 
 
 @require_GET
-def api_motion_turns(request, slug):
-    """The readable conversation in one Motion.
+def api_mood_turns(request, slug):
+    """The readable conversation in one Mood.
 
     Pass ?after=<message id> to get only what arrived since -- the polling
     contract. An unknown `after` is treated as "everything", so a client
     that has fallen out of sync recovers rather than stalls.
     """
-    motion = get_object_or_404(Motion, slug=slug)
-    if motion.slug in wiki_feed.feed_moods():
+    mood = Mood.by_slug_or_404(slug)
+    if mood.slug in wiki_feed.feed_moods():
         wiki_feed.nudge()  # what's new on PickiPedia, as lines here (at most once a minute, in the background)
 
     after = before = None
@@ -84,10 +87,10 @@ def api_motion_turns(request, slug):
     # ?from=<id>: that message and everything since -- what a runner reads
     # when a post links a message to read from.
     start = _message_or_none(request.GET['from']) if request.GET.get('from') else None
-    if request.GET.get('from') and (start is None or start.motion_id != motion.slug):
+    if request.GET.get('from') and (start is None or start.mood_id != mood.id):
         # Never this Mood read from another's moment: the message must be here.
         return JsonResponse({'error': 'no such message in this Mood',
-                             'motion': start.motion_id if start else None}, status=404)
+                             'mood': start.mood_slug if start else None}, status=404)
     # A first load, or a page back, is the newest PAGE items; a poll is
     # everything since.
     limit = None if after is not None or start is not None else PAGE
@@ -96,7 +99,7 @@ def api_motion_turns(request, slug):
 
     names = known_names()
     turns_out, step_msgs, quiet_out, thoughts_out, compactions_out, events_out = [], [], [], [], [], []
-    for kind, msg, text in timeline(motion, after=after, before=before, limit=limit, start=start):
+    for kind, msg, text in timeline(mood, after=after, before=before, limit=limit, start=start):
         if kind == 'turn':
             turns_out.append(turn_payload(msg, text, names))
         elif kind == 'thought':
@@ -118,9 +121,9 @@ def api_motion_turns(request, slug):
     steps_out = [{**step_payload(m), 'images': images.get(str(m.id), [])} for m in step_msgs]
     first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out + compactions_out
                  + events_out], default=None)
-    agents = agents_in(motion)
+    agents = agents_in(mood)
     return JsonResponse({
-        'motion': motion_payload(motion),
+        'mood': mood_payload(mood),
         # Prose only: the poller reads an agent turn here as an answer, so a
         # tool call must never appear in this list.
         'turns': turns_out,
@@ -133,35 +136,35 @@ def api_motion_turns(request, slug):
         'compactions': compactions_out,
         # Things that happened around the conversation: a server redeployed.
         'events': events_out,
-        'has_earlier': bool(limit) and first is not None and motion.messages.filter(
+        'has_earlier': bool(limit) and first is not None and mood.messages.filter(
             is_sidechain=False, created_at__lt=first).exists(),
-        'activity': activity(motion),
+        'activity': activity(mood),
         # What an agent started in the background here and is still running.
-        'tasks': background_tasks(motion),
+        'tasks': background_tasks(mood),
         # Whether each agent is listening here (the hush menu in the head).
         'listening': {name: a['listening'] for name, a in agents.items()},
         # Each agent here: listening, model, effort, and how full its context is.
         'agents': agents,
         'scram': settings_scram(),
-        'typing': typing_in(motion.slug),
+        'typing': typing_in(mood.slug),
     })
 
 
 PAGE = 400
 
 
-def agents_in(motion):
-    """name -> {listening, model, effort, context} for each agent, in this Motion."""
+def agents_in(mood):
+    """name -> {listening, model, effort, context} for each agent, in this Mood."""
     from .services import settings as knobs
-    from .services.motion_view import context_in
+    from .services.mood_view import context_in
     agents = ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True)
     out = {}
     for name in agents:
-        resolved = knobs.resolve(motion.slug, name)
+        resolved = knobs.resolve(mood.slug, name)
         out[name] = {'listening': resolved['listening'], 'model': resolved['model'],
                      'effort': resolved['mention_effort'], 'ultracode': bool(resolved['ultracode']),
                      'reads': resolved['catch_up_tokens'],
-                     'context': context_in(motion, name)}
+                     'context': context_in(mood, name)}
     return out
 
 
@@ -195,11 +198,11 @@ def media_file(request, sha256, ext):
 
 @require_GET
 def api_pulse(request):
-    """Every Motion at a glance, for a runner looking every few seconds.
+    """Every Mood at a glance, for a runner looking every few seconds.
 
-    Per Motion: its newest message, newest web post and newest word from a
+    Per Mood: its newest message, newest web post and newest word from a
     person; who is typing; what an agent is doing. All of it is readable
-    elsewhere already -- this only saves asking Motion by Motion.
+    elsewhere already -- this only saves asking Mood by Mood.
     """
     from django.utils import timezone
 
@@ -215,21 +218,23 @@ def api_pulse(request):
     rows = list(Setting.objects.exclude(key__in=knobs.MODERATION_KEYS))
     archived = knobs.archived_slugs()
     wiki_feed.nudge()  # asked every second by the runner: the wiki feed's clock (at most once a minute)
-    motions = []
-    for motion in Motion.objects.all():
-        said = motion.messages.filter(is_sidechain=False).exclude(sender_id__in=MACHINERY_SENDERS)
+    moods = []
+    for mood in Mood.objects.all():
+        said = mood.messages.filter(is_sidechain=False).exclude(sender_id__in=MACHINERY_SENDERS)
         fields = ('id', 'created_at', 'sender_id')
-        motions.append({
-            'slug': motion.slug,
+        moods.append({
+            'slug': mood.slug,
             'newest': brief(said.order_by('-created_at').values(*fields).first()),
-            'last_web_post': brief(said.filter(source_file='motion-web').order_by('-created_at').values(*fields).first()),
+            'last_web_post': brief(said.filter(source_file='mood-web').order_by('-created_at').values(*fields).first()),
             'last_human': brief(said.filter(sender_id__in=humans).order_by('-created_at').values(*fields).first()),
-            'typing': typing_in(motion.slug),
-            'activity': activity(motion),
+            'typing': typing_in(mood.slug),
+            'activity': activity(mood),
             # How this agent is to carry itself here (services/settings.py).
-            'settings': knobs.resolve(motion.slug, agent, rows=rows),
+            'settings': knobs.resolve(mood.slug, agent, rows=rows),
             # Out of the list: no unprompted looks there (mentions still answered).
-            'archived': motion.slug in archived,
+            'archived': mood.slug in archived,
+            # Names it went by before a rename: a runner told the old one still knows it.
+            'aliases': sorted(mood.aliases.values_list('slug', flat=True)),
         })
     return JsonResponse({
         'now': timezone.now().isoformat(),
@@ -237,21 +242,21 @@ def api_pulse(request):
         # An admin's emergency stop: while set, a runner wakes nothing.
         'scram': knobs.scram(),
         'budget': {'consider_usd_per_day': knobs.global_value('consider_usd_per_day')},  # the runner's own
-        'motions': motions,
+        'moods': moods,
     })
 
 
 @require_GET
-def api_motion_step(request, slug, step_id):
+def api_mood_step(request, slug, step_id):
     """One tool call in full, for a step someone opened."""
     msg = _message_or_none(step_id)
-    if msg is None or msg.motion_id != slug or not hasattr(msg, 'tooluse'):
-        raise Http404('no such step in this Motion')
+    if msg is None or msg.mood_slug != Mood.by_slug_or_404(slug).slug or not hasattr(msg, 'tooluse'):
+        raise Http404('no such step in this Mood')
     return JsonResponse(step_detail(msg))
 
 
 # --- who is typing ---------------------------------------------------------
-# Ephemeral, so not in the record: a shared cache entry per Motion holding
+# Ephemeral, so not in the record: a shared cache entry per Mood holding
 # name -> when they last typed. Every gunicorn worker shares the cache.
 TYPING_FOR = 8  # seconds a keystroke counts as "typing"
 
@@ -269,17 +274,17 @@ def typing_in(slug):
 
 @require_POST
 def api_typing(request, slug):
-    """Say this device's person is (or stopped) typing in a Motion."""
+    """Say this device's person is (or stopped) typing in a Mood."""
     from django.core.cache import cache
     import json
     import time
     from .views_admin import locked_response
     if locked_response():
         return locked_response()
-    device = motion_auth.device_for(request)
+    device = mood_auth.device_for(request)
     if device is None:
         return JsonResponse({'error': 'sign in to write'}, status=401)
-    get_object_or_404(Motion, slug=slug)
+    Mood.by_slug_or_404(slug)
     try:
         typing = bool(json.loads(request.body or b'{}').get('typing', True))
     except (ValueError, AttributeError):
@@ -295,38 +300,38 @@ def api_typing(request, slug):
 
 
 @require_GET
-def api_motion_sessions(request, slug):
-    """Runtime sessions in a Motion, most recently active first.
+def api_mood_sessions(request, slug):
+    """Runtime sessions in a Mood, most recently active first.
 
     ?sender=<name> keeps only sessions in which that entity wrote. This is
     how the poller finds a session to resume when it wakes an agent: the
-    Motion is durable, and whichever process last spoke for the agent is
+    Mood is durable, and whichever process last spoke for the agent is
     the one to continue. A session id is a local handle, not a credential.
     """
-    motion = get_object_or_404(Motion, slug=slug)
-    messages = Message.objects.filter(motion=motion, session_id__isnull=False)
+    mood = Mood.by_slug_or_404(slug)
+    messages = Message.objects.filter(mood=mood, session_id__isnull=False)
     sender = request.GET.get('sender')
     if sender:
         messages = messages.filter(sender_id=sender.lower())
     sessions = (messages.values('session_id')
                 .annotate(last_at=Max('created_at'))
                 .order_by('-last_at'))
-    return JsonResponse({'motion': motion.slug, 'sessions': [
+    return JsonResponse({'mood': mood.slug, 'sessions': [
         {'session_id': str(s['session_id']), 'last_at': s['last_at'].isoformat()} for s in sessions
     ]})
 
 
 @require_GET
 def api_wikilinks(request):
-    """Turns in Motions that link to PickiPedia pages with [[...]], oldest first.
+    """Turns in Moods that link to PickiPedia pages with [[...]], oldest first.
 
-    This is what PickiPedia reads to reach Motions without storing them.
+    This is what PickiPedia reads to reach Moods without storing them.
     ?page=<title> keeps one page's backlinks. ?since=<iso> starts after a
     moment; pass back `next_since` to page forward. A message's links are
     never split across pages. The cursor is ingest time (created_at), so a
     consumer should overlap its cursor by a few minutes and dedupe on
-    (turn, page), and resync fully now and then: motion_assign attaches
-    old messages to a Motion without changing their created_at.
+    (turn, page), and resync fully now and then: mood_assign attaches
+    old messages to a Mood without changing their created_at.
     Titles are normalised as MediaWiki does.
     """
     page = request.GET.get('page')
@@ -342,7 +347,7 @@ def api_wikilinks(request):
 
     names = known_names()
     messages = (
-        Message.objects.filter(motion__isnull=False, is_sidechain=False)
+        Message.objects.filter(mood__isnull=False, is_sidechain=False)
         .exclude(sender_id__in=MACHINERY_SENDERS)
         .order_by('created_at')
     )
@@ -362,7 +367,7 @@ def api_wikilinks(request):
         for title in wikilinks_in(text):
             if page and title != page:
                 continue
-            links.append({'page': title, 'motion': msg.motion_id, 'turn': str(msg.id),
+            links.append({'page': title, 'mood': msg.mood_slug, 'turn': str(msg.id),
                           'sender': msg.sender_id, 'created_at': msg.created_at.isoformat(),
                           'eth_blockheight': msg.eth_blockheight})
     else:
@@ -387,11 +392,11 @@ def snippet(text, q, width=160):
 
 @require_GET
 def api_search(request):
-    """What was said, in one Motion (?motion=<slug>) or all of them, that contains ?q=.
+    """What was said, in one Mood (?mood=<slug>) or all of them, that contains ?q=.
 
     Newest first, at most SEARCH_MAX. Only what people and agents said --
     not tool calls, their results or the harness's wrappers. A plain
-    case-insensitive match on the stored text: about 0.15 s in one Motion,
+    case-insensitive match on the stored text: about 0.15 s in one Mood,
     1.2 s across all of them, at 25k messages.
     """
     from django.db.models import TextField
@@ -402,13 +407,13 @@ def api_search(request):
         return JsonResponse({'error': 'two characters at least'}, status=400)
     q = q[:200]
     names = known_names()
-    rows = (Message.objects.filter(motion__isnull=False, is_sidechain=False)
+    rows = (Message.objects.filter(mood__isnull=False, is_sidechain=False)
             .exclude(sender_id__in=MACHINERY_SENDERS)
             .annotate(text=Cast('content', TextField())).filter(text__icontains=q))
-    motion = request.GET.get('motion')
-    if motion:
-        rows = rows.filter(motion_id=motion)
-    titles = dict(Motion.objects.values_list('slug', 'title'))
+    mood = request.GET.get('mood')
+    if mood:
+        rows = rows.filter(mood__slug=mood)
+    titles = dict(Mood.objects.values_list('slug', 'title'))
     hits = []
     for msg in rows.select_related('sender').order_by('-created_at')[:SEARCH_SCAN]:
         if msg.sender_id not in names:
@@ -416,11 +421,11 @@ def api_search(request):
         text = prose(msg.content)
         if not text or is_wrapper(text) or q.lower() not in text.lower():
             continue
-        hits.append({'id': str(msg.id), 'motion': msg.motion_id, 'title': titles.get(msg.motion_id, msg.motion_id),
+        hits.append({'id': str(msg.id), 'mood': msg.mood_slug, 'title': titles.get(msg.mood_slug, msg.mood_slug),
                      'sender': msg.sender_id, 'created_at': msg.created_at.isoformat(), 'text': snippet(text, q)})
         if len(hits) >= SEARCH_MAX:
             break
-    return JsonResponse({'q': q, 'motion': motion, 'hits': hits})
+    return JsonResponse({'q': q, 'mood': mood, 'hits': hits})
 
 
 RECENT_MAX = 30
@@ -429,8 +434,8 @@ RECENT_SCAN = 800  # rows read for what was said, newest first
 
 @require_GET
 def api_recent(request):
-    """What's been happening across every Motion, newest first: what people said,
-    agents' finished answers, renames, settings changed, Motions opened.
+    """What's been happening across every Mood, newest first: what people said,
+    agents' finished answers, renames, settings changed, Moods opened.
 
     ?since=<iso> (default: a day ago), ?limit= (at most RECENT_MAX). Read
     from the record; agents' progress lines between tool calls are left
@@ -439,7 +444,7 @@ def api_recent(request):
     from datetime import timedelta
     from django.utils import timezone
     from .models import Setting
-    from .services.motion_view import quiet_reason
+    from .services.mood_view import quiet_reason
 
     since = parse_datetime(request.GET.get('since') or '') or timezone.now() - timedelta(days=1)
     try:
@@ -448,10 +453,10 @@ def api_recent(request):
         limit = RECENT_MAX
     names = known_names()
     agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
-    titles = dict(Motion.objects.values_list('slug', 'title'))
+    titles = dict(Mood.objects.values_list('slug', 'title'))
     events = []
 
-    said = (Message.objects.filter(motion__isnull=False, is_sidechain=False, created_at__gt=since)
+    said = (Message.objects.filter(mood__isnull=False, is_sidechain=False, created_at__gt=since)
             .exclude(sender_id__in=MACHINERY_SENDERS).order_by('-created_at')[:RECENT_SCAN])
     for msg in said:
         if msg.sender_id not in names:
@@ -462,20 +467,20 @@ def api_recent(request):
         if msg.sender_id in agents and msg.stop_reason != 'end_turn':
             continue
         events.append({'kind': 'answered' if msg.sender_id in agents else 'said', 'at': msg.created_at.isoformat(),
-                       'motion': msg.motion_id, 'who': msg.sender_id, 'id': str(msg.id), 'text': text[:140]})
+                       'mood': msg.mood_slug, 'who': msg.sender_id, 'id': str(msg.id), 'text': text[:140]})
         if len(events) >= limit:
             break
 
-    for msg in (Message.objects.filter(source_file='motion-rename', created_at__gt=since)
+    for msg in (Message.objects.filter(source_file='mood-rename', created_at__gt=since)
                 .order_by('-created_at')[:limit]):
         content = msg.content if isinstance(msg.content, dict) else {}
-        events.append({'kind': 'renamed', 'at': msg.created_at.isoformat(), 'motion': msg.motion_id,
+        events.append({'kind': 'renamed', 'at': msg.created_at.isoformat(), 'mood': msg.mood_slug,
                        'who': content.get('by', ''), 'text': f"{(content.get('from') or {}).get('title', '')} → "
                                                              f"{(content.get('to') or {}).get('title', '')}"})
 
     for row in Setting.objects.filter(created_at__gt=since).order_by('-created_at')[:limit]:
         value = row.value if not isinstance(row.value, dict) else (row.value.get('mode') or row.value)
-        events.append({'kind': 'set', 'at': row.created_at.isoformat(), 'motion': row.motion_id,
+        events.append({'kind': 'set', 'at': row.created_at.isoformat(), 'mood': mood_slug(row.mood_id),
                        'who': row.set_by_id or '', 'text': f"{row.key} for {row.agent_id or 'every agent'}: {value}"[:140]})
 
     told = set()  # a redeploy is announced in several Moods; list it once
@@ -487,16 +492,16 @@ def api_recent(request):
             continue
         told.add(key)
         verb = {'started': 'redeploy started', 'finished': 'redeployed', 'failed': 'redeploy failed'}.get(c.get('state'), '')
-        events.append({'kind': 'deploy', 'at': row['created_at'].isoformat(), 'motion': None, 'who': c.get('by', ''),
+        events.append({'kind': 'deploy', 'at': row['created_at'].isoformat(), 'mood': None, 'who': c.get('by', ''),
                        'text': f"{c.get('server')} {verb}" + (f" · {c['commit'][:8]}" if c.get('commit') else '')})
 
-    for motion in Motion.objects.filter(created_at__gt=since).order_by('-created_at')[:limit]:
-        events.append({'kind': 'opened', 'at': motion.created_at.isoformat(), 'motion': motion.slug, 'who': '',
-                       'text': motion.title or motion.slug})
+    for mood in Mood.objects.filter(created_at__gt=since).order_by('-created_at')[:limit]:
+        events.append({'kind': 'opened', 'at': mood.created_at.isoformat(), 'mood': mood.slug, 'who': '',
+                       'text': mood.title or mood.slug})
 
     events.sort(key=lambda e: e['at'], reverse=True)
     for e in events:
-        e['title'] = titles.get(e['motion'], e['motion'] or 'every Motion')
+        e['title'] = titles.get(e['mood'], e['mood'] or 'every Mood')
     return JsonResponse({'events': events[:limit]})
 
 
@@ -505,8 +510,8 @@ NOTICES_MAX = 100
 
 def answered_by(msg, humans):
     """Who an agent's finished turn was answering: the person whose words were
-    the last a person said in that Motion before it, or None."""
-    earlier = (Message.objects.filter(motion_id=msg.motion_id, is_sidechain=False, created_at__lt=msg.created_at,
+    the last a person said in that Mood before it, or None."""
+    earlier = (Message.objects.filter(mood_id=msg.mood_id, is_sidechain=False, created_at__lt=msg.created_at,
                                       sender_id__in=humans)
                .order_by('-created_at').only('content', 'sender_id')[:5])
     for m in earlier:  # the latest that is someone's words, not a harness wrapper
@@ -518,10 +523,10 @@ def answered_by(msg, humans):
 
 @require_GET
 def api_notices(request, name):
-    """What `name` would want to hear about, across every Motion, since a moment.
+    """What `name` would want to hear about, across every Mood, since a moment.
 
     Two kinds, newest first: a 'mention' of them by someone else, and an
-    'answer' -- an agent's turn that ended (end_turn) in a Motion where they
+    'answer' -- an agent's turn that ended (end_turn) in a Mood where they
     were the last person to speak before it. That second kind is how someone
     who asked something and went elsewhere learns the agent is done, without
     the agent having to @mention them back.
@@ -530,7 +535,7 @@ def api_notices(request, name):
     """
     from datetime import timedelta
     from django.utils import timezone
-    from .services.motion_view import quiet_reason
+    from .services.mood_view import quiet_reason
 
     name = name.lower()
     if not ThinkingEntity.objects.filter(name=name).exists():
@@ -539,7 +544,7 @@ def api_notices(request, name):
     names = known_names()
     agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
     humans = set(ThinkingEntity.objects.filter(is_biological_human=True).values_list('name', flat=True))
-    messages = (Message.objects.filter(motion__isnull=False, is_sidechain=False, created_at__gt=since)
+    messages = (Message.objects.filter(mood__isnull=False, is_sidechain=False, created_at__gt=since)
                 .exclude(sender_id__in=MACHINERY_SENDERS).select_related('sender').order_by('-created_at'))
     found = []
     for msg in messages.iterator():
@@ -549,10 +554,10 @@ def api_notices(request, name):
         if not text or is_wrapper(text):
             continue
         if name in mentions_in(text, names):
-            found.append({'kind': 'mention', 'motion': msg.motion_id, 'turn': turn_payload(msg, text, names)})
+            found.append({'kind': 'mention', 'mood': msg.mood_slug, 'turn': turn_payload(msg, text, names)})
         elif (msg.sender_id in agents and msg.stop_reason == 'end_turn' and quiet_reason(text) is None
               and answered_by(msg, humans) == name):
-            found.append({'kind': 'answer', 'motion': msg.motion_id, 'turn': turn_payload(msg, text, names)})
+            found.append({'kind': 'answer', 'mood': msg.mood_slug, 'turn': turn_payload(msg, text, names)})
         if len(found) >= NOTICES_MAX:
             break
     return JsonResponse({'name': name, 'notices': found})
@@ -560,7 +565,7 @@ def api_notices(request, name):
 
 @require_GET
 def api_mentions(request, name):
-    """Recent turns, across all Motions, that mention one thinking entity.
+    """Recent turns, across all Moods, that mention one thinking entity.
 
     Newest first. ?since=<iso> narrows to what arrived after a moment;
     ?limit= caps the result (default 50, max 200). Mentions are derived
@@ -583,7 +588,7 @@ def api_mentions(request, name):
     names = known_names()
     is_agent = not ThinkingEntity.objects.get(name=name).is_biological_human
     messages = (
-        Message.objects.filter(motion__isnull=False, is_sidechain=False)
+        Message.objects.filter(mood__isnull=False, is_sidechain=False)
         .exclude(sender_id__in=MACHINERY_SENDERS)
         .select_related('sender')
         .order_by('-created_at')
@@ -601,7 +606,7 @@ def api_mentions(request, name):
         if not text or is_wrapper(text):
             continue
         if name in mentions_in(text, names):
-            found.append({'motion': msg.motion_id, 'turn': turn_payload(msg, text, names)})
+            found.append({'mood': msg.mood_slug, 'turn': turn_payload(msg, text, names)})
             if len(found) >= limit:
                 break
 
@@ -619,13 +624,13 @@ def app_manifest(request):
         'name': 'magenta',
         'short_name': 'magenta',
         'description': 'Moods: where cryptograss talks, people and agents together.',
-        'id': '/motions/',
-        'start_url': '/motions/',
-        'scope': '/motions/',
+        'id': '/moods/',
+        'start_url': '/moods/',
+        'scope': '/moods/',
         'display': 'standalone',
         'background_color': '#fbfaf7',
         'theme_color': '#b8106b',
-        'icons': [{'src': f'/motions/icon-{size}.png', 'sizes': f'{size}x{size}', 'type': 'image/png',
+        'icons': [{'src': f'/moods/icon-{size}.png', 'sizes': f'{size}x{size}', 'type': 'image/png',
                    'purpose': 'any maskable'} for size in (192, 512)],
     }, content_type='application/manifest+json')
 
@@ -653,9 +658,9 @@ self.addEventListener('fetch', e => {
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const { slug, id } = e.notification.data || {};
-  const url = '/motions/' + encodeURIComponent(slug || '') + '/' + (id ? '#m-' + id : '');
+  const url = '/moods/' + encodeURIComponent(slug || '') + '/' + (id ? '#m-' + id : '');
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-    const open = list.find(c => new URL(c.url).pathname.startsWith('/motions/'));
+    const open = list.find(c => new URL(c.url).pathname.startsWith('/moods/'));
     if (open) { open.postMessage({ open: slug, id }); return open.focus(); }
     return self.clients.openWindow(url);
   }));
@@ -667,7 +672,7 @@ self.addEventListener('notificationclick', e => {
 def app_service_worker(request):
     from django.http import HttpResponse
     response = HttpResponse(SERVICE_WORKER, content_type='text/javascript')
-    response['Service-Worker-Allowed'] = '/motions/'
+    response['Service-Worker-Allowed'] = '/moods/'
     response['Cache-Control'] = 'no-cache'
     return response
 
@@ -695,7 +700,7 @@ SECONDS_PER_BLOCK = 12  # since the merge, a slot every 12 s (a missed slot make
 
 
 @require_GET
-def api_motions_live(request):
+def api_moods_live(request):
     """Each Mood's people of the moment: who has spoken in the last 100 blocks
     (about 20 minutes), who's typing, which agent is working. Cached for
     3 s: every open page asks every few seconds."""
@@ -703,27 +708,27 @@ def api_motions_live(request):
     from django.core.cache import cache
     from django.utils import timezone
 
-    cached = cache.get('motions-live')
+    cached = cache.get('moods-live')
     if cached is not None:
         return JsonResponse(cached)
     now = timezone.now()
     names = set(ThinkingEntity.objects.values_list('name', flat=True))
     since = now - timedelta(seconds=AROUND_BLOCKS * SECONDS_PER_BLOCK)
-    spoke = (Message.objects.filter(motion__isnull=False, is_sidechain=False, created_at__gte=since,
+    spoke = (Message.objects.filter(mood__isnull=False, is_sidechain=False, created_at__gte=since,
                                     sender_id__in=names)
-             .values('motion_id', 'sender_id').annotate(last=Max('created_at')).order_by('-last'))
+             .values('mood__slug', 'sender_id').annotate(last=Max('created_at')).order_by('-last'))
     live = {}
     for row in spoke:
-        live.setdefault(row['motion_id'], {'speakers': [], 'typing': [], 'busy': None})['speakers'].append(row['sender_id'])
-    for motion in Motion.objects.all():
-        entry = live.setdefault(motion.slug, {'speakers': [], 'typing': [], 'busy': None})
-        entry['typing'] = typing_in(motion.slug)
-        if motion.slug in {r['motion_id'] for r in spoke}:  # only a Mood with recent words can have work under way
-            act = activity(motion)
+        live.setdefault(row['mood__slug'], {'speakers': [], 'typing': [], 'busy': None})['speakers'].append(row['sender_id'])
+    for mood in Mood.objects.all():
+        entry = live.setdefault(mood.slug, {'speakers': [], 'typing': [], 'busy': None})
+        entry['typing'] = typing_in(mood.slug)
+        if mood.slug in {r['mood__slug'] for r in spoke}:  # only a Mood with recent words can have work under way
+            act = activity(mood)
             if act and act.get('doing') != 'held':
                 entry['busy'] = act['agent']
-    body = {'motions': live, 'blocks': AROUND_BLOCKS}
-    cache.set('motions-live', body, 3)
+    body = {'moods': live, 'blocks': AROUND_BLOCKS}
+    cache.set('moods-live', body, 3)
     return JsonResponse(body)
 
 

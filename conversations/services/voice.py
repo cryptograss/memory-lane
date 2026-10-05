@@ -123,7 +123,7 @@ def _direction(body):
 SPOKEN_SYMBOLS = {'▶': 'play', '■': 'stop', '✎': 'the pencil', '⚙': 'the gear', '🎙': 'the microphone',
                   '📌': 'the pin', '⌕': 'search', '＋': 'plus', '✓': '', '✗': '', '✦': '', '⟲': '', '→': 'to',
                   '←': 'from', '≥': 'at least', '≤': 'at most', '≈': 'about', '×': 'times', '…': '...'}
-_MOOD_LINK = re.compile(r'(?:https?://\S+?)?/motions/([\w-]+)/#m-[0-9a-f-]{36}', re.I)
+_MOOD_LINK = re.compile(r'(?:https?://\S+?)?/moods/([\w-]+)/#m-[0-9a-f-]{36}', re.I)
 _UUID = re.compile(r'(?:#m-)?\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b', re.I)
 _HASH = re.compile(r'\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}\b', re.I)  # commits, digests
 _LONG_TOKEN = re.compile(r'(?<!\S)[^\s]{33,}(?!\S)')  # keys, base64, anything nobody would read out
@@ -176,12 +176,12 @@ def check_budget(usd):
         raise VoiceError(f'voice has spent its ${cap:.2f} for today; it starts again at midnight UTC', status=429)
 
 
-def record(motion, kind, by, **details):
+def record(mood, kind, by, **details):
     """A system row in the Mood: who used voice, on what, for about how much."""
     from conversations.models import ConversationParticipant, Message
     import uuid
     system, _ = ConversationParticipant.objects.get_or_create(name='system', defaults={'participant_type': 'system'})
-    return Message.objects.create(id=uuid.uuid4(), sender=system, motion=motion, source_file=SOURCE,
+    return Message.objects.create(id=uuid.uuid4(), sender=system, mood=mood, source_file=SOURCE,
                                   content={'type': kind, 'by': by, **details}, timestamp=int(time.time() * 1000))
 
 
@@ -256,7 +256,7 @@ def speak(message, by, http=requests, part=0):
     """The URL of `message` (its `part`th voice block) read aloud: made once, kept.
     VoiceError if it can't be."""
     from conversations.models import Media, Message
-    from conversations.services.motion_view import prose
+    from conversations.services.mood_view import prose
     script, voice_name, voice_settings = script_for(prose(message.content), part)
     if not script.strip():
         raise VoiceError('nothing in that message to read aloud', status=400)
@@ -303,7 +303,7 @@ def _make(message, by, key, voice_id, body, script, http):
     stored = media_store.store(response.content, audio=True)
     if stored is None:
         raise VoiceError('ElevenLabs sent back something that is not audio')
-    record(message.motion, 'spoken', by, message=str(message.id), key=key, media=stored.sha256,
+    record(message.mood, 'spoken', by, message=str(message.id), key=key, media=stored.sha256,
            voice=voice_id, chars=len(script), usd=usd)
     return stored.url
 
@@ -311,9 +311,9 @@ def _make(message, by, key, voice_id, body, script, http):
 # --- a memo, transcribed --------------------------------------------------------------
 
 def keyterms():
-    from conversations.models import Motion, ThinkingEntity
+    from conversations.models import Mood, ThinkingEntity
     names = list(ThinkingEntity.objects.values_list('name', flat=True))
-    moods = [t for t in Motion.objects.values_list('title', flat=True) if t and len(t) <= 50]
+    moods = [t for t in Mood.objects.values_list('title', flat=True) if t and len(t) <= 50]
     seen, out = set(), []
     for term in KEYTERMS + names + moods:
         if term and term.lower() not in seen and len(term) <= 50:
@@ -322,7 +322,7 @@ def keyterms():
     return out[:1000]
 
 
-def transcribe(media, motion, by, http=requests):
+def transcribe(media, mood, by, http=requests):
     """{'text', 'seconds', 'language'} for a stored memo; VoiceError if it can't be."""
     check_budget(STT_USD_PER_HOUR * 10 / 60)  # room for ten minutes, at least
     ext = media.EXTENSIONS[media.mime]
@@ -339,7 +339,7 @@ def transcribe(media, motion, by, http=requests):
     result = response.json()
     seconds = float(result.get('audio_duration_secs') or 0)
     usd = round(seconds / 3600 * STT_USD_PER_HOUR, 4)
-    record(motion, 'transcribed', by, media=media.sha256, seconds=seconds, usd=usd)
+    record(mood, 'transcribed', by, media=media.sha256, seconds=seconds, usd=usd)
     return {'text': (result.get('text') or '').strip(), 'seconds': seconds,
             'language': result.get('language_code') or ''}
 

@@ -1,13 +1,13 @@
-"""Who may write into a Motion: SSH keys enroll devices.
+"""Who may write into a Mood: SSH keys enroll devices.
 
-Reading Motions is public. Writing is tied to a person, and the people
+Reading Moods is public. Writing is tied to a person, and the people
 who talk with the agents already have an identity the team maintains:
 the SSH public key hunter's inventory lists for each of them. So:
 
-1. On a machine holding that key, `tools/motion_login.py` fetches a
+1. On a machine holding that key, `tools/mood_login.py` fetches a
    challenge, signs it with `ssh-keygen -Y sign` (the mechanism git uses
    for signed commits) under the namespace below, and posts it back.
-2. memory-lane checks the signature against MOTION_ALLOWED_SIGNERS, an
+2. memory-lane checks the signature against MOOD_ALLOWED_SIGNERS, an
    OpenSSH allowed_signers file generated from that inventory, and
    answers with a one-time login link (printed, and as a QR code).
 3. Opening the link on any browser -- a phone included -- and confirming
@@ -31,10 +31,10 @@ from django.conf import settings
 from django.core import signing
 from django.utils import timezone
 
-NAMESPACE = 'magenta-motions'
+NAMESPACE = 'magenta-moods'
 CHALLENGE_MAX_AGE = 300
 CODE_LIFETIME = timedelta(minutes=15)
-COOKIE = 'motion_device'
+COOKIE = 'mood_device'
 COOKIE_AGE = 365 * 24 * 3600
 # A device unused this long has timed out: it writes nothing until it's
 # renewed (`magenta.sh renew <its name>`, signed with the person's key) or
@@ -58,7 +58,7 @@ def signed_message(challenge, origin, purpose='login'):
     tampered preview, say) fetch a challenge from production, have the
     client sign it, and relay the signature: a device in someone else's
     name. Bound to the origin, a relayed signature names the wrong server.
-    tools/motion_login.py builds the same string. An admin's signature
+    tools/mood_login.py builds the same string. An admin's signature
     names its action instead of 'login' (views_admin.py), so it can't be
     replayed as any other.
     """
@@ -78,7 +78,7 @@ def challenge_is_fresh(challenge):
 
 
 def allowed_signers_path():
-    return getattr(settings, 'MOTION_ALLOWED_SIGNERS', '') or os.environ.get('MOTION_ALLOWED_SIGNERS', '')
+    return getattr(settings, 'MOOD_ALLOWED_SIGNERS', '') or os.environ.get('MOOD_ALLOWED_SIGNERS', '')
 
 
 def signature_is_valid(name, message, signature):

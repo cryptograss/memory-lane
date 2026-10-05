@@ -11,7 +11,7 @@ from conversations.models import (
     Era, ContextHeap, ContextHeapType,
     Message, Thought, ToolUse, ToolResult, ThinkingEntity,
     ConversationParticipant,
-    CompactingAction, MotionSession
+    CompactingAction, MoodSession
 )
 from constant_sorrow.constants import EVENT_TYPE_WE_DO_NOT_HANDLE_YET
 from conversations.services.redaction import redact_line
@@ -127,7 +127,7 @@ def handle_summary(event, filename):
 # Rows the runner streamed in (views_runner). The same turn's transcript
 # lines carry the same uuids: they find these rows, may correct them as
 # their own file's replay would, and fill in what only a transcript has.
-RUNNER_SOURCE_FILE = 'ingest-motion-runner'
+RUNNER_SOURCE_FILE = 'ingest-mood-runner'
 ENRICHABLE = ('model_backend', 'effort', 'input_tokens', 'output_tokens', 'cache_creation_input_tokens',
               'cache_read_input_tokens', 'cwd', 'git_branch', 'client_version', 'stop_reason')
 
@@ -155,11 +155,11 @@ def enrich(message, fields):
 
 def task_notification(line):
     """Store a background task's notice -- it finished, failed, was stopped --
-    as a system message in its session's Motion; (message, created) or None.
+    as a system message in its session's Mood; (message, created) or None.
 
     Claude Code queues these as queue-operation lines, which carry no uuid,
     so the id is derived from what the line says: a replay finds the same
-    row. The Motion's list of running tasks reads them.
+    row. The Mood's list of running tasks reads them.
     """
     if '"queue-operation"' not in line or 'task-notification' not in line:
         return None
@@ -181,7 +181,7 @@ def task_notification(line):
         'content': content,
         'timestamp': timestamp,
         'session_id': session_id,
-        'motion': MotionSession.motion_for(session_id),
+        'mood': MoodSession.mood_for(session_id),
         'source_file': 'task-notification',
     })
 
@@ -251,21 +251,21 @@ def extract_timestamp(event):
             return int(dt.timestamp() * 1000)
     return None
 
-MOTION_WAKE_PREFIX = '<motion-wake'
+MOOD_WAKE_PREFIX = '<mood-wake'
 
 
 def poller_or(user, content, event):
     """
     The sender of a user-role message: the container's human, unless the
-    Motion poller wrote it. A woken turn's prompt arrives as a user message,
+    Mood poller wrote it. A woken turn's prompt arrives as a user message,
     and attributing it to whoever owns the container would put words in
     their mouth. It must also have come in through `claude -p`
     (entrypoint sdk-cli), so a person typing the wrapper is still a person.
     """
     text = content if isinstance(content, str) else ''.join(
         block.get('text', '') for block in content if isinstance(block, dict))
-    if text.lstrip().startswith(MOTION_WAKE_PREFIX) and event.get('entrypoint') == 'sdk-cli':
-        return get_or_create_participant('motion-poller', 'system')
+    if text.lstrip().startswith(MOOD_WAKE_PREFIX) and event.get('entrypoint') == 'sdk-cli':
+        return get_or_create_participant('mood-poller', 'system')
     return user
 
 
@@ -313,15 +313,15 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
         # These were being dropped: each get_or_create below listed its own
         # defaults and none of them included session_id, so 99.6% of the
         # corpus has no session at all and nothing could be grouped by
-        # conversation. `motion` is resolved here too, so a message lands in
-        # its Motion as it arrives rather than waiting for a later pass.
+        # conversation. `mood` is resolved here too, so a message lands in
+        # its Mood as it arrives rather than waiting for a later pass.
         session_id = event.get('sessionId')
         # A fork's own first line (the poller's prompt) follows on from the
         # last line of the history it copied, so its parent claims it too --
         # even when the watcher sent none of the copied lines themselves.
-        motion = (MotionSession.motion_for(session_id)
-                  or MotionSession.claim_by_history(session_id, event.get('uuid'))
-                  or MotionSession.claim_by_history(session_id, event.get('parentUuid')))
+        mood = (MoodSession.mood_for(session_id)
+                  or MoodSession.claim_by_history(session_id, event.get('uuid'))
+                  or MoodSession.claim_by_history(session_id, event.get('parentUuid')))
         common = {
             'session_id': session_id,
             # A subagent's transcript shares its parent's sessionId, and its
@@ -329,7 +329,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
             # this flag tells them apart from the human's own words.
             'is_sidechain': bool(event.get('isSidechain')),
             # end_turn on an assistant line is the only mark that a turn is
-            # over; the Motion view's activity indicator reads it.
+            # over; the Mood view's activity indicator reads it.
             'stop_reason': (event.get('message') or {}).get('stop_reason')
                            if isinstance(event.get('message'), dict) else None,
             # Which model and effort produced an agent's line, and what it
@@ -338,7 +338,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
             'cwd': event.get('cwd'),
             'git_branch': event.get('gitBranch'),
             'client_version': event.get('version'),
-            'motion': motion,
+            'mood': mood,
             'created_at': timezone.now(),
         }
 

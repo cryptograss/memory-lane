@@ -60,16 +60,16 @@ def forge_items():
 
 def involvement(keys):
     """{(repo, number): {'moods', 'mentioned_by', 'asked_by'}} from what was said in the Moods."""
-    from conversations.models import Message, Motion, ThinkingEntity
-    from conversations.services.motion_view import MACHINERY_SENDERS
+    from conversations.models import Message, Mood, ThinkingEntity
+    from conversations.services.mood_view import MACHINERY_SENDERS
     wanted = {(r.lower(), n) for r, n in keys}
     humans = set(ThinkingEntity.objects.filter(is_biological_human=True).values_list('name', flat=True))
-    titles = dict(Motion.objects.values_list('slug', 'title'))
+    titles = dict(Mood.objects.values_list('slug', 'title'))
     since = datetime.now(timezone.utc) - timedelta(days=MENTION_DAYS)
-    rows = (Message.objects.filter(motion__isnull=False, is_sidechain=False, created_at__gt=since,
+    rows = (Message.objects.filter(mood__isnull=False, is_sidechain=False, created_at__gt=since,
                                    content__icontains='github.com/')
             .exclude(sender_id__in=MACHINERY_SENDERS).order_by('created_at')
-            .values('id', 'motion_id', 'sender_id', 'created_at', 'content'))
+            .values('id', 'mood_id', 'mood__slug', 'sender_id', 'created_at', 'content'))
     found = {}
     for row in rows:
         seen = set()
@@ -79,13 +79,13 @@ def involvement(keys):
                 continue
             seen.add(key)
             entry = found.setdefault(key, {'moods': {}, 'mentioned_by': set(), 'first': row})
-            entry['moods'].setdefault(row['motion_id'], str(row['id']))
+            entry['moods'].setdefault(row['mood__slug'], str(row['id']))
             if row['sender_id'] in humans:
                 entry['mentioned_by'].add(row['sender_id'])
     out = {}
     for key, entry in found.items():
         first = entry['first']
-        asker = (Message.objects.filter(motion_id=first['motion_id'], created_at__lt=first['created_at'],
+        asker = (Message.objects.filter(mood_id=first['mood_id'], created_at__lt=first['created_at'],
                                         sender_id__in=humans, is_sidechain=False)
                  .order_by('-created_at').values_list('sender_id', flat=True).first())
         out[key] = {'moods': [{'slug': s, 'title': titles.get(s, s), 'id': i} for s, i in entry['moods'].items()],

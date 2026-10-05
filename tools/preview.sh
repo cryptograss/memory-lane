@@ -32,9 +32,9 @@ import sys, yaml
 for user in yaml.safe_load(sys.stdin)["all"]["vars"]["users"]:
     key = (user.get("ssh_pubkey") or "").strip()
     if key.startswith("ssh-"):
-        print(user["name"] + " namespaces=\"magenta-motions\" " + key)
+        print(user["name"] + " namespaces=\"magenta-moods\" " + key)
 ' > "$STATE/allowed_signers"
-    export MOTION_ALLOWED_SIGNERS=$STATE/allowed_signers
+    export MOOD_ALLOWED_SIGNERS=$STATE/allowed_signers
     export PREVIEW_LABEL="preview · $(git branch --show-current) · live record, append-only"
 else
     export PREVIEW_VIEWER=${PREVIEW_VIEWER:-}

@@ -181,7 +181,7 @@ def stamp_messages(clock, chunk=5000):
 
 
 def stamp_created(clock, model):
-    """Fill eth_blockheight from created_at on a model that has both (Motion, Note)."""
+    """Fill eth_blockheight from created_at on a model that has both (Mood, Note)."""
     stamped = 0
     for obj in model.objects.filter(eth_blockheight__isnull=True):
         block = clock.block_at(int(obj.created_at.timestamp()))

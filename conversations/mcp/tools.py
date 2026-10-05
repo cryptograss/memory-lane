@@ -151,7 +151,7 @@ async def handle_search_messages(arguments):
              + (f", from {sender}" if sender else '') + ("; newest first" if exact else "; best first") + "):\n"]
     for i, hit in enumerate(hits, 1):
         m = hit['message']
-        where = f"Mood {m.motion_id}" if m.motion_id else (f"session {str(m.session_id)[:8]}" if m.session_id else "no session")
+        where = f"Mood {m.mood_slug}" if m.mood_id else (f"session {str(m.session_id)[:8]}" if m.session_id else "no session")
         lines.append(f"[{i}] {m.sender_id} · {hit['kind']} · {m.created_at.isoformat()[:16]}Z · {where} · {m.id}")
         lines.append(f"    {hit['snippet']}\n")
     if hits:
@@ -221,7 +221,7 @@ async def handle_random_messages(arguments):
     return [types.TextContent(type="text", text='\n'.join(lines))]
 
 
-# --- Moods (memory-lane's Motions): what each is, and what was said in one ------
+# --- Moods (memory-lane's Moods): what each is, and what was said in one ------
 
 READ_MOOD_MAX = 300      # turns at most in one read
 READ_MOOD_CHARS = 60_000  # and about this much text; the oldest go first
@@ -230,20 +230,20 @@ EACH_CHARS = 4000
 
 def list_moods_text():
     from django.db.models import Max
-    from conversations.models import Motion
+    from conversations.models import Mood
     lines = []
     moods = []
-    for motion in Motion.objects.all():
-        said = motion.messages.exclude(sender_id='system')
+    for mood in Mood.objects.all():
+        said = mood.messages.exclude(sender_id='system')
         last = said.aggregate(last=Max('created_at'))['last']
-        moods.append((last, motion, said.count()))
+        moods.append((last, mood, said.count()))
     moods.sort(key=lambda m: m[0].isoformat() if m[0] else '', reverse=True)
     lines.append(f"{len(moods)} Moods, most recently active first:\n")
-    for last, motion, count in moods:
-        people = sorted(e.name for e in motion.thinking_entities())
-        lines.append(f"{motion.slug} -- {motion.title or motion.slug}")
-        if motion.description:
-            lines.append(f"    {motion.description[:200]}")
+    for last, mood, count in moods:
+        people = sorted(e.name for e in mood.thinking_entities())
+        lines.append(f"{mood.slug} -- {mood.title or mood.slug}")
+        if mood.description:
+            lines.append(f"    {mood.description[:200]}")
         lines.append(f"    {count} messages · last {last.isoformat() if last else 'never'} · with {', '.join(people) or 'nobody yet'}\n")
     lines.append("read_mood with a slug reads what was said there.")
     return '\n'.join(lines)
@@ -253,13 +253,13 @@ def read_mood_text(slug, start=None, limit=60):
     """What people and agents said in a Mood, oldest first: the newest `limit`
     turns, or from `start` (a message id, or an ISO time) on."""
     from django.utils.dateparse import parse_datetime
-    from conversations.models import Message, Motion
-    from conversations.services.motion_view import turns
-    motion = Motion.objects.filter(slug=slug).first()
-    if motion is None:
+    from conversations.models import Message, Mood
+    from conversations.services.mood_view import turns
+    mood = Mood.objects.filter(slug=slug).first()
+    if mood is None:
         return f"No Mood '{slug}'. list_moods names them all."
     limit = max(1, min(int(limit or 60), READ_MOOD_MAX))
-    found = list(turns(motion))  # (message, text), oldest first
+    found = list(turns(mood))  # (message, text), oldest first
     if start:
         when = None
         anchor = Message.objects.filter(id=start).first() if len(str(start)) == 36 else None
@@ -287,9 +287,9 @@ def read_mood_text(slug, start=None, limit=60):
     while lines and sum(len(l) for l in lines) > READ_MOOD_CHARS:
         lines.pop(0)
         dropped += 1
-    head = [f"Mood: {motion.title or motion.slug} ({motion.slug})"]
-    if motion.description:
-        head.append(motion.description)
+    head = [f"Mood: {mood.title or mood.slug} ({mood.slug})"]
+    if mood.description:
+        head.append(mood.description)
     head.append(f"{len(lines)} turns, oldest first" + (f" ({dropped} more before them left out for length)" if dropped else '')
                 + " -- what people and agents said; tool calls aren't shown. Each line's #m-<id> is its link.\n")
     return '\n'.join(head + lines)

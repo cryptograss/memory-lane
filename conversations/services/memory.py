@@ -142,7 +142,7 @@ class MemoryService:
         A thread here is a session_id. That is a runtime instance, not a
         conversation -- one long session spans several context heaps, and a
         resumed conversation gets a new session_id -- so this is the unit
-        available today, not the right one. The intended key is a motion ID
+        available today, not the right one. The intended key is a mood ID
         (see magenta#41). Keep callers keyed on the returned `thread_id` so
         the grouping can change underneath them.
         """
@@ -371,7 +371,7 @@ def message_context(ref, before=10, after=10):
             .select_related('thought', 'tooluse', 'toolresult')}
 
     head = [f"Message {message.id}",
-            f"  in {what}: {at + 1} of {len(ids)}" + (f" · Mood: {message.motion_id}" if message.motion_id else ''),
+            f"  in {what}: {at + 1} of {len(ids)}" + (f" · Mood: {message.mood_slug}" if message.mood_id else ''),
             f"  showing {at - max(0, at - before)} before and {len(window) - 1 - (at - max(0, at - before))} after\n"]
     lines = []
     for mid in window:

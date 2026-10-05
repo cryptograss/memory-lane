@@ -1,12 +1,12 @@
-"""Knobs: how each agent carries itself in each Motion.
+"""Knobs: how each agent carries itself in each Mood.
 
-A casual Motion and a focused one want different things from an agent --
+A casual Mood and a focused one want different things from an agent --
 how readily it speaks up, how hard it thinks, what it should keep in mind
-there. So every knob can be set for one agent in one Motion, for one agent
-everywhere, for every agent in one Motion, or for all; the most specific
+there. So every knob can be set for one agent in one Mood, for one agent
+everywhere, for every agent in one Mood, or for all; the most specific
 setting wins:
 
-    (motion, agent) > (motion, every agent) > (every Motion, agent) > (all) > default
+    (mood, agent) > (mood, every agent) > (every Mood, agent) > (all) > default
 
 Settings are rows (models.Setting), only ever added: the newest row for a
 slot is in force, the rest are its history -- who changed what, when, and
@@ -144,26 +144,27 @@ def clean(key, value):
 
 
 def latest(rows):
-    """{(motion_id, agent_id, key): row}, the newest row per slot."""
+    """{(mood slug, agent_id, key): row}, the newest row per slot."""
+    from conversations.models import mood_slug
     current = {}
     for row in sorted(rows, key=lambda r: r.created_at):
-        current[(row.motion_id, row.agent_id, row.key)] = row
+        current[(mood_slug(row.mood_id), row.agent_id, row.key)] = row
     return current
 
 
-def resolve(motion, agent, now=None, rows=None):
-    """The settings in force for `agent` in `motion` (either may be None for 'every')."""
+def resolve(mood, agent, now=None, rows=None):
+    """The settings in force for `agent` in `mood` (either may be None for 'every')."""
     from conversations.models import Setting
     now = now or datetime.now(timezone.utc)
     if rows is None:
         rows = Setting.objects.filter(key__in=list(KNOBS)).exclude(key__in=MODERATION_KEYS)
     current = latest(rows)
-    motion_id = getattr(motion, 'pk', motion)
+    mood_id = getattr(mood, 'slug', mood)  # rows are keyed by slug (latest)
     agent_id = getattr(agent, 'pk', agent)
     resolved = {}
     for key, (fallback, _) in KNOBS.items():
         value = fallback
-        for slot in ((motion_id, agent_id), (motion_id, None), (None, agent_id), (None, None)):
+        for slot in ((mood_id, agent_id), (mood_id, None), (None, agent_id), (None, None)):
             row = current.get((*slot, key))
             if row is not None:
                 value = row.value
@@ -180,7 +181,7 @@ def resolve(motion, agent, now=None, rows=None):
 def mood_flagged(key):
     """The Moods where `key` (a MOOD_KEYS flag) is on now: the newest row for each says so."""
     from conversations.models import Setting
-    rows = Setting.objects.filter(key=key, agent=None, motion__isnull=False)
+    rows = Setting.objects.filter(key=key, agent=None, mood__isnull=False)
     return {slug for (slug, _, _), row in latest(rows).items() if row.value}
 
 
@@ -190,14 +191,14 @@ def archived_slugs():
 
 def global_value(key):
     from conversations.models import Setting
-    row = Setting.objects.filter(key=key, motion=None, agent=None).order_by('-created_at').first()
+    row = Setting.objects.filter(key=key, mood=None, agent=None).order_by('-created_at').first()
     return row.value if row is not None else default(key)
 
 
 def scram():
     """The scram in force, or None: {'by': ..., 'at': ..., 'note': ...}."""
     from conversations.models import Setting
-    row = Setting.objects.filter(key='scram', motion=None, agent=None).order_by('-created_at').first()
+    row = Setting.objects.filter(key='scram', mood=None, agent=None).order_by('-created_at').first()
     if row is None or not row.value:
         return None
     return {'by': row.set_by_id, 'at': row.created_at.isoformat(), 'note': row.note}
@@ -205,25 +206,25 @@ def scram():
 
 def banned(name):
     from conversations.models import Setting
-    row = Setting.objects.filter(key='banned', motion=None, agent_id=name).order_by('-created_at').first()
+    row = Setting.objects.filter(key='banned', mood=None, agent_id=name).order_by('-created_at').first()
     return bool(row and row.value)
 
 
-def change(key, value, motion=None, agent=None, by=None, note=''):
+def change(key, value, mood=None, agent=None, by=None, note=''):
     """Record a setting (a new row; nothing is overwritten)."""
     from conversations.models import Setting
     if key in MODERATION_KEYS:
         raise Invalid(f'{key} is set only by an admin, with their key')
-    if key in GLOBAL_KNOBS and (motion is not None or agent is not None):
+    if key in GLOBAL_KNOBS and (mood is not None or agent is not None):
         raise Invalid(f'{key} applies everywhere at once')
-    if key in MOOD_KEYS and (motion is None or agent is not None):
+    if key in MOOD_KEYS and (mood is None or agent is not None):
         raise Invalid(f'{key} is set for one Mood, not for an agent')
-    return Setting.objects.create(motion=motion, agent=agent, key=key, value=clean(key, value), set_by=by,
+    return Setting.objects.create(mood=mood, agent=agent, key=key, value=clean(key, value), set_by=by,
                                   note=str(note or '')[:200])
 
 
 def describe(row):
     return {
-        'motion': row.motion_id, 'agent': row.agent_id, 'key': row.key, 'value': row.value,
+        'mood': row.mood.slug if row.mood_id else None, 'agent': row.agent_id, 'key': row.key, 'value': row.value,
         'set_by': row.set_by_id, 'note': row.note, 'at': row.created_at.isoformat(),
     }

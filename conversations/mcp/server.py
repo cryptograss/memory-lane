@@ -116,7 +116,7 @@ def create_mcp_server():
             ),
             types.Tool(
                 name="list_moods",
-                description="List the Moods (memory-lane's Motions: the conversations people and agents share, each about one thing), most recently active first, with what each is about, its size and who's in it.",
+                description="List the Moods (memory-lane's Moods: the conversations people and agents share, each about one thing), most recently active first, with what each is about, its size and who's in it.",
                 inputSchema={"type": "object", "properties": {}}
             ),
             types.Tool(
