@@ -15,6 +15,8 @@ SENDERS = {'motion-poller': 'mood-poller'}
 def rename(apps, sources, senders):
     Message = apps.get_model('conversations', 'Message')
     Participant = apps.get_model('conversations', 'ConversationParticipant')
+    # Recipients are many-to-many: their rows live in the through table.
+    Recipient = Message._meta.get_field('recipients').remote_field.through
     for old, new in sources.items():
         Message.objects.filter(source_file=old).update(source_file=new)
     for old, new in senders.items():
@@ -23,7 +25,10 @@ def rename(apps, sources, senders):
             continue
         Participant.objects.get_or_create(name=new, defaults={'participant_type': was.participant_type})
         Message.objects.filter(sender_id=old).update(sender_id=new)
-        Message.objects.filter(recipient_id=old).update(recipient_id=new)
+        # A message addressed to both would collide; it keeps the new name only.
+        both = Recipient.objects.filter(conversationparticipant_id=new).values('message_id')
+        Recipient.objects.filter(conversationparticipant_id=old, message_id__in=both).delete()
+        Recipient.objects.filter(conversationparticipant_id=old).update(conversationparticipant_id=new)
         was.delete()
 
 
