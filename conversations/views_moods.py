@@ -165,6 +165,7 @@ def agents_in(mood):
         out[name] = {'listening': resolved['listening'], 'model': resolved['model'],
                      'effort': resolved['mention_effort'], 'ultracode': bool(resolved['ultracode']),
                      'reads': resolved['catch_up_tokens'],
+                     'discretion': resolved['discretion'], 'verbosity': resolved['verbosity'],
                      'context': context_in(mood, name)}
     return out
 

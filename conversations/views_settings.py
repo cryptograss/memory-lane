@@ -27,6 +27,7 @@ def settings_state():
         'knobs': {k: {'default': d, 'help': h} for k, (d, h) in knobs.KNOBS.items()},
         'global_knobs': {k: {'default': d, 'help': h} for k, (d, h) in knobs.GLOBAL_KNOBS.items()},
         'efforts': knobs.EFFORTS,
+        'choices': {'discretion': knobs.DISCRETIONS, 'verbosity': knobs.VERBOSITIES},
         'agents': agents,
         'moods': moods,
         # Every explicitly set slot, as it stands; anything absent is inherited.
@@ -116,6 +117,7 @@ def rules_page(request, slug):
     agent = request.GET.get('agent', 'magent').lower()
     resolved = knobs.resolve(slug, agent)
     frames = wake_frames(slug, rules=resolved.get('rules') or '', agent=agent,
+                         discretion=resolved.get('discretion') or 'normal', verbosity=resolved.get('verbosity') or 'normal',
                          trusted="Justin, from his container; and, in a Mood with its own container, that Mood's people")
     def plain(key, value):
         if key == 'listening':
