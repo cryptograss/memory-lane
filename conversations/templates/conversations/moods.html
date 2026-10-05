@@ -349,6 +349,7 @@
   #composer button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
   #composer button:disabled { opacity: .5; cursor: default; }
   #composer .err { color: var(--accent); font-size: 12px; }
+  #composer .note { color: var(--muted); font-size: 12px; align-self: center; }
   #activity { display: none; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--muted); }
   #activity.on { display: flex; }
   #activity .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--agent); animation: pulse 1.2s ease-in-out infinite; }
@@ -2098,8 +2099,20 @@
     return titles;
   }
 
+  // /yarn <name> and /yarn forget <name>: the team's saved clips, by name.
+  let yarnCache = null;
+  async function yarnClips() {
+    if (yarnCache && Date.now() - yarnCache.at < 60000) return yarnCache.clips;
+    try {
+      const clips = (await (await fetch('/api/yarn/')).json()).clips || [];
+      yarnCache = { at: Date.now(), clips };
+      return clips;
+    } catch (e) { return []; }
+  }
   function wordAtCaret() {
     const upto = sayBox.value.slice(0, sayBox.selectionStart);
+    const y = upto.match(/^\/yarn(?:\s+forget)?\s+([a-z0-9_-]*)$/i);
+    if (y) return { kind: 'yarn', start: upto.length - y[1].length, prefix: y[1].toLowerCase() };
     const w = upto.match(/\[\[([^\[\]|\n]{1,100})$/);
     if (w) return { kind: 'wiki', start: upto.length - w[1].length, prefix: w[1] };
     let m = upto.match(/(^|[^\w@\/.])@([A-Za-z][\w.-]*)?$/);
@@ -2126,6 +2139,20 @@
         suggest.innerHTML = choices.map((c, i) => `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">${c.html}</div>`).join('');
         suggest.classList.add('on');
       }, wikiCache.has(prefix) ? 0 : 150);
+      return;
+    }
+    if (at.kind === 'yarn') {
+      const prefix = at.prefix;
+      yarnClips().then(clips => {
+        const still = wordAtCaret();
+        if (!still || still.kind !== 'yarn' || still.prefix !== prefix) return;  // they've typed on
+        choices = clips.filter(c => c.name.startsWith(prefix)).slice(0, 8)
+          .map(c => ({ insert: c.name, html: `<span class="emo">🎬</span>${esc(c.name)}<small>${esc(shown(c.by))}</small>` }));
+        if (!choices.length) return closeSuggest();
+        chosen = Math.min(chosen, choices.length - 1);
+        suggest.innerHTML = choices.map((c, i) => `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">${c.html}</div>`).join('');
+        suggest.classList.add('on');
+      });
       return;
     }
     if (at.kind === 'emoji') {
@@ -2231,7 +2258,7 @@
   // Images into the composer: paste, drop, or the + button. Each is stored
   // first, then its markdown goes in at the caret.
   function showError(message) {
-    const old = composer.querySelector('.err'); if (old) old.remove();
+    composer.querySelectorAll('.err, .note').forEach(el => el.remove());
     composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(message)}</span>`);
   }
   const fileInput = document.getElementById('file');
@@ -2455,7 +2482,14 @@
         body: JSON.stringify({ text }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+      const done = await r.json().catch(() => ({}));
       sayBox.value = ''; fitSay(); typingSent = 0; sendTyping(false);
+      if (/^\/yarn\s+(save|forget)\b/i.test(text)) yarnCache = null;  // the library changed
+      if (done.note) {  // what a /yarn command did, for whoever sent it
+        composer.insertAdjacentHTML('beforeend', `<span class="note">${esc(done.note)}</span>`);
+        const note = composer.querySelector('.note:last-of-type');
+        setTimeout(() => note && note.remove(), 8000);
+      }
       await poll(false);
     } catch (e) {
       composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(e.message)}</span>`);

@@ -191,6 +191,16 @@ def api_say(request, slug):
                                           f"(@{', @'.join(addressed)}): take the mention out, or sign in with "
                                           f"your SSH key (magenta.sh login)", 'agents': addressed}, status=403)
 
+    # /yarn: the team's saved clips (services/yarn.py). A command either
+    # becomes what's posted, or -- listing them -- posts nothing at all.
+    from .services import yarn
+    try:
+        text, note = yarn.command(text, device.entity_id)
+    except yarn.Refused as e:
+        return JsonResponse({'error': str(e)}, status=400)
+    if text is None:
+        return JsonResponse({'note': note})
+
     recent = Message.objects.filter(sender=device.entity, source_file=WEB_SOURCE,
                                     created_at__gt=timezone.now() - timedelta(minutes=1)).count()
     if recent >= PER_MINUTE:
@@ -201,7 +211,17 @@ def api_say(request, slug):
         id=uuid.uuid4(), sender=device.entity, content=text, mood=mood,
         timestamp=int(time.time() * 1000), source_file=WEB_SOURCE, client_version=web_client(request, device),
     )
-    return JsonResponse({'id': str(message.id)}, status=201)
+    if text.startswith('/yarn '):
+        yarn.forget_cached()  # the library has a new save, or one fewer
+    return JsonResponse({'id': str(message.id), **({'note': note} if note else {})}, status=201)
+
+
+@require_GET
+def api_yarn(request):
+    """The saved Yarn clips, by name: for the composer's /yarn suggestions."""
+    from .services import yarn
+    return JsonResponse({'clips': [{'name': n, 'by': c['by'], 'clip': c['clip']}
+                                   for n, c in sorted(yarn.library().items())]})
 
 
 _MOBILE_AGENT = re.compile(r'Mobi|Android|iPhone|iPad|iPod', re.I)

@@ -376,8 +376,18 @@ def _inline(text, mentionable=()):
     return text
 
 
+# /yarn save and /yarn forget are posts (services/yarn.py), shown as what they did.
+_YARN_SAVED = re.compile(r'^/yarn save ([a-z0-9][a-z0-9_-]{0,34}) (https://\S+)$')
+_YARN_FORGOTTEN = re.compile(r'^/yarn forget ([a-z0-9][a-z0-9_-]{0,34})$')
+
+
 def render_html(text, mentionable=()):
     """Escape, then translate the markdown the agent writes into HTML."""
+    saved, forgotten = _YARN_SAVED.match(text.strip()), _YARN_FORGOTTEN.match(text.strip())
+    if saved:
+        text = f'🎬 saved **{saved[1]}** {saved[2]}'
+    elif forgotten:
+        text = f'🎬 forgot **{forgotten[1]}**'
     text = html.escape(_PLACEHOLDER_CHARS.sub('', text), quote=True)
 
     def inline(s):
