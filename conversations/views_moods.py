@@ -238,9 +238,12 @@ def api_pulse(request):
             # Names it went by before a rename: a runner told the old one still knows it.
             'aliases': sorted(mood.aliases.values_list('slug', flat=True)),
         })
+    from .services import access
     return JsonResponse({
         'now': timezone.now().isoformat(),
         'agent': agent,
+        # Who has just signed in, for a runner to greet if it knows them (services/access.py).
+        'arrivals': access.recent_arrivals(),
         # An admin's emergency stop: while set, a runner wakes nothing.
         'scram': knobs.scram(),
         'budget': {'consider_usd_per_day': knobs.global_value('consider_usd_per_day')},  # the runner's own

@@ -172,3 +172,13 @@ class AdminTest(TestCase):
     def test_no_general_no_announcement_and_no_harm(self):
         Mood.objects.filter(slug='general').delete()
         self.assertEqual(self.admin('kick', 'skyler').status_code, 200)
+
+    def test_the_pulse_carries_arrivals_and_when_each_last_said_anything(self):
+        from conversations.models import Message
+        from conversations.services import access
+        Message.objects.create(id='00000000-0000-0000-0000-0000000000aa', sender=self.skyler,
+                               mood=Mood.objects.get(slug='m26'), content='old news', source_file='mood-web')
+        access.signed_in(self.devices['skyler'])
+        arrivals = self.client.get('/api/moods/pulse/').json()['arrivals']
+        self.assertEqual([(a['who'], a['tier'], a['mood']) for a in arrivals], [('skyler', 'key', 'general')])
+        self.assertIsNotNone(arrivals[0]['last_said'])

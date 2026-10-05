@@ -610,6 +610,27 @@ QUIET_ASK = ('You might pick up a loose end, offer something you have been turni
              'rest. Nobody is waiting on you.')
 
 
+# Someone has just signed in (memory-lane services/access.py): a look in the
+# Mood where it was announced, to greet them -- only with something specific.
+ARRIVAL_ASK = ('If you know them, greet them with something specific to them: something you worked on together, '
+               'something they care about, something they said. Look them up in your memory if you need to. Never '
+               'a generic welcome: if nothing specific comes to mind, stay silent.')
+GREET_GAP = timedelta(hours=12)  # someone around within this isn't arriving; nor is a second greeting due
+
+
+def arrival_opening(slug, arrival, now):
+    who = arrival.get('who', 'someone')
+    how = 'with PickiPedia' if arrival.get('tier') == 'wiki' else 'with their SSH key'
+    label = f" (\"{arrival['label']}\")" if arrival.get('label') else ''
+    if arrival.get('last_said'):
+        days = (now - parse_time(arrival['last_said'])).days
+        last = f"They last said something in a Mood {'today' if days == 0 else f'{days} day(s) ago'}."
+    else:
+        last = "They haven't said anything in a Mood yet."
+    return [f'<mood-wake mood="{slug}" reason="arrival">', f'{who} just signed in {how}{label}. {last}', '',
+            'The Mood lately, newest last:']
+
+
 def mention_opening(slug, why):
     return [f'<mood-wake mood="{slug}">', f'You were woken by the Mood poller: {why}', '']
 
@@ -661,6 +682,13 @@ def wake_frames(slug, rules='', agent='magent', trusted='the people its runner t
          'when': 'No word for the idle wait (doubling after each silence), and a person spoke in the last 12 hours.',
          'text': '\n'.join(quiet_opening(slug, '[N]') + ['[its last turns]', '', QUIET_ASK] + rules_block(rules, verbosity)
                            + wake_footer())},
+        {'kind': 'arrival', 'title': 'When someone signs in',
+         'when': ('A new sign-in announced here, if listening is on, discretion isn\'t reserved, the person hasn\'t '
+                  'said anything in 12 hours, and they weren\'t greeted in the last 12.'),
+         'text': '\n'.join([f'<mood-wake mood="{slug}" reason="arrival">',
+                            '[name] just signed in [with PickiPedia | with their SSH key] ("[device]"). '
+                            '[When they last said something in a Mood.]', '', 'The Mood lately, newest last:',
+                            '[the last few turns]', '', ARRIVAL_ASK] + rules_block(rules, verbosity) + wake_footer())},
         {'kind': 'screen', 'title': 'The screen, before a consider (a small model, no tools)',
          'when': ('Not here: with discretion chatty, every consider goes to the agent.' if discretion == 'chatty'
                   else 'Before every consider: it may only let pass what is plainly not for the agent.'),
@@ -910,6 +938,8 @@ class MoodPoller:
             self.budget = pulse.get('budget') or {}
         woken = self.poll_once()
         considered = self.consider_once(pulse) if pulse else []
+        if pulse and self.consider_enabled:
+            considered += self.greet_arrivals(pulse)
         return woken, considered
 
     def poll_once(self):
@@ -1414,6 +1444,52 @@ class MoodPoller:
         minutes = int(quiet_for.total_seconds() // 60)
         lines = quiet_opening(slug, minutes) + [*transcript_of(recent['turns']), '', QUIET_ASK]
         return self.consider_wake(slug, '\n'.join(lines + self.rules_lines(slug) + wake_footer()), after=after)
+
+    # --- arrivals: someone has just signed in -----------------------------------
+    def greet_arrivals(self, pulse):
+        """A look at each new sign-in, to greet them if it knows them; [(slug, outcome)]."""
+        arrivals = pulse.get('arrivals') or []
+        st = self.state.get('arrivals')
+        if st is None:  # first run: sign-ins from before it started aren't news
+            self.state['arrivals'] = {'seen': [a['id'] for a in arrivals], 'greeted': {}}
+            self.save()
+            return []
+        done = []
+        for a in arrivals:
+            slug = a.get('mood')
+            if a['id'] in st['seen'] or not slug:
+                continue
+            if not (self.mine(slug) and self.ours(slug)):
+                continue  # another runner's Mood: its runner greets
+            if not self.free(slug):
+                continue  # a turn under way there: look again next time round
+            st['seen'] = (st['seen'] + [a['id']])[-200:]
+            self.save()
+            outcome = self.greet(slug, a)
+            if outcome:
+                done.append((slug, outcome))
+        return done
+
+    def greet(self, slug, a):
+        who = a.get('who')
+        if not who or who == self.agent:
+            return None
+        if self.listening(slug) != 'on' or self.knob(slug, 'discretion', 'normal') == 'reserved':
+            return None  # not speaking up unasked here
+        if a.get('last_said') and self.now() - parse_time(a['last_said']) < GREET_GAP:
+            return 'around'  # they never left
+        greeted = self.state['arrivals']['greeted'].get(who)
+        if greeted and self.now() - parse_time(greeted) < GREET_GAP:
+            return 'greeted'  # a second device, say
+        self.state['consider'].setdefault(slug, {})
+        if not self.within_budget(slug):
+            return 'over budget'
+        self.state['arrivals']['greeted'][who] = self.now().isoformat()
+        self.save()
+        recent = self.api.recent(slug, limit=8)
+        lines = arrival_opening(slug, a, self.now()) + transcript_of(recent.get('turns', []))
+        logger.info(f'{slug}: {who} signed in; looking whether to greet them')
+        return self.consider_wake(slug, '\n'.join(lines + ['', ARRIVAL_ASK] + self.rules_lines(slug) + wake_footer()))
 
     def consider_wake(self, slug, prompt, after=None):
         """Wake the agent itself to consider; 'spoke', 'silent', 'failed' or 'elsewhere'."""

@@ -795,7 +795,7 @@ class ConsiderAPI:
         last_human = brief(humans[-1]) if humans else None
         if self.human_at:
             last_human = {'id': 'h', 'created_at': self.human_at, 'sender': 'justin'}
-        return {'scram': self.scram, 'budget': {},
+        return {'scram': self.scram, 'budget': {}, 'arrivals': list(getattr(self, 'arrivals', [])),
                 'moods': [{'slug': 'm26', 'newest': brief(said[-1]) if said else None,
                              'last_web_post': brief(web[-1]) if web else None, 'last_human': last_human,
                              'typing': self.typing, 'activity': self.activity, 'settings': self.settings}]}
@@ -1446,3 +1446,71 @@ class StateCarriedOverTest(TestCase):
         poller.save()
         self.assertTrue((folder / 'mood_poller.json').exists())
 
+
+
+def arrival(id, who, minute, last_said=None, tier='key', label='laptop'):
+    return {'id': id, 'who': who, 'tier': tier, 'label': label, 'mood': 'm26',
+            'at': (T0 + timedelta(minutes=minute)).isoformat(), 'last_said': last_said}
+
+
+class GreetingTest(TestCase):
+    """Someone signs in: a look, to greet them if the agent knows them -- never a generic welcome."""
+
+    def make(self, settings=None):
+        self.clock = [T0]
+        self.waker = FakeWaker(reply='<silent>nothing specific to say to them</silent>')
+        self.api = MentionsAndPulse(settings=settings or {})
+        self.api.arrivals = [arrival('old', 'rj', -5)]  # before the runner started: not news
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        poller = MoodPoller(self.api, self.waker, state_path=state, now=lambda: self.clock[0], screen=FakeScreen())
+        poller.cycle()
+        self.assertEqual(self.waker.woken, [])
+        return poller
+
+    def at(self, minutes):
+        self.clock[0] = T0 + timedelta(minutes=minutes)
+
+    def test_someone_back_after_a_while_gets_a_look(self):
+        poller = self.make()
+        self.api.arrivals.append(arrival('a1', 'skyler', 1, last_said=(T0 - timedelta(days=3)).isoformat(),
+                                         tier='wiki', label='PickiPedia sign-in (SkymanJenkins, Android)'))
+        self.at(1)
+        poller.cycle()
+        self.assertEqual(len(self.waker.woken), 1)
+        prompt = self.waker.woken[0][1]
+        self.assertIn('<mood-wake mood="m26" reason="arrival">', prompt)
+        self.assertIn('skyler just signed in with PickiPedia ("PickiPedia sign-in (SkymanJenkins, Android)")', prompt)
+        self.assertIn('3 day(s) ago', prompt)
+        self.assertIn('Never a generic welcome', prompt)
+        self.at(2)
+        poller.cycle()
+        self.assertEqual(len(self.waker.woken), 1)  # once per sign-in
+
+    def test_no_look_for_someone_who_never_left_or_was_just_greeted(self):
+        poller = self.make()
+        self.api.arrivals.append(arrival('a1', 'justin', 1, last_said=(T0 - timedelta(hours=1)).isoformat()))
+        self.at(1)
+        poller.cycle()
+        self.assertEqual(self.waker.woken, [])  # posted an hour ago: around all along
+        self.api.arrivals.append(arrival('a2', 'rj', 2))
+        self.api.arrivals.append(arrival('a3', 'rj', 3, label='phone'))
+        self.at(3)
+        poller.cycle()
+        self.assertEqual(len(self.waker.woken), 1)  # rj's second device: no second look
+        self.assertIn("haven't said anything in a Mood yet", self.waker.woken[0][1])
+
+    def test_no_look_where_it_isnt_speaking_up(self):
+        for settings in ({'listening': {'mode': 'mentions', 'until': None}}, {'discretion': 'reserved'}):
+            with self.subTest(settings=settings):
+                poller = self.make(settings)
+                self.api.arrivals.append(arrival('a1', 'skyler', 1))
+                self.at(1)
+                poller.cycle()
+                self.assertEqual(self.waker.woken, [])
+
+    def test_the_agent_isnt_greeted_by_itself(self):
+        poller = self.make()
+        self.api.arrivals.append(arrival('a1', 'magent', 1))
+        self.at(1)
+        poller.cycle()
+        self.assertEqual(self.waker.woken, [])

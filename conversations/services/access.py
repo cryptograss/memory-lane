@@ -36,3 +36,29 @@ def announce(kind, who, **details):
 
 def signed_in(device):
     return announce('signed-in', device.entity_id, tier=device.tier, label=device.label)
+
+
+ARRIVALS_FOR = 30  # minutes a sign-in stays in the pulse, for a runner that was busy or restarting
+
+
+def recent_arrivals(minutes=ARRIVALS_FOR):
+    """Sign-ins of the last `minutes`, oldest first, each with when that person
+    last said anything in a Mood before it -- so a runner can tell someone
+    coming back from someone who never left (poller: greet_arrivals)."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from conversations.models import Message, mood_slug
+    out = []
+    since = timezone.now() - timedelta(minutes=minutes)
+    for row in Message.objects.filter(source_file=SOURCE, created_at__gt=since).order_by('created_at'):
+        content = row.content if isinstance(row.content, dict) else {}
+        if content.get('kind') != 'signed-in' or not content.get('who'):
+            continue
+        last = (Message.objects.filter(sender_id=content['who'], mood__isnull=False, created_at__lt=row.created_at)
+                .order_by('-created_at').values_list('created_at', flat=True).first())
+        out.append({'id': str(row.id), 'who': content['who'], 'tier': content.get('tier'),
+                    'label': content.get('label', ''), 'mood': mood_slug(row.mood_id), 'at': row.created_at.isoformat(),
+                    'last_said': last.isoformat() if last else None})
+    return out
