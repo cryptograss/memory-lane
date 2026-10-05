@@ -237,7 +237,7 @@
     border-radius: 8px; background: var(--panel); color: var(--ink); text-decoration: none; font-size: .95em; }
   .turn .body a.yarn:hover { border-color: var(--accent); }
   .turn .body .yarnbox { width: min(480px, 100%); aspect-ratio: 16 / 9; margin: 4px 0; }
-  .turn .body .yarnbox iframe { width: 100%; height: 100%; border: 0; border-radius: 8px; background: #000; }
+  .turn .body .yarnbox video { width: 100%; height: 100%; border-radius: 8px; background: #000; }
   .mention { background: var(--code); border-radius: 4px; padding: 0 4px; font-weight: 600; }
   .mention.me { background: var(--mention); }
   .turn.new { animation: arrive .6s ease-out; }
@@ -1731,8 +1731,10 @@
   }
   document.addEventListener('click', e => { if (e.target.id === 'earlier') loadEarlier(); });
   // A Yarn clip plays in place when its card is pressed (a modified click
-  // still opens it on Yarn). Built from the id alone, which the server
-  // already checked is a UUID; sandboxed, so it can't navigate this page.
+  // still opens it on Yarn). Yarn's own player refuses to be framed, so it
+  // plays the clip's video file in the browser's own player, built from
+  // the id alone (which the server already checked is a UUID). If the file
+  // won't play, the card says so and links to the clip on Yarn.
   document.addEventListener('click', e => {
     const a = e.target.closest('a.yarn[data-yarn]');
     if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
@@ -1741,13 +1743,19 @@
     e.preventDefault();
     const box = document.createElement('div');
     box.className = 'yarnbox';
-    const frame = document.createElement('iframe');
-    frame.src = `https://getyarn.io/yarn-clip/${id}/embed?autoplay=true&responsive=true`;
-    frame.allow = 'autoplay; fullscreen';
-    frame.allowFullscreen = true;
-    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation allow-popups');
-    frame.title = 'Yarn clip';
-    box.appendChild(frame);
+    const video = document.createElement('video');
+    video.src = `https://y.yarn.co/${id}.mp4`;
+    video.controls = true;
+    video.autoplay = true;  // pressed to play: a click lets it start with sound
+    video.playsInline = true;
+    video.addEventListener('error', () => {
+      const why = document.createElement('a');
+      why.className = 'yarn';
+      why.href = a.href; why.target = '_blank'; why.rel = 'noopener';
+      why.textContent = "Couldn't play it here: open the clip on Yarn";
+      box.replaceWith(why);
+    });
+    box.appendChild(video);
     a.replaceWith(box);
   });
 
