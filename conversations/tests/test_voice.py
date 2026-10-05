@@ -7,9 +7,9 @@ from unittest import mock, skipUnless
 from django.core.cache import cache
 from django.test import TestCase, override_settings
 
-from conversations.models import Media, Message, Motion, ThinkingEntity
+from conversations.models import Media, Message, Mood, ThinkingEntity
 from conversations.services import voice
-from conversations.tests.test_motion_devices import HAS_SSH_KEYGEN, SignedInCase
+from conversations.tests.test_mood_devices import HAS_SSH_KEYGEN, SignedInCase
 
 MP3 = b'ID3\x04\x00\x00\x00\x00\x00\x00' + b'\x00' * 64
 WEBM = b'\x1a\x45\xdf\xa3' + b'\x00' * 64
@@ -69,7 +69,7 @@ class DirectionTest(TestCase):
         self.assertEqual(said, 'Done\nMerged number 69\n (some code) \nSee a link to example.com and make test. Banjo too.')
 
     def test_ids_hashes_paths_and_symbols_are_said_not_spelled(self):
-        said = voice.plain('Read /motions/magenta-26-million/#m-b1623e2c-24ba-4f1c-bac1-237ee20110a2 and '
+        said = voice.plain('Read /moods/magenta-26-million/#m-b1623e2c-24ba-4f1c-bac1-237ee20110a2 and '
                            'session 7ba09e1d-b666-4416-bf15-c4fb9beddc1e; commit 85d0964, in '
                            'conversations/services/voice.py. Press ▶, or ■ to stop; key AAAAC3NzaC1lZDI1NTE5AAAAINKHaQ2Nt6I.')
         self.assertEqual(said, 'Read a message in magenta-26-million and session an ID ; commit a hash , in '
@@ -84,13 +84,13 @@ class SpeakAndTranscribeTest(TestCase):
     def setUpTestData(cls):
         cls.magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
         ThinkingEntity.objects.create(name='justin', is_biological_human=True)
-        cls.motion = Motion.objects.create(slug='m26', title='magenta-interface')
+        cls.mood = Mood.objects.create(slug='m26', title='magenta-interface')
 
     def setUp(self):
         cache.clear()
 
     def say(self, text):
-        return Message.objects.create(id=uuid.uuid4(), sender=self.magent, motion=self.motion,
+        return Message.objects.create(id=uuid.uuid4(), sender=self.magent, mood=self.mood,
                                       content=[{'type': 'text', 'text': text}], timestamp=1)
 
     def test_spoken_once_then_kept(self):
@@ -118,7 +118,7 @@ class SpeakAndTranscribeTest(TestCase):
         self.assertEqual(fake.asked[-1][2]['json']['text'], '[laughs] Two.')
         voice.speak(message, 'justin', http=fake, part=0)
         self.assertEqual((fake.asked[-1][1][-6:], fake.asked[-1][2]['json']['text']), ('v-aria', '[softly] One.'))
-        from conversations.services.motion_view import prose
+        from conversations.services.mood_view import prose
         self.assertEqual(voice.script_for(prose(message.content), 9)[0], '[laughs] Two.')  # out of range: the last
 
     def test_two_presses_at_once_pay_once(self):
@@ -131,7 +131,7 @@ class SpeakAndTranscribeTest(TestCase):
         shared.add(f'voice:making:{key}', 1, 120)  # someone else's press is mid-way
 
         def finished(_):
-            voice.record(self.motion, 'spoken', 'skyler', message=str(message.id), key=key,
+            voice.record(self.mood, 'spoken', 'skyler', message=str(message.id), key=key,
                          media=first.split('/')[-1].split('.')[0], chars=19, usd=0.0015)
         asked = len(fake.asked)
         with mock.patch('conversations.services.voice.time.sleep', side_effect=finished):
@@ -187,7 +187,7 @@ class SpeakAndTranscribeTest(TestCase):
         from conversations.services import media
         fake = FakeEleven()
         memo = media.store(WEBM, audio=True)
-        heard = voice.transcribe(memo, self.motion, 'justin', http=fake)
+        heard = voice.transcribe(memo, self.mood, 'justin', http=fake)
         self.assertEqual(heard, {'text': 'Bring the capo to soundcheck.', 'seconds': 42.0, 'language': 'eng'})
         _, where, sent = fake.asked[-1]
         self.assertEqual(sent['data']['model_id'], 'scribe_v2')
@@ -198,7 +198,7 @@ class SpeakAndTranscribeTest(TestCase):
     def test_keyterms_refused_it_asks_plainly(self):
         from conversations.services import media
         fake = FakeEleven(stt_status=422)
-        heard = voice.transcribe(media.store(WEBM, audio=True), self.motion, 'justin', http=fake)
+        heard = voice.transcribe(media.store(WEBM, audio=True), self.mood, 'justin', http=fake)
         self.assertEqual(heard['text'], 'Bring the capo to soundcheck.')
         self.assertNotIn('keyterms', fake.asked[-1][2]['data'])
 
@@ -220,30 +220,30 @@ class PageTest(TestCase):
 
     def test_a_voice_block_is_performed_not_shown(self):
         magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
-        motion = Motion.objects.create(slug='m26')
-        Message.objects.create(id=uuid.uuid4(), sender=magent, motion=motion, timestamp=1, stop_reason='end_turn',
+        mood = Mood.objects.create(slug='m26')
+        Message.objects.create(id=uuid.uuid4(), sender=magent, mood=mood, timestamp=1, stop_reason='end_turn',
                                content=[{'type': 'text', 'text': 'Done.\n```voice\n[sighs] Done.\n```'}])
-        turn = self.client.get('/api/motions/m26/turns/').json()['turns'][0]
+        turn = self.client.get('/api/moods/m26/turns/').json()['turns'][0]
         self.assertEqual((turn['text'], turn['voiced']), ('Done.', True))
         self.assertNotIn('sighs', turn['html'])
 
     def test_several_blocks_each_get_a_play_button_named_for_its_voice(self):
         magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
-        motion = Motion.objects.create(slug='m26')
-        Message.objects.create(id=uuid.uuid4(), sender=magent, motion=motion, timestamp=1, stop_reason='end_turn',
+        mood = Mood.objects.create(slug='m26')
+        Message.objects.create(id=uuid.uuid4(), sender=magent, mood=mood, timestamp=1, stop_reason='end_turn',
                                content=[{'type': 'text', 'text': 'Auditions:\n```voice\nvoice: River\n---\nHi.\n```\n'
                                                                  '```voice\n---\nHello.\n```\nPick one.'}])
-        turn = self.client.get('/api/motions/m26/turns/').json()['turns'][0]
+        turn = self.client.get('/api/moods/m26/turns/').json()['turns'][0]
         self.assertEqual((turn['text'], turn['voices']), ('Auditions:\n\nPick one.', ['River', 'the house voice']))
 
     def test_a_memo_is_a_player_and_other_local_links_are_not(self):
-        from conversations.services.motion_view import render_html
+        from conversations.services.mood_view import render_html
         sha = 'a' * 64
-        self.assertEqual(render_html(f'🎙 [voice memo · 0:42](/motions/media/{sha}.webm)\n\nBring the capo.'),
-                         f'<p>🎙 <span class="memo">voice memo · 0:42</span><audio controls preload="none" src="/motions/media/{sha}.webm" '
+        self.assertEqual(render_html(f'🎙 [voice memo · 0:42](/moods/media/{sha}.webm)\n\nBring the capo.'),
+                         f'<p>🎙 <span class="memo">voice memo · 0:42</span><audio controls preload="none" src="/moods/media/{sha}.webm" '
                          f'title="voice memo · 0:42"></audio></p>\n<p>Bring the capo.</p>')
-        self.assertNotIn('<audio', render_html(f'[x](/motions/media/{sha}.exe)'))
-        self.assertNotIn('<audio', render_html('[x](javascript:alert(1)) [y](/motions/media/zz.mp3)'))
+        self.assertNotIn('<audio', render_html(f'[x](/moods/media/{sha}.exe)'))
+        self.assertNotIn('<audio', render_html('[x](javascript:alert(1)) [y](/moods/media/zz.mp3)'))
 
 
 @skipUnless(HAS_SSH_KEYGEN, 'needs ssh-keygen')
@@ -254,14 +254,14 @@ class VoiceEndpointsTest(SignedInCase):
         return client.post(url, body, content_type=content_type, HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value)
 
     def test_memo_and_speak_need_a_signed_in_device(self):
-        self.assertEqual(self.client.post('/api/motions/m26/memo/', WEBM, content_type='audio/webm').status_code, 401)
-        self.assertEqual(self.client.post(f'/api/motions/m26/speak/{uuid.uuid4()}/').status_code, 401)
+        self.assertEqual(self.client.post('/api/moods/m26/memo/', WEBM, content_type='audio/webm').status_code, 401)
+        self.assertEqual(self.client.post(f'/api/moods/m26/speak/{uuid.uuid4()}/').status_code, 401)
 
     def test_a_memo_comes_back_as_audio_and_words(self):
         client = self.sign_in()
         with mock.patch('requests.post', FakeEleven().post), mock.patch('requests.get', FakeEleven().get):
-            self.assertEqual(self.post(client, '/api/motions/m26/memo/', b'not audio').status_code, 400)
-            heard = self.post(client, '/api/motions/m26/memo/', WEBM).json()
+            self.assertEqual(self.post(client, '/api/moods/m26/memo/', b'not audio').status_code, 400)
+            heard = self.post(client, '/api/moods/m26/memo/', WEBM).json()
         self.assertEqual(heard['text'], 'Bring the capo to soundcheck.')
         self.assertTrue(heard['url'].endswith('.webm'))
         self.assertTrue(Media.objects.filter(mime='audio/webm').exists())
@@ -269,12 +269,12 @@ class VoiceEndpointsTest(SignedInCase):
     def test_speak_reads_a_message_of_this_mood_only(self):
         client = self.sign_in()
         magent = ThinkingEntity.objects.get(name='magent')
-        here = Message.objects.create(id=uuid.uuid4(), sender=magent, motion_id='m26', timestamp=1,
+        here = Message.objects.create(id=uuid.uuid4(), sender=magent, mood=Mood.objects.get(slug='m26'), timestamp=1,
                                       content=[{'type': 'text', 'text': 'Soundcheck at five.'}])
         with mock.patch('requests.post', FakeEleven().post), mock.patch('requests.get', FakeEleven().get):
-            spoken = self.post(client, f'/api/motions/m26/speak/{here.id}/').json()
-            Motion.objects.create(slug='other')
-            elsewhere = self.post(client, f'/api/motions/other/speak/{here.id}/')
+            spoken = self.post(client, f'/api/moods/m26/speak/{here.id}/').json()
+            Mood.objects.create(slug='other')
+            elsewhere = self.post(client, f'/api/moods/other/speak/{here.id}/')
         self.assertTrue(spoken['url'].endswith('.mp3'))
         self.assertEqual(elsewhere.status_code, 404)
 

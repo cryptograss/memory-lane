@@ -6,7 +6,7 @@ import uuid
 from django.test import TestCase, TransactionTestCase
 
 from conversations.mcp import tools
-from conversations.models import ContextHeap, ConversationParticipant, Era, Message, Motion, ThinkingEntity, Thought, ToolUse
+from conversations.models import ContextHeap, ConversationParticipant, Era, Message, Mood, ThinkingEntity, Thought, ToolUse
 from conversations.services.memory import message_context, readable, resolve_message, search, snippet
 
 
@@ -22,13 +22,13 @@ class Fixture:
         ConversationParticipant.objects.create(name='tool-result', participant_type='tool')
         self.heap = ContextHeap.objects.create(era=Era.objects.create(name='E'), type='fresh')
         self.session = uuid.uuid4()
-        self.mood = Motion.objects.create(slug='porch')
+        self.mood = Mood.objects.create(slug='porch')
         self.said = []
         for i, text in enumerate(['first', 'second', 'third', 'fourth', 'fifth']):
             self.said.append(Message.objects.create(
                 id=uuid.uuid4(), sender=self.justin if i % 2 == 0 else self.magent, content=text,
                 timestamp=1_760_000_000_000 + i * 1000, session_id=self.session, context_heap=self.heap,
-                motion=self.mood))
+                mood=self.mood))
         self.call = ToolUse.objects.create(
             id=uuid.UUID('03e36f39-2c40-4a9b-93eb-eeffcc3d28dc'), sender=self.magent,
             content={'command': 'docker exec wiki php run.php changePassword --user=JMyles --password=x'},
@@ -39,7 +39,7 @@ class Fixture:
                                               context_heap=self.heap)
 
     def test_a_prefix_or_link_finds_the_message(self):
-        for ref in ('03e36f39', ' 03E36F39 ', f'https://x/motions/porch/#m-{self.call.id}', str(self.call.id)):
+        for ref in ('03e36f39', ' 03E36F39 ', f'https://x/moods/porch/#m-{self.call.id}', str(self.call.id)):
             self.assertEqual(resolve_message(ref)[0].id, self.call.id, ref)
         message, _, problem = resolve_message('03e3')
         self.assertIsNone(message)

@@ -1,4 +1,4 @@
-"""Give messages, Motions and notes their Ethereum block heights.
+"""Give messages, Moods and notes their Ethereum block heights.
 
 Ingest leaves eth_blockheight null so it never waits on a node. This fills
 it in afterwards: sync anchors from a node up to the finalized head, then
@@ -9,7 +9,7 @@ A failed sync is reported and stamping goes ahead with the anchors on hand.
 from django.core.management.base import BaseCommand
 from django.db.models import Min
 
-from conversations.models import Message, Motion, Note
+from conversations.models import Message, Mood, Note
 from conversations.services import eth_blocks
 
 
@@ -21,7 +21,7 @@ def earliest_unstamped():
           .aggregate(t=Min('timestamp'))['t'])
     if ms is not None:
         candidates.append(ms // 1000)
-    for model in (Motion, Note):
+    for model in (Mood, Note):
         created = model.objects.filter(eth_blockheight__isnull=True).aggregate(t=Min('created_at'))['t']
         if created is not None:
             candidates.append(max(int(created.timestamp()), floor))
@@ -51,7 +51,7 @@ class Command(BaseCommand):
 
         clock = eth_blocks.BlockClock()
         messages = eth_blocks.stamp_messages(clock)
-        motions = eth_blocks.stamp_created(clock, Motion)
+        moods = eth_blocks.stamp_created(clock, Mood)
         notes = eth_blocks.stamp_created(clock, Note)
         self.stdout.write(self.style.SUCCESS(
-            f"stamped messages={messages} motions={motions} notes={notes}"))
+            f"stamped messages={messages} moods={moods} notes={notes}"))

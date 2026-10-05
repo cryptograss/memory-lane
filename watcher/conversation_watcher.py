@@ -103,11 +103,11 @@ class ConversationWatcher(FileSystemEventHandler):
         # Well under the server's DATA_UPLOAD_MAX_MEMORY_SIZE.
         self.max_post_bytes = 8 * 1024 * 1024
         # A forked or resumed session's file starts by repeating its whole
-        # history under the original uuids -- for a long Motion, thousands
+        # history under the original uuids -- for a long Mood, thousands
         # of lines the record already has, sent ahead of the one new reply.
         # Uuids already read are skipped, except the first repeat in each
         # new file, which the importer needs to claim the fork for its
-        # Motion (MotionSession.claim_by_history). Off during a replay.
+        # Mood (MoodSession.claim_by_history). Off during a replay.
         self.seen_uuids = set()
         self.max_seen = 500_000
         self.anchored = set()   # files that have already sent their claim line

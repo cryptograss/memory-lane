@@ -1,0 +1,2633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>magenta</title>
+<link rel="manifest" href="/moods/manifest.webmanifest">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#b8106b" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1f1c20" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" sizes="192x192" href="/moods/icon-192.png">
+<link rel="apple-touch-icon" href="/moods/icon-180.png">
+<style>
+  :root {
+    --bg: #fbfaf7; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b6560;
+    --line: #e6e1d8; --accent: #b8106b; --accent-soft: #fbe7f1;
+    --human: #2a5d9f; --agent: #b8106b; --code: #f3efe8; --mention: #fff3c4;
+    --hover: #f6f3ee; --warn-ink: #7a4b00; --warn-bg: #ffe9b0; --dot-edge: #d6cfc2; --err: #b3261e;
+  }
+  /* Dark, when the system is: the same tokens, night colours. */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161417; --panel: #1f1c20; --ink: #ece7e1; --muted: #a39b93;
+      --line: #36313a; --accent: #ef5aa6; --accent-soft: #3a1a2b;
+      --human: #86b4f0; --agent: #ef5aa6; --code: #29252c; --mention: #4a3f12;
+      --hover: #262228; --warn-ink: #ffd27a; --warn-bg: #3b2c08; --dot-edge: #4d4652; --err: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.5; color: var(--ink); background: var(--bg);
+    display: flex; flex-direction: column;
+  }
+  /* One slim line: where you are, the servers, search, and you. */
+  header {
+    display: flex; align-items: center; gap: 10px; padding: 5px 14px; min-height: 38px;
+    border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: nowrap; position: relative;
+  }
+  header .brand { font-weight: 700; color: var(--accent); letter-spacing: .02em; text-decoration: none; white-space: nowrap; }
+  header .crumb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  header .crumb::before { content: '› '; color: var(--muted); font-weight: 400; }
+  header .crumb:empty { display: none; }
+  header .crumb #rename { margin-left: 4px; border: 0; background: none; color: var(--muted); font-size: 14px; cursor: pointer; padding: 0 2px; }
+  header .crumb #rename:hover { color: var(--accent); }
+  header .grow { flex: 1; }
+  header select { font: inherit; font-size: 13px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink); }
+  header .status { font-size: 0; }
+  header .status::before { content: "●"; font-size: 11px; color: var(--muted); }
+  header .status.live::before { color: #2e9e5b; }
+  header .status.stale::before { color: #d08b00; }
+  header .account { position: relative; }
+  #userBtn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 14px; padding: 1px 10px;
+             font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  #userBtn:hover { border-color: var(--accent); }
+  #userMenu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 220px; background: var(--panel);
+              border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.14); padding: 6px 0;
+              display: flex; flex-direction: column; font-size: 13px; }
+  #userMenu[hidden] { display: none; }
+  #userMenu > * { padding: 6px 14px; color: var(--ink); text-decoration: none; text-align: left; }
+  #userMenu > a:hover, #userMenu > button:hover { background: var(--hover); }
+  #userMenu #pasteLink { margin-top: 8px; color: var(--muted); }
+  #userMenu #pasteLink label { display: block; font-size: 12.5px; margin-bottom: 3px; }
+  #userMenu #pasteLink span { display: flex; gap: 6px; }
+  #userMenu #pasteLink input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--line);
+                               border-radius: 5px; background: var(--bg); color: var(--ink); }
+  #userMenu #pasteLink button { font: inherit; font-size: 13px; border: 0; border-radius: 5px; padding: 3px 10px;
+                                background: var(--accent); color: #fff; cursor: pointer; }
+  #userMenu .textsize { display: flex; align-items: center; gap: 6px; color: var(--ink); }
+  #userMenu .textsize button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px;
+                               background: var(--panel); color: var(--ink); cursor: pointer; padding: 1px 7px; }
+  #userMenu .textsize span { min-width: 3em; text-align: center; color: var(--muted); font-size: 12.5px; }
+  #userMenu .auth { color: var(--muted); border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+  #userMenu label { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
+  #userMenu label.only { display: none; }
+  body.has-me #userMenu label.only { display: flex; }
+  body.writer #userMenu label.me { display: none; }
+  #userMenu #notify { border: 0; background: none; font: inherit; cursor: pointer; }
+  /* The servers: four dots, pulsing while one is being redeployed. */
+  .servers { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+  .servers .srv { width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
+  .servers .srv.up { background: #2e9e5b; }
+  .servers .srv.down { background: #d13b30; }
+  .servers .srv.deploying { background: #d08b00; animation: pulse 1s ease-in-out infinite; }
+  #serverPop { position: absolute; z-index: 30; top: calc(100% + 6px); right: 120px; min-width: 260px; background: var(--panel);
+               border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.14); padding: 8px 12px; font-size: 13px; }
+  #serverPop[hidden] { display: none; }
+  #serverPop > div { padding: 5px 0; display: flex; gap: 10px; align-items: center; }
+  #serverPop > div + div { border-top: 1px solid var(--line); }
+  /* Each server's art from its PickiPedia page, as a little ASCII portrait. */
+  #serverPop pre.art { margin: 0; flex: none; font-size: 2.6px; line-height: 1.05; letter-spacing: 0; color: var(--ink);
+                       font-family: ui-monospace, Menlo, Consolas, monospace; }
+  #serverPop .role { font-style: italic; color: var(--muted); }
+  #serverPop a { color: inherit; }
+  #serverPop .note { color: var(--muted); font-size: 12px; }
+  #devicesBox { position: fixed; z-index: 30; top: 44px; right: 12px; width: min(460px, 94vw); max-height: 75vh; overflow-y: auto;
+                background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.18);
+                padding: 10px 14px; font-size: 13px; }
+  #devicesBox[hidden] { display: none; }
+  #devicesBox .head { display: flex; justify-content: space-between; margin-bottom: 6px; }
+  #devicesBox .dev { border-top: 1px solid var(--line); padding: 7px 0; }
+  #devicesBox .dev .meta { color: var(--muted); font-size: 12px; }
+  #devicesBox .devwhich { margin-bottom: 6px; }
+  #devicesBox .devperson { margin-top: 10px; }
+  #devicesBox .tier { font-size: 11px; letter-spacing: .04em; color: var(--muted); }
+  #devicesBox .devid { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; background: none;
+    color: var(--muted); padding: 0 4px; cursor: pointer; }
+  #devicesBox .devid[data-copied]::after { content: ' copied'; color: var(--accent); }
+  #devicesBox .dev.revoked, #devicesBox .dev.timed { opacity: .65; }
+  #devicesBox button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel);
+                       color: var(--ink); cursor: pointer; }
+  #noAgents { max-width: min(420px, 90vw); border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+              color: var(--ink); padding: 16px 18px; }
+  #noAgents::backdrop { background: rgba(0,0,0,.35); }
+  #noAgents p { margin: 0 0 10px; }
+  #noAgents button { font: inherit; border: 0; border-radius: 6px; padding: 6px 16px; background: var(--accent); color: #fff; cursor: pointer; }
+  #renameBox, #newBox { position: fixed; z-index: 30; top: 44px; left: 50%; transform: translateX(-50%); width: min(520px, 94vw);
+               background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.18);
+               padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  #renameBox[hidden], #newBox[hidden] { display: none; }
+  #renameBox .archive { float: right; color: var(--muted); }
+  #newBox .hint { font-size: 12.5px; color: var(--muted); }
+  #renameBox input, #renameBox textarea, #newBox input, #newBox textarea { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+                                          background: var(--bg); color: var(--ink); }
+  #renameBox input, #newBox input { font-size: 17px; font-weight: 600; }
+
+  .layout { flex: 1; display: flex; min-height: 0; }
+
+  nav {
+    width: var(--nav-width, 190px); flex: none; overflow-y: auto; background: var(--panel);
+    border-right: 1px solid var(--line); padding: 10px 0;
+  }
+  nav .label { padding: 4px 16px 8px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--muted); display: flex; align-items: center; }
+  nav .label #newMood { margin-left: auto; font: inherit; font-size: 15px; line-height: 1; border: 0; background: none;
+                        color: var(--muted); cursor: pointer; padding: 0 2px; }
+  nav .label #newMood:hover { color: var(--accent); }
+  /* Archived Moods: folded under the list, still readable. */
+  nav #archived { margin-top: 8px; }
+  nav #archived summary { padding: 4px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+                          color: var(--muted); cursor: pointer; }
+  nav #archived a.mood { opacity: .75; }
+  nav a.mood .pin { font-size: 11px; margin-right: -4px; }
+  nav a.mood {
+    display: block; padding: 5px 14px; text-decoration: none; color: inherit;
+    border-left: 3px solid transparent;
+  }
+  nav a.mood:hover { background: var(--hover); }
+  nav a.mood.active { background: var(--accent-soft); border-left-color: var(--accent); }
+  nav a.mood .title { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; line-height: 1.3; }
+  nav a.mood .meta { font-size: 11.5px; color: var(--muted); line-height: 1.3; }
+  nav a.mood .people-line:empty { display: none; }
+  header .block { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; cursor: default; }
+  /* Someone typing or an agent at work: their name pulses where the Mood is listed. */
+  /* What's been happening everywhere, under the list; folds away. */
+  #recent, #work { border-top: 1px solid var(--line); margin-top: 8px; padding: 6px 0 12px; font-size: 12.5px; }
+  #work .ev .repo { color: var(--muted); }
+  #work .older summary { padding: 4px 16px; font-size: 11.5px; color: var(--muted); cursor: pointer; text-transform: none; letter-spacing: 0; }
+  #work .older summary::before { content: ''; }
+  #recent summary, #work > summary { padding: 4px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+                    color: var(--muted); cursor: pointer; list-style: none; }
+  #recent summary::before, #work > summary::before { content: '▸ '; }
+  #recent[open] summary::before, #work[open] > summary::before { content: '▾ '; }
+  #recent .ev, #work .ev { display: block; padding: 4px 16px; color: var(--muted); text-decoration: none; line-height: 1.35; }
+  #recent .ev:hover, #work .ev:hover { background: var(--hover); }
+  #recent .ev b, #work .ev b { color: var(--ink); font-weight: 600; }
+  #recent .ev .txt, #work .ev .txt { display: block; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #recent .ev time, #work .ev time { float: right; margin-left: 6px; }
+  #work .ev .mood { color: var(--accent); cursor: pointer; }
+  nav .nm.live { color: var(--ink); font-weight: 600; animation: pulse 1.2s ease-in-out infinite; }
+  /* Drag the pane's edge to size it; the width is remembered in this browser. */
+  #grip { width: 5px; margin-left: -3px; flex: none; cursor: col-resize; position: relative; z-index: 1; }
+  #grip:hover, body.sizing #grip { background: var(--accent-soft); }
+  body.sizing { cursor: col-resize; user-select: none; }
+  .badge {
+    display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px;
+    background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
+    line-height: 18px; text-align: center;
+  }
+
+  main { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 0 0; container-type: inline-size; }  /* no bottom padding: it would hold the sticky footer off the bottom */
+  /* --gutter: what the jump strip takes at the right (25px + margins). When the
+     window leaves room beside the column the text never reaches it; when the
+     column fills the width (a phone, zoomed in), its text stops short of it. */
+  .inner { --gutter: 36px; max-width: 760px; margin: 0 auto;
+           padding: 0 max(22px, calc(var(--gutter) - max(0px, (100cqw - 760px) / 2))) 0 22px; }
+
+  .mood-head h1 { font-size: 22px; margin: 0 0 4px; }
+  .mood-head .desc { color: var(--muted); margin: 0 0 6px; }
+  .mood-head .meta { font-size: 12px; color: var(--muted); }
+  .mood-head .meta a { color: var(--muted); }
+  .mood-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+
+  /* What was said, at its own size: --text-scale is the reader's choice (the menu's text size), apart from zoom. */
+  :root { --text-base: 15px; --text-scale: 1; }
+  .turn .body, #composer textarea { font-size: calc(var(--text-base) * var(--text-scale)); }
+  .turn { position: relative; padding: 12px 0 12px 10px; margin-left: -10px; border-top: 1px solid var(--line); border-left: 3px solid transparent; }
+  /* A message in a run has no heading: its link is a # at its right, on hover (always, faintly, on a touch screen). */
+  .turn .permalink.mini { display: none; }
+  .turn.cont .permalink.mini { display: block; position: absolute; right: -17px; top: 1px; font-size: 12px; color: var(--muted);
+                               opacity: 0; padding: 0 3px; }
+  .turn.cont:hover .permalink.mini, .turn.cont .permalink.mini:focus { opacity: .9; }
+  @media (hover: none) { .turn.cont .permalink.mini { opacity: .45; } }
+  a.permalink.mini[data-copied]::after { content: '✓'; position: absolute; left: 100%; }
+  #turns > .turn:first-child { border-top: 0; }
+  /* The same sender again within minutes: one heading for the run. */
+  .turn.cont { border-top: 0; padding-top: 0; }
+  .turn.cont .who { display: none; }
+  .turn.mentions-me { border-left-color: var(--accent); }
+  body.only-mine .turn:not(.mentions-me) { display: none; }
+  .turn .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .turn .who .name { font-weight: 700; }
+  .turn.human .who .name { color: var(--human); }
+  .turn.agent .who .name { color: var(--agent); }
+  .turn .who time { font-size: 12px; color: var(--muted); }
+  .turn .who .from-phone { font-size: 11px; margin-left: -4px; opacity: .75; }
+  .turn .who .name a { color: inherit; text-decoration: none; }
+  .turn .who .name a:hover { text-decoration: underline; }
+  /* Signed in with PickiPedia rather than an SSH key. */
+  .turn .who .tier { font-size: 10.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; border-radius: 6px;
+                     padding: 0 5px; margin-left: -2px; border: 1px solid var(--line); color: var(--muted); }
+  #userMenu .wikiin { display: inline-block; margin: 6px 0 2px; font-weight: 600; color: var(--accent); }
+  .turn .who .how, .work .who .how { font-size: 11px; color: var(--muted); background: var(--code); border-radius: 8px; padding: 0 7px; }
+  .turn .body > :first-child { margin-top: 0; }
+  .turn .body > :last-child { margin-bottom: 0; }
+  .turn .body p { margin: 0 0 .7em; }
+  .turn .body ul, .turn .body ol { margin: 0 0 .7em; padding-left: 1.4em; }
+  .turn .body h4 { margin: .8em 0 .3em; font-size: 1em; }
+  .turn .body code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: .87em; }
+  .turn .body pre { background: var(--code); padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: .87em; }
+  .turn .body pre code { background: none; padding: 0; }
+  .turn .body table { border-collapse: collapse; margin: .4em 0 .8em; font-size: .93em; }
+  .turn .body th, .turn .body td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; vertical-align: top; }
+  .turn .body th { background: var(--code); font-weight: 600; }
+  .turn .body a { color: var(--human); }
+  .turn .body a.wikilink { color: var(--accent); text-decoration: underline dotted; }
+  /* A Yarn clip: a card until pressed, then Yarn's player in its place. */
+  .turn .body a.yarn { display: inline-block; margin: 4px 0; padding: 6px 12px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--panel); color: var(--ink); text-decoration: none; font-size: .95em; }
+  .turn .body a.yarn:hover { border-color: var(--accent); }
+  .turn .body .yarnbox { width: min(480px, 100%); aspect-ratio: 16 / 9; margin: 4px 0; }
+  .turn .body .yarnbox video { width: 100%; height: 100%; border-radius: 8px; background: #000; }
+  .turn .body a.yarn.thumb { position: relative; padding: 0; overflow: hidden; line-height: 0; max-width: min(480px, 100%); }
+  .turn .body a.yarn.thumb img { display: block; width: 100%; height: auto; }
+  .turn .body a.yarn .yarnplay { position: absolute; inset: 0; margin: auto; width: 56px; height: 56px; border-radius: 50%;
+    background: rgba(0,0,0,.55); color: #fff; font-size: 24px; line-height: 56px; text-align: center; padding-left: 4px; }
+  .turn .body a.yarn.thumb:hover .yarnplay { background: var(--accent); }
+  .mention { background: var(--code); border-radius: 4px; padding: 0 4px; font-weight: 600; }
+  .mention.me { background: var(--mention); }
+  .turn.new { animation: arrive .6s ease-out; }
+  @keyframes arrive { from { background: var(--accent-soft); } to { background: transparent; } }
+
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  header .auth { font-size: 13px; color: var(--muted); }
+  header .preview { font-size: 12px; font-weight: 600; color: var(--warn-ink); background: var(--warn-bg); border-radius: 4px; padding: 1px 8px; }
+  header .auth a { color: var(--muted); }
+  #footer { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); }
+  /* Up and down a message at a time, at the right of the thread. */
+  /* Two pairs: every message (right), people's messages only (left, with a person on them). */
+  /* Tight little tabs in the right margin; the thread keeps a gutter clear of them (main, below). */
+  #jump { --jw: 25px; --jh: 19px; position: absolute; right: 4px; bottom: calc(100% + 6px); display: grid;
+          grid-template-columns: auto; gap: 2px; }
+  /* One strip, symmetric: for you, people, every message -- up above, down below. */
+  #jumpMeUp { order: 1; } #jumpHumanUp { order: 2; } #jumpUp { order: 3; }
+  #jumpDown { order: 4; } #jumpHumanDown { order: 5; } #jumpMeDown { order: 6; }
+  #jump button { width: var(--jw); height: var(--jh); border-radius: 3px; border: 1px solid var(--line); background: var(--panel);
+                 color: var(--muted); font-size: 12px; line-height: 1; cursor: pointer; opacity: .85;
+                 display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+  #jump button:hover { opacity: 1; }
+  #jump button.human { color: var(--human); font-size: 11px; gap: 0; }
+  /* A third pair, for what's for you (mentions of you, answers to you), once you're someone. */
+  #jump button.forme { display: none; color: var(--accent); font-size: 10.5px; letter-spacing: -.5px; }
+  body.has-me #jump button.forme { display: inline-flex; }
+  #toBottom { display: none; position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% + 12px);
+              border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 16px;
+              padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  #toBottom.on { display: block; }
+  #toBottom:hover { color: var(--accent); border-color: var(--accent); }
+  .turn.for-me { border-left-color: var(--accent); }
+  .turn.flash { animation: flash 2.4s ease-out; }
+  @keyframes flash { from { background: var(--mention); } to { background: transparent; } }
+  /* Search: a panel over the thread, at the right. */
+  #searchBtn { border: 1px solid var(--line); background: var(--panel); color: var(--muted); border-radius: 14px;
+               padding: 1px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+  #searchBtn:hover { color: var(--accent); border-color: var(--accent); }
+  #search { position: fixed; top: 41px; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--panel);
+            border-left: 1px solid var(--line); box-shadow: -4px 0 18px rgba(0,0,0,.12); z-index: 20;
+            display: flex; flex-direction: column; }
+  #search[hidden] { display: none; }
+  #search .bar { display: flex; gap: 6px; padding: 10px; border-bottom: 1px solid var(--line); }
+  #search input { flex: 1; min-width: 0; font: inherit; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px;
+                  background: var(--bg); color: var(--ink); }
+  #search select, #search button { font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 6px;
+                                   background: var(--panel); color: var(--ink); }
+  #search button { cursor: pointer; padding: 0 9px; }
+  #qresults { overflow-y: auto; flex: 1; }
+  #qresults .hit { display: block; padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--muted);
+                   text-decoration: none; font-size: 12.5px; }
+  #qresults .hit:hover { background: var(--hover); }
+  #qresults .hit b { color: var(--ink); }
+  #qresults .hit .txt { display: block; color: var(--ink); font-size: 13.5px; margin-top: 2px; }
+  #qresults mark { background: var(--mention); color: inherit; border-radius: 2px; }
+  #qresults .note { padding: 12px; color: var(--muted); font-size: 13px; }
+  #notify { border: 0; background: none; cursor: pointer; font-size: 15px; padding: 0 2px; color: var(--muted); }
+  #notify[hidden] { display: none; }
+  #jump button.human svg { width: 9px; height: 9px; }
+  #jump button:hover { color: var(--accent); border-color: var(--accent); }
+  /* Where a session's context was compacted: one line, its summary on demand. */
+  /* Something that happened around the conversation: a server redeployed. */
+  a.permalink { color: inherit; text-decoration: none; }
+  /* Replies: ↩ on a message starts one; a reply shows what it answers above it. */
+  .turn .replybtn { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 4px; opacity: 0; }
+  .turn:hover .replybtn, .turn .replybtn:focus { opacity: 1; }
+  @media (pointer: coarse) { .turn .replybtn { opacity: .6; } }
+  .turn a.replyto { display: block; margin: 2px 0 4px; padding-left: 8px; border-left: 2px solid var(--line); color: var(--muted);
+    font-size: 12.5px; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .turn a.replyto:hover { border-left-color: var(--accent); color: var(--ink); }
+  #replying { max-width: 760px; margin: 0 auto; padding: 6px 16px 0; font-size: 12.5px; color: var(--muted);
+    display: flex; gap: 8px; align-items: center; }
+  #replying[hidden] { display: none; }
+  #replying .what { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #replying button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+  a.permalink:hover time { text-decoration: underline; }
+  a.permalink[data-copied]::after { content: ' link copied'; color: var(--accent); font-size: 11px; }
+  /* An agent's turn: everything it did between a person's words and its last, under one header. */
+  .aturn { margin: 4px 0 4px -10px; border-left: 3px solid transparent; }
+  .aturn:hover { border-left-color: var(--line); }
+  .ahead { display: flex; gap: 6px; align-items: baseline; width: 100%; text-align: left; border: 0; background: none;
+           padding: 6px 10px 2px; font: inherit; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+  .ahead b { color: var(--agent); font-weight: 600; }
+  .ahead .caret { width: 10px; flex: none; }
+  .ahead .preview { display: none; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                    color: var(--ink); font-size: 13.5px; }
+  .aturn.folded .ahead .preview { display: block; }
+  .aturn.folded .abody { display: none; }
+  .abody { padding-left: 10px; }
+  /* A statement signed with someone's SSH key. */
+  .signed { font-size: 11.5px; color: #2e9e5b; border: 1px solid currentColor; border-radius: 10px; padding: 0 7px;
+            cursor: pointer; background: none; font-family: inherit; }
+  .turn.attested { border-left-color: var(--human); background: linear-gradient(90deg, var(--accent-soft), transparent 60%); }
+  .proof .check { font-size: 13px; margin-bottom: 6px; }
+  .proof .check .bad { color: var(--err, #c0392b); }
+  .proof { font-size: 12px; background: var(--code); border-radius: 6px; padding: 8px 10px; margin-top: 6px; }
+  .proof pre { white-space: pre-wrap; word-break: break-all; margin: 4px 0; font-size: 11px; }
+  .event { margin: 8px 0; font-size: 12.5px; color: var(--muted); text-align: center; }
+  .event.failed { color: var(--err); }
+  .event.wiki { text-align: left; font-size: 12px; margin: 4px 0; }
+  .event.wiki a { color: inherit; }
+  .event.wiki .delta { color: var(--muted); text-decoration: none; }
+  .event.wiki summary { cursor: pointer; }
+  .event.wiki .each { margin: 4px 0 0 18px; }
+  .event code { font-size: 11.5px; }
+  .compaction { margin: 10px 0; font-size: 13px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
+  .compaction summary { cursor: pointer; list-style: none; }
+  .compaction summary::before { content: '⟲ '; }
+  .compaction[open] summary { margin-bottom: 6px; }
+  .compaction .body { font-size: 13px; color: var(--ink); background: var(--code); border-radius: 6px; padding: 8px 12px;
+                      max-height: 60vh; overflow-y: auto; }
+  #activity, #composer { max-width: 760px; margin: 0 auto; }  /* the reading column's width */
+  #composer { display: none; position: relative; padding: 10px 16px 14px; }
+  body.writer #composer { display: flex; gap: 8px; align-items: flex-end; }
+  #composer textarea { flex: 1; font-family: inherit; line-height: inherit; min-height: 44px; max-height: 40vh; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+  #composer button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+  #composer button:disabled { opacity: .5; cursor: default; }
+  #composer .err { color: var(--accent); font-size: 12px; }
+  #composer .note { color: var(--muted); font-size: 12px; align-self: center; }
+  #activity { display: none; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--muted); }
+  #activity.on { display: flex; }
+  #activity .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--agent); animation: pulse 1.2s ease-in-out infinite; }
+  #activity b { color: var(--agent); }
+  /* Held: owed a turn the runner isn't starting yet -- a still dot, not a pulse. */
+  #activity.held .dot { animation: none; opacity: .35; }
+  #activity #stopBtn { margin-left: auto; font: inherit; font-size: 12px; padding: 2px 9px; border: 1px solid var(--line);
+                       border-radius: 10px; background: var(--panel); color: var(--muted); cursor: pointer; white-space: nowrap; }
+  #activity #stopBtn:hover { color: var(--err); border-color: var(--err); }
+  @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+  .people { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .people .who { font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--code); }
+  .people .who.human { color: var(--human); }
+  .people .who.agent { color: var(--agent); }
+  .people .who.busy::after { content: ' ●'; animation: pulse 1.2s ease-in-out infinite; }
+  /* Who is a person and who is an agent, wherever a name appears. */
+  .ico { width: 13px; height: 13px; fill: currentColor; vertical-align: -1px; margin-right: 4px; flex: none; }
+  .people .who.typing::after { content: ' typing…'; color: var(--muted); animation: pulse 1.2s ease-in-out infinite; }
+  #tasks { display: none; flex-wrap: wrap; gap: 6px; padding: 6px 16px 0; font-size: 12.5px; color: var(--muted);
+           max-width: 760px; margin: 0 auto; }
+  #tasks.on { display: flex; }
+  #tasks .task { background: var(--code); border-radius: 10px; padding: 1px 9px; }
+  #tasks .sum { cursor: pointer; }
+  #tasks .sum:hover { color: var(--ink); }
+  #tasks .list { display: none; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
+  #tasks.open .list { display: flex; }
+  #tasks .task::before { content: '⚙ '; }
+  #tasks .task.helper::before { content: '✦ '; }
+  #typing { display: none; padding: 6px 16px 0; font-size: 13px; color: var(--muted); }
+  #typing.on { display: block; }
+
+  /* An agent's tool calls between its words: one line, opened on demand. */
+  .work { margin: 2px 0 6px -10px; padding-left: 13px; }
+  .work .who { display: flex; align-items: baseline; gap: 8px; margin: 10px 0 4px; }
+  .work .who .name { font-weight: 700; color: var(--agent); }
+  .work .who time { font-size: 12px; color: var(--muted); }
+  .work.cont .who { display: none; }
+  .work-head { font: inherit; font-size: 13px; color: var(--muted); background: none; border: 0; padding: 2px 0;
+               cursor: pointer; text-align: left; }
+  .work-head:hover { color: var(--ink); }
+  .work-head .caret { display: inline-block; width: 1em; transition: transform .15s; }
+  .work.open > .work-head .caret { transform: rotate(90deg); }
+  .work .steps { display: none; margin: 4px 0 8px; border-left: 2px solid var(--line); padding-left: 10px; }
+  .work.open .steps { display: block; }
+  .step-head { font: inherit; font-size: 13px; background: none; border: 0; padding: 3px 0; cursor: pointer;
+               text-align: left; color: var(--ink); display: flex; gap: 8px; width: 100%; align-items: baseline; }
+  .step-head code { font-size: 12px; background: var(--code); padding: 0 5px; border-radius: 4px; color: var(--muted); flex: none; }
+  .step-head .sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .step.err .step-head code { color: var(--err); }
+  .step-detail { display: none; margin: 4px 0 10px; }
+  .step.open .step-detail { display: block; }
+  .step-detail .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 6px 0 2px; }
+  .step-detail pre { margin: 0; background: #1e1d1b; color: #ece8e1; padding: 9px 11px; border-radius: 6px;
+                     font-size: 12.5px; line-height: 1.45; max-height: 360px; overflow: auto; white-space: pre-wrap;
+                     word-break: break-word; }
+  .step-detail pre .del { color: #ff9b8f; }
+  .step-detail pre .add { color: #9be59b; }
+  .step-detail pre .dim { color: #9a948b; }
+  .step-detail .err pre { box-shadow: inset 3px 0 0 #e5534b; }
+  #earlier { display: block; margin: 6px auto 14px; font: inherit; font-size: 13px; color: var(--muted);
+             background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 3px 14px; cursor: pointer; }
+  body.only-mine .work { display: none; }
+  /* An agent's choices not to speak: small dots, side by side. */
+  .quiet { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 4px -10px; padding: 4px 13px; }
+  .quiet .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); border: 1px solid var(--dot-edge);
+                cursor: pointer; padding: 0; }
+  .quiet .dot:hover, .quiet .dot.on { background: var(--agent); border-color: var(--agent); }
+  /* The runner's quick screen let this pass; the agent itself never looked. */
+  .quiet .dot.screened { background: transparent; border-style: dashed; }
+  .quiet .dot.screened:hover, .quiet .dot.screened.on { background: transparent; border-color: var(--agent); }
+  .quiet .why { flex-basis: 100%; font-size: 13px; color: var(--muted); font-style: italic; }
+  body.only-mine .quiet { display: none; }
+  /* Thinking the harness kept: dim, as a terminal shows it between tool calls. */
+  .thought { margin: 2px 0 4px -10px; padding: 0 13px; font-size: 13.5px; font-style: italic; color: var(--muted);
+             white-space: pre-wrap; }
+  .thought::before { content: '∴ '; font-style: normal; }
+  body.only-mine .thought { display: none; }
+  /* Images: in turns, as thumbnails on a run of work, inside a step. */
+  .turn .body a.img { display: inline-block; margin: 4px 0; }
+  .turn .body img { display: block; max-width: 100%; max-height: 420px; border-radius: 6px; border: 1px solid var(--line); }
+  .work .thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 4px; }
+  .work .thumbs img, .step-detail .shots img { height: 84px; max-width: 160px; object-fit: cover; border-radius: 4px;
+                                                border: 1px solid var(--line); cursor: zoom-in; }
+  .step-detail .shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  #composer #attach {  /* beats #composer button, the Send style */
+    font: inherit; font-size: 18px; line-height: 1; padding: 8px 10px; background: none; color: var(--muted);
+            border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  #composer #attach:hover { color: var(--ink); }
+  /* On a phone, the agents' settings fold behind ⚙ and Send is an arrow: the room goes to the conversation. */
+  #composer #agentsBtn { display: none; position: relative; font: inherit; font-size: 17px; line-height: 1; padding: 8px 9px;
+                         background: none; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  #composer #agentsBtn .pie { position: absolute; top: -3px; right: -3px; margin: 0; }
+  #send svg { display: none; width: 18px; height: 18px; vertical-align: middle; }
+  /* Voice: a memo recorded here, and messages read aloud (services/voice.py). */
+  #composer #memoBtn { font: inherit; font-size: 16px; line-height: 1; padding: 8px 9px; background: none; color: var(--muted);
+                       border: 1px solid var(--line); border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  #composer #memoBtn[hidden] { display: none; }
+  #composer #memoBtn.recording { color: #fff; background: var(--err, #c0392b); border-color: transparent; font-size: 13px; }
+  #composer #memoBtn.busy { opacity: .6; cursor: progress; font-size: 13px; }
+  .turn .speak { font: inherit; font-size: 11px; line-height: 1; border: 1px solid var(--line); border-radius: 9px; background: none;
+                 color: var(--muted); cursor: pointer; padding: 2px 7px; }
+  .turn .speak:hover, .turn .speak.playing { color: var(--accent); border-color: var(--accent); }
+  .turn .speak.directed::after { content: ' ✦'; }
+  .turn .voices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .turn .voices .speak { font-size: 12px; padding: 3px 9px; }
+  .turn .speak.busy { cursor: progress; opacity: .6; }
+  .turn .speak.mini { display: none; }
+  .turn.cont .speak.mini { display: inline-block; position: absolute; right: -19px; top: 20px; opacity: 0; padding: 1px 4px; border: 0; }
+  .turn.cont:hover .speak.mini, .turn.cont .speak.mini.playing, .turn.cont .speak.mini.busy { opacity: .9; }
+  @media (hover: none) { .turn.cont .speak.mini { opacity: .45; } }
+  .turn .body audio { display: block; width: 100%; max-width: 420px; height: 36px; margin: 4px 0; }
+  .turn .body .memo { font-size: 12.5px; color: var(--muted); }
+  #composer.dropping textarea { outline: 2px dashed var(--accent); }
+  /* Whether each agent is listening here; a hush for a long deliberation. */
+  /* Each agent's listening, model and effort, and its pie: in the footer, always in view. */
+  .hush { display: flex; flex-wrap: wrap; gap: 8px; max-width: 760px; margin: 0 auto; padding: 6px 16px 0;
+          font-size: 12.5px; color: var(--muted); }
+  .hush:empty { display: none; }
+  .hush select { font: inherit; font-size: 12.5px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px;
+                 background: var(--panel); color: var(--ink); }
+  .hush .off { color: var(--accent); }
+  .hush .ultra { white-space: nowrap; cursor: pointer; }
+  .hush .ultra input { vertical-align: -2px; margin: 0 2px 0 0; }
+  /* How full an agent's context is: a little pie, its details on hover. */
+  /* Its colour says how close to compacting: green to 70%, yellow to 80, orange to 90, red above. */
+  .pie { --pc: #2e9e4f; display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px;
+         margin-right: 4px; background: conic-gradient(var(--pc) var(--p), transparent 0);
+         box-shadow: inset 0 0 0 1px var(--pc); cursor: help; }
+  .pie.warm { --pc: #d4a514; }
+  .pie.hot { --pc: #e8761c; }
+  .pie.full { --pc: #d63a2f; }
+  #locked { display: none; background: #3a0d0d; color: #ffd9d9; padding: 8px 16px; font-size: 13.5px; }
+  body.locked #locked { display: block; }
+  body.locked #composer, body.locked #typing { display: none !important; }
+  header a.settings { font-size: 13px; color: var(--muted); }
+  #suggest { display: none; position: absolute; bottom: 100%; left: 16px; margin-bottom: 4px; background: var(--panel);
+             border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.08); min-width: 180px; z-index: 5; }
+  #suggest.on { display: block; }
+  #suggest div { padding: 5px 10px; cursor: pointer; font-size: 14px; }
+  #suggest div.sel, #suggest div:hover { background: var(--accent-soft); }
+  #suggest small { color: var(--muted); margin-left: 6px; }
+  #suggest .emo { display: inline-block; width: 1.6em; font-size: 16px; }
+  #menu { display: none; font: inherit; font-size: 20px; line-height: 1; background: none; border: 0;
+          color: var(--muted); cursor: pointer; padding: 0 2px; }
+  @media (max-width: 720px) {
+    header { flex-wrap: nowrap; gap: 8px; padding: 6px 12px; }
+    header .brand small { display: none; }
+    header .preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+    #menu { display: block; }
+    header .brand { display: none; }  /* the Mood's name matters more here */
+    header .block { display: none; }
+    header .crumb::before { content: none; }
+    header .preview { max-width: 70px; }
+    #serverPop { right: 8px; }
+    .layout { flex-direction: column; }
+    nav, #grip { display: none; }
+    body.menu-open nav { display: block; width: auto; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    main { padding-top: 12px; }
+    .inner { padding: 0 max(12px, calc(var(--gutter) - max(0px, (100cqw - 760px) / 2))) 0 12px; }
+    .mood-head h1 { font-size: 19px; }
+    #activity { padding: 6px 12px; }
+    .hush { padding: 4px 12px 0; }
+    #jump { right: 3px; }
+    :root { --text-base: 16.5px; }
+    #composer { padding: 6px 8px 8px; gap: 6px; }
+    /* No grip: a finger finds it by accident. The box grows with its text instead (fitSay). */
+    #composer textarea { min-height: 38px; padding: 7px 9px; resize: none; }
+    #composer textarea::placeholder { white-space: nowrap; overflow: hidden; }
+    #composer #attach { padding: 8px 9px; }
+    #composer #agentsBtn { display: block; }
+    #composer #send { padding: 8px 10px; }
+    #send .label { display: none; }
+    #send svg { display: inline-block; }
+    .hush { display: none; }
+    body.agents-open .hush:not(:empty) { display: flex; padding: 6px 10px 2px; max-height: 40vh; overflow-y: auto; }
+  }
+  /* Signed in, you are who you are: no need to choose whose view to see. */
+</style>
+</head>
+<body>
+<header>
+  <button id="menu" type="button" aria-label="Moods" aria-expanded="false">☰</button>
+  <a class="brand" href="/moods/">magenta</a>
+  <span class="crumb" id="crumb"></span>
+  {% if preview_label %}<span class="preview" title="A branch's code, not production; see the label for which record">{{ preview_label }}</span>{% endif %}
+  <span class="grow"></span>
+  <span class="block" id="block" title="Ethereum mainnet's block height"></span>
+  <span class="servers" id="servers" title="Servers"></span>
+  <button id="searchBtn" type="button" title="Search what was said (/)">⌕</button>
+  <span class="status" id="status" title="connecting…"></span>
+  <span class="account">
+    <button id="userBtn" type="button" aria-haspopup="true" aria-expanded="false"></button>
+    <div id="userMenu" hidden>
+      <div class="auth" id="auth"></div>
+      <label class="me">viewing as <select id="me"><option value="">nobody</option></select></label>
+      <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
+      <span class="textsize">text size <button type="button" data-step="-1" aria-label="Smaller text">A−</button><span id="textSizeVal">100%</span><button type="button" data-step="1" aria-label="Larger text">A+</button></span>
+      <button id="notify" type="button" hidden aria-label="Notifications"></button>
+      <a href="#" id="devicesLink" hidden>your devices</a>
+      <a class="settings" href="/moods/settings/" title="How each agent carries itself in each Mood">settings</a>
+      <a href="#" id="signout" hidden>sign out</a>
+    </div>
+  </span>
+</header>
+<div id="devicesBox" hidden role="dialog" aria-label="Your devices">
+  <div class="head"><b id="devicesTitle">Your devices</b> <button type="button" id="devicesClose">close</button></div>
+  <div id="devicesList"></div>
+</div>
+<form id="renameBox" hidden>
+  <input id="renameTitle" maxlength="200" aria-label="Title" placeholder="Title">
+  <textarea id="renameDesc" rows="2" maxlength="2000" aria-label="Description" placeholder="What it's about (optional)"></textarea>
+  <span><button type="submit">Rename</button> <button type="button" id="renameCancel">Cancel</button>
+    <button type="button" id="archiveBtn" class="archive" title="Out of the Moods list, into Archived. It stays readable, its sessions and container untouched, and a mention there is still answered.">Archive</button>
+    <button type="button" id="pinBtn" class="archive" title="At the top of the Moods list, for everyone">Pin</button></span>
+</form>
+<dialog id="noAgents">
+  <p><b>Agents can't be addressed from a PickiPedia sign-in.</b></p>
+  <p>Take <span class="who"></span> out of your message and send it again. To wake an agent, sign in with your SSH key (<code>magenta.sh login</code>).</p>
+  <button type="button">OK</button>
+</dialog>
+<form id="newBox" hidden>
+  <input id="newTitle" maxlength="200" aria-label="Title" placeholder="What the new Mood is about">
+  <textarea id="newDesc" rows="2" maxlength="2000" aria-label="Description" placeholder="A line or two more (optional)"></textarea>
+  <span class="hint">Its first @magent starts a new session there, briefed by the letter magent left itself.</span>
+  <span><button type="submit">Start</button> <button type="button" id="newCancel">Cancel</button></span>
+</form>
+<div id="locked"></div>
+<div id="search" hidden role="search">
+  <div class="bar">
+    <input id="q" type="search" placeholder="Search what was said" aria-label="Search what was said" autocomplete="off">
+    <select id="qscope" aria-label="Where"><option value="here">this Mood</option><option value="all">all Moods</option></select>
+    <button type="button" id="qclose" aria-label="Close search">close</button>
+  </div>
+  <div id="qresults"></div>
+</div>
+<div class="layout">
+  <nav id="nav"><div id="moodList"><div class="label">Moods</div></div>
+    <details id="recent"><summary>Recent changes</summary><div id="recentList"></div></details>
+    <details id="work"><summary>Open work</summary><div id="workList"></div></details></nav>
+  <div id="grip" title="Drag to resize; double-click to reset"></div>
+  <main id="main"><div class="inner" id="inner"><div class="empty">Loading…</div></div>
+    <div id="footer">
+    <div id="jump"><button type="button" class="human" id="jumpHumanUp" title="previous message from a person" aria-label="previous message from a person">↑</button><button type="button" id="jumpUp" title="previous message" aria-label="previous message">↑</button><button type="button" class="forme" id="jumpMeUp" title="previous message for you: a mention, or an answer" aria-label="previous message for you">@↑</button><button type="button" class="human" id="jumpHumanDown" title="next message from a person" aria-label="next message from a person">↓</button><button type="button" id="jumpDown" title="next message" aria-label="next message">↓</button><button type="button" class="forme" id="jumpMeDown" title="next message for you: a mention, or an answer" aria-label="next message for you">@↓</button></div>
+    <button type="button" id="toBottom">↓ newest</button>
+    <div id="typing"></div>
+    <div id="tasks"></div>
+    <div id="activity"><span class="dot"></span><span id="activityText"></span><button type="button" id="stopBtn" title="Stop it, as Esc does in a terminal (Esc in the message box does the same). What was said stays; add to it and it reads both." hidden>■ stop</button></div>
+    <div class="hush" id="hush"></div>
+    <div id="replying" hidden><span class="what"></span><button type="button" id="replyCancel" title="Don't reply (Esc)" aria-label="Cancel the reply">✕</button></div>
+    <form id="composer" autocomplete="off">
+      <div id="suggest"></div>
+      <button type="button" id="agentsBtn" title="Agents here: listening, model, effort" aria-label="Agent settings" aria-expanded="false">⚙</button>
+      <button type="button" id="attach" title="Add an image (or paste or drop one)" aria-label="Add an image">＋</button>
+      <button type="button" id="memoBtn" title="Record a voice memo: tap to start, tap again to stop. It's transcribed for you to look over before sending." aria-label="Record a voice memo" hidden>🎙</button>
+      <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
+      <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
+      <button type="submit" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z" fill="currentColor"/></svg></button>
+    </form>
+    </div>
+  </main>
+</div>
+
+{{ wiki_names|json_script:"wiki-names" }}
+<script>
+(function () {
+  const POLL_MS = 4000;
+  const initialSlug = "{{ initial_slug|escapejs }}" || null;
+  const nav = document.getElementById('nav');
+  const inner = document.getElementById('inner');
+  const main = document.getElementById('main');
+  const status = document.getElementById('status');
+  const meSelect = document.getElementById('me');
+  const onlyMine = document.getElementById('onlyMine');
+  // Signed in only if this browser was enrolled with an SSH key; see
+  // services/mood_auth.py. Reading never needs it.
+  const viewer = "{{ viewer|escapejs }}" || null;
+  // 'key' (SSH key: everything) or 'wiki' (PickiPedia: chat and mention people only).
+  const viewerTier = "{{ viewer_tier|escapejs }}" || null;
+  const keyHolder = !!viewer && viewerTier === 'key';
+  const wikiSignin = {{ wiki_signin|yesno:"true,false" }};
+  // PickiPedia names for the names here (hunter's inventory); shown wherever a person is named.
+  const WIKI_NAMES = JSON.parse(document.getElementById('wiki-names').textContent || '{}');
+  const shown = n => WIKI_NAMES[n] || n;
+  const userPage = n => WIKI_NAMES[n] ? `${"{{ pickipedia_url|escapejs }}" || 'https://pickipedia.xyz'}/wiki/User:${encodeURIComponent(WIKI_NAMES[n].replace(/ /g, '_'))}` : '';
+  const auth = document.getElementById('auth');
+  const composer = document.getElementById('composer');
+  const sayBox = document.getElementById('say');
+  const sendBtn = document.getElementById('send');
+
+  // Who is looking. Lives in the browser: the view has no accounts, and a
+  // filter is not a permission. Everything here stays readable to anyone.
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('moods.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem('moods.' + k, JSON.stringify(v)); } catch (e) {} },
+  };
+
+  let moods = [];
+  let names = new Set();
+  let current = null;       // slug
+  let lastId = null;        // last turn id rendered, for ?after=
+  let me = viewer || store.get('me', '') || '';
+  let lastSeen = store.get('lastSeen', {});   // slug -> iso
+  let badges = {};          // slug -> count of my mentions since lastSeen
+  let baseTitle = 'magenta';
+  let people = [];          // everyone who can be named, for @-completion
+  let human = {};           // name -> is a person
+  let act = null;           // what an agent is doing now, from /turns/
+  let typingNow = [];       // who else is typing here, from /turns/
+
+  const ICONS = {
+    human: '<svg class="ico" viewBox="0 0 16 16" aria-label="person"><circle cx="8" cy="4.6" r="3"/><path d="M2.2 15c0-3.4 2.6-5.6 5.8-5.6s5.8 2.2 5.8 5.6z"/></svg>',
+    agent: '<svg class="ico" viewBox="0 0 16 16" aria-label="agent"><circle cx="8" cy="1.8" r="1.2"/><rect x="7.4" y="2" width="1.2" height="2.6"/><rect x="2.5" y="4.4" width="11" height="9.2" rx="2.4"/><rect x="0.6" y="7.6" width="1.4" height="3" rx=".6"/><rect x="14" y="7.6" width="1.4" height="3" rx=".6"/><circle cx="5.9" cy="8.6" r="1.25" fill="#fff"/><circle cx="10.1" cy="8.6" r="1.25" fill="#fff"/><rect x="5.6" y="11.1" width="4.8" height="1" rx=".5" fill="#fff"/></svg>',
+  };
+  function icon(name, isHuman) {
+    const h = isHuman === undefined ? !!human[name] : isHuman;
+    return h ? ICONS.human : ICONS.agent;
+  }
+
+  // Which model, at what effort, an agent's turn ran on.
+  function how(item) {
+    const bits = [item.model, item.effort].filter(Boolean);
+    return bits.length ? `<span class="how" title="model · effort">${esc(bits.join(' · '))}</span>` : '';
+  }
+
+  function setStatus(text, cls) { status.textContent = text; status.title = text; status.className = 'status ' + (cls || ''); }
+  function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function ago(iso) {
+    if (!iso) return 'never';
+    const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+  function stamp(iso) {
+    return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+  function setTitle() {
+    const n = Object.values(badges).reduce((a, b) => a + b, 0);
+    document.title = (n ? '(' + n + ') ' : '') + baseTitle;
+    // The installed app's icon carries the count too, where the system allows.
+    try { if (navigator.setAppBadge) (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()); } catch (e) {}
+  }
+
+  let archivedOpen = false;
+  function renderNav() {
+    const item = m => `
+      <a class="mood ${m.slug === current ? 'active' : ''}" href="/moods/${encodeURIComponent(m.slug)}/" data-slug="${esc(m.slug)}">
+        <div class="title">${m.pinned && !m.archived ? '<span class="pin" title="Pinned">📌</span>' : ''}${esc(m.title)}${badges[m.slug] ? `<span class="badge">${badges[m.slug]}</span>` : ''}</div>
+        <div class="meta">${m.message_count.toLocaleString()} · ${ago(m.last_at)}</div>
+        <div class="meta people-line">${peopleLine(m.slug)}</div>
+      </a>`;
+    const live = moods.filter(m => !m.archived), archived = moods.filter(m => m.archived);  // pinned come first, from the server
+    // The one open stays in view: an archived Mood opened shows its fold open.
+    const open = archivedOpen || archived.some(m => m.slug === current);
+    document.getElementById('moodList').innerHTML =
+      `<div class="label">Moods${keyHolder ? '<button type="button" id="newMood" title="Start a Mood" aria-label="Start a Mood">＋</button>' : ''}</div>`
+      + live.map(item).join('')
+      + (archived.length ? `<details id="archived"${open ? ' open' : ''}><summary>Archived (${archived.length})</summary>`
+         + archived.map(item).join('') + '</details>' : '');
+    const fold = document.getElementById('archived');
+    if (fold) fold.addEventListener('toggle', () => { archivedOpen = fold.open; });
+    markLive();
+  }
+
+  // Who's around in each Mood: whoever spoke in the last 100 blocks (about 20
+  // minutes), and whoever is typing or at work there now, their name pulsing.
+  let liveData = {};
+  function aroundIn(slug) {
+    const d = liveData[slug] || { speakers: [], typing: [], busy: null };
+    const typing = new Set(slug === current ? [...d.typing, ...typingNow] : d.typing);
+    const busy = slug === current && act && act.doing !== 'held' ? act.agent : d.busy;
+    const names = [...new Set([...(busy ? [busy] : []), ...typing, ...d.speakers])];
+    return { names, active: new Set([...typing, ...(busy ? [busy] : [])]) };
+  }
+  function peopleLine(slug) {
+    const { names, active } = aroundIn(slug);
+    return names.map(n => `<span class="nm${active.has(n) ? ' live' : ''}" data-who="${esc(n)}">${esc(shown(n))}</span>`).join(', ');
+  }
+  function markLive() {
+    nav.querySelectorAll('a.mood').forEach(a => {
+      const line = a.querySelector('.people-line');
+      const html = peopleLine(a.dataset.slug);
+      if (line && line.innerHTML !== html) line.innerHTML = html;
+    });
+  }
+  async function refreshLive() {
+    try {
+      const r = await fetch('/api/moods/live/');
+      if (r.ok) { liveData = (await r.json()).moods || {}; markLive(); }
+    } catch (e) {}
+  }
+  setInterval(refreshLive, 5000);
+  refreshLive();
+
+  // --- the chain's height: from the explorer now and then, a block every 12 s between ---
+  const blockEl = document.getElementById('block');
+  let blockAnchor = null;
+  async function refreshBlock() {
+    try {
+      const b = await (await fetch('/api/block/')).json();
+      if (b.height) blockAnchor = b;
+    } catch (e) {}
+    tickBlock();
+  }
+  function tickBlock() {
+    if (!blockAnchor) { blockEl.textContent = ''; return; }
+    const since = Math.max(0, (Date.now() - new Date(blockAnchor.at).getTime()) / 1000);
+    const height = blockAnchor.height + Math.floor(since / blockAnchor.seconds);
+    blockEl.textContent = '⛓ ' + height.toLocaleString();
+    blockEl.title = `Ethereum mainnet, about block ${height.toLocaleString()} (counted on from the explorer's ${blockAnchor.height.toLocaleString()})`;
+  }
+  setInterval(tickBlock, 3000);
+  setInterval(refreshBlock, 5 * 60 * 1000);
+  refreshBlock();
+
+  const grip = document.getElementById('grip');
+  const NAV_MIN = 140, NAV_MAX = 480;
+  function navWidth(w) {
+    if (w) document.documentElement.style.setProperty('--nav-width', Math.max(NAV_MIN, Math.min(NAV_MAX, w)) + 'px');
+    else document.documentElement.style.removeProperty('--nav-width');
+  }
+  navWidth(store.get('navWidth', 0));
+  grip.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    document.body.classList.add('sizing');
+  });
+  grip.addEventListener('pointermove', e => {
+    if (document.body.classList.contains('sizing')) navWidth(e.clientX - nav.getBoundingClientRect().left);
+  });
+  grip.addEventListener('pointerup', () => {
+    document.body.classList.remove('sizing');
+    store.set('navWidth', Math.round(nav.getBoundingClientRect().width));
+  });
+  grip.addEventListener('dblclick', () => { navWidth(0); store.set('navWidth', 0); });
+
+  function renderMe() {
+    const opts = ['<option value="">nobody</option>'].concat(
+      [...names].sort().map(n => `<option value="${esc(n)}" ${n === me ? 'selected' : ''}>${esc(n)}</option>`));
+    meSelect.innerHTML = opts.join('');
+    document.body.classList.toggle('has-me', !!me);
+    renderBell();
+    if (!me) { onlyMine.checked = false; document.body.classList.remove('only-mine'); }
+  }
+
+  function markTurn(el, mentions) {
+    el.classList.toggle('mentions-me', !!me && mentions.includes(me));
+    el.querySelectorAll('.mention').forEach(s => s.classList.toggle('me', s.dataset.who === me));
+  }
+
+  function renderHead(m) {
+    const block = m.eth_blockheight ? 'opened at block ' + m.eth_blockheight.toLocaleString() : '';
+    return `<div class="mood-head">
+      <h1>${esc(m.title)}</h1>
+      ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
+      <div class="meta">${block ? block + ' · ' : ''}${m.message_count} messages in the record ·
+        <a href="/moods/${encodeURIComponent(m.slug)}/rules/" title="What magent is told here: this Mood's rules, its settings, what each wake says">rules</a></div>
+      <div class="people" id="people">${m.participants.map(n =>
+        `<span class="who ${human[n] ? 'human' : 'agent'}" data-who="${esc(n)}">${icon(n)}${esc(shown(n))}</span>`).join('')}</div>
+    </div><button id="earlier" type="button" hidden>Load earlier</button><div id="turns"></div>`;
+  }
+
+  const RUN_MS = 5 * 60 * 1000;  // the same sender within this is one run
+  let prev = null;               // the last turn rendered: {sender, at}
+
+  // Voice (services/voice.py): ▶ reads a message aloud -- as its writer
+  // directed (✦), if they wrote a ```voice block. (A memo's recording is a
+  // player already: the server renders it so.)
+  const voiceOn = {{ voice_enabled|yesno:"true,false" }};
+  function speakButton(t, mini) {
+    const memo = /<audio /.test(t.html);  // a voice memo: ▶ plays the recording itself
+    const title = memo ? 'Play the voice memo' : t.voiced ? 'Read aloud, as its writer directed' : 'Read aloud';
+    return `<button type="button" class="speak${mini ? ' mini' : ''}${t.voiced && !memo ? ' directed' : ''}" data-id="${esc(t.id)}"`
+      + ` title="${title}" aria-label="${title}">▶</button>`;
+  }
+  let speaking = null;  // {audio, button}
+  function stopSpeaking() {
+    if (!speaking) return;
+    speaking.audio.pause();
+    speaking.button.classList.remove('playing'); speaking.button.textContent = speaking.button.dataset.label || '▶';
+    speaking = null;
+  }
+  let speakAsk = 0;  // the newest ▶ pressed: only it may play, when its audio arrives
+  document.addEventListener('click', async e => {
+    const b = e.target.closest('.turn .speak');
+    if (!b) return;
+    if (b.classList.contains('busy')) return;  // already on its way: a second press would play it twice
+    if (speaking && speaking.button === b) { stopSpeaking(); return; }
+    stopSpeaking();
+    const ask = ++speakAsk;
+    // A voice memo is heard as it was spoken: ▶ plays the recording, never a voice reading its transcript.
+    const memo = b.closest('.turn').querySelector('.body audio');
+    if (memo) {
+      speaking = { audio: memo, button: b };
+      memo.addEventListener('ended', stopSpeaking, { once: true });
+      b.classList.add('playing'); b.textContent = '■';
+      memo.play().catch(err => { showError('play: ' + err.message); stopSpeaking(); });
+      return;
+    }
+    b.classList.add('busy'); b.textContent = '…';
+    try {
+      const r = await fetch(`/api/moods/${encodeURIComponent(current)}/speak/${encodeURIComponent(b.dataset.id)}/?part=${encodeURIComponent(b.dataset.part || 0)}`, {
+        method: 'POST', headers: { 'X-CSRFToken': csrf() } });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || r.status);
+      if (ask !== speakAsk) { b.textContent = b.dataset.label || '▶'; return; }  // another ▶ was pressed meanwhile: that one plays
+      const audio = new Audio(body.url);
+      speaking = { audio, button: b };
+      audio.addEventListener('ended', stopSpeaking);
+      b.classList.add('playing'); b.textContent = b.dataset.label ? b.dataset.label.replace(/^▶/, '■') : '■';
+      await audio.play();
+    } catch (err) {
+      showError('read aloud: ' + err.message);
+      b.textContent = b.dataset.label || '▶';
+    } finally { b.classList.remove('busy'); }
+  });
+
+  // --- Yarn clips ----------------------------------------------------------
+  // The server marks a pasted Yarn clip as a card (a.yarn, data-yarn = its id,
+  // checked as a UUID). The card shows Yarn's captioned GIF of the clip,
+  // which the browser fetches only as it nears the screen; if it won't load,
+  // the card is plain text again. Pressed, the card becomes the clip's video
+  // file, playing, in the browser's own player (Yarn's player refuses to be
+  // framed). Built from the id alone; a file that won't play becomes a link.
+  const YARN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  function decorateYarn(a) {
+    const id = a.dataset.yarn;
+    if (!YARN_ID.test(id || '') || a.querySelector('img')) return;
+    const label = a.textContent;
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = 'Yarn clip: press to play';
+    img.src = `https://y.yarn.co/${id}_text.gif`;
+    img.addEventListener('error', () => { a.classList.remove('thumb'); a.textContent = label; });
+    const play = document.createElement('span');
+    play.className = 'yarnplay'; play.textContent = '▶'; play.setAttribute('aria-hidden', 'true');
+    a.textContent = '';
+    a.classList.add('thumb');
+    a.title = 'Play the clip (ctrl-click: open it on Yarn)';
+    a.append(img, play);
+  }
+  document.addEventListener('click', e => {
+    const a = e.target.closest('a.yarn[data-yarn]');
+    if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+    const id = a.dataset.yarn;
+    if (!YARN_ID.test(id)) return;
+    e.preventDefault();
+    const box = document.createElement('div');
+    box.className = 'yarnbox';
+    const video = document.createElement('video');
+    video.src = `https://y.yarn.co/${id}.mp4`;
+    video.controls = true;
+    video.autoplay = true;  // pressed to play: a click lets it start with sound
+    video.playsInline = true;
+    video.addEventListener('error', () => {
+      const why = document.createElement('a');
+      why.className = 'yarn';
+      why.href = a.href; why.target = '_blank'; why.rel = 'noopener';
+      why.textContent = "Couldn't play it here: open the clip on Yarn";
+      box.replaceWith(why);
+    });
+    box.appendChild(video);
+    a.replaceWith(box);
+  });
+
+  function turnEl(t, isNew) {
+    const el = document.createElement('article');
+    const at = new Date(t.created_at).getTime();
+    // A signed statement always stands on its own, heading and ✓ in view.
+    const cont = !t.attested && prev && prev.sender === t.sender && at - prev.at < RUN_MS;
+    prev = t.attested ? null : { sender: t.sender, at };
+    el.className = 'turn ' + (t.is_human ? 'human' : 'agent') + (cont ? ' cont' : '') + (t.attested ? ' attested' : '') + (isNew ? ' new' : '');
+    if (cont) el.title = t.sender + ' · ' + stamp(t.created_at);
+    el.dataset.mentions = JSON.stringify(t.mentions || []);
+    el.dataset.id = t.id;
+    el.id = 'm-' + t.id;
+    if (forMe.has(t.id)) el.classList.add('for-me');
+    const signed = t.attested ? `<button type="button" class="signed" title="Signed with ${esc(t.sender)}'s SSH key: click for the proof">✓ signed</button>` : '';
+    const phone = t.mobile ? '<span class="from-phone" title="sent from a phone" aria-label="sent from a phone">📱</span>' : '';
+    const page = userPage(t.sender);
+    const named = page ? `<a href="${esc(page)}" target="_blank" rel="noopener" title="${esc(shown(t.sender))} on PickiPedia">${esc(shown(t.sender))}</a>` : esc(shown(t.sender));
+    const tier = t.tier === 'wiki' ? '<span class="tier wiki" title="Signed in with PickiPedia: chats and mentions people; @agents from here wake nobody">wiki</span>' : '';
+    // ↩ for anyone signed in. A reply addresses a person, never an agent (only an @mention wakes one).
+    const replyBtn = viewer ? `<button type="button" class="replybtn" data-reply="${esc(t.id)}" title="Reply" aria-label="Reply">↩</button>` : '';
+    const answers = t.reply ? `<a class="replyto" href="#m-${esc(t.reply.id)}" data-reveal="${esc(t.reply.id)}" title="Go to the message this replies to">`
+      + `↩ ${icon(t.reply.sender, human[t.reply.sender] !== false)}<b>${esc(shown(t.reply.sender))}</b> ${esc(t.reply.snippet || '(a message)')}</a>` : '';
+    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${how(t)}${signed}${replyBtn}</div>`
+      + answers
+      + `<a class="permalink mini" href="#m-${esc(t.id)}" title="${esc(stamp(t.created_at))} · this message's link: click to copy">#</a>`
+      + (voiceOn && viewer ? speakButton(t, true) : '') + `<div class="body">${t.html}</div>`;
+    if (voiceOn && viewer) el.querySelector('.who').insertAdjacentHTML('beforeend', speakButton(t, false));
+    if (voiceOn && viewer && (t.voices || []).length) {  // several voice blocks: a ▶ for each, by its voice
+      el.insertAdjacentHTML('beforeend', '<div class="voices">' + t.voices.map((v, i) =>
+        `<button type="button" class="speak part" data-id="${esc(t.id)}" data-part="${i}" data-label="▶ ${esc(v)}" title="Read aloud: part ${i + 1}">▶ ${esc(v)}</button>`).join('') + '</div>');
+    }
+    if (t.attested) el._proof = t.attested;
+    markTurn(el, t.mentions || []);
+    el.querySelectorAll('a.yarn[data-yarn]').forEach(decorateYarn);
+    return el;
+  }
+
+  // --- tool steps: grouped into one collapsed line per run of work ----------
+  function workEl(s, container) {
+    const last = container.lastElementChild;
+    if (last && last.classList.contains('work') && last.dataset.sender === s.sender) return last;
+    const at = new Date(s.created_at).getTime();
+    const cont = prev && prev.sender === s.sender && at - prev.at < RUN_MS;
+    const el = document.createElement('div');
+    el.className = 'work' + (cont ? ' cont' : '');
+    el.dataset.sender = s.sender;
+    el.innerHTML = `<div class="who"><span class="name">${icon(s.sender, false)}${esc(s.sender)}</span><time datetime="${esc(s.created_at)}">${stamp(s.created_at)}</time>${how(s)}</div>`
+      + `<button class="work-head" type="button"><span class="caret">▸</span><span class="what"></span></button><div class="steps"></div>`;
+    container.appendChild(el);
+    return el;
+  }
+  function describeWork(el) {
+    const counts = {};
+    el.querySelectorAll('.step').forEach(s => { counts[s.dataset.verb] = (counts[s.dataset.verb] || 0) + 1; });
+    const n = el.querySelectorAll('.step').length;
+    const parts = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([v, c]) => c > 1 ? `${v} ×${c}` : v);
+    el.querySelector('.what').textContent = `${n} step${n === 1 ? '' : 's'} · ${parts.join(', ')}`;
+  }
+  function addStep(s, container) {
+    const work = workEl(s, container);
+    const row = document.createElement('div');
+    row.className = 'step';
+    row.dataset.id = s.id; row.dataset.verb = s.verb;
+    row.innerHTML = `<button class="step-head" type="button"><code>${esc(s.tool.replace(/^mcp__/, ''))}</code><span class="sum">${esc(s.summary || s.verb)}</span></button><div class="step-detail"></div>`;
+    work.querySelector('.steps').appendChild(row);
+    if (s.images && s.images.length) {
+      let thumbs = work.querySelector('.thumbs');
+      if (!thumbs) {
+        thumbs = document.createElement('div'); thumbs.className = 'thumbs';
+        work.insertBefore(thumbs, work.querySelector('.steps'));
+      }
+      for (const url of s.images) thumbs.insertAdjacentHTML('beforeend', `<a href="${esc(url)}" target="_blank" rel="noopener"><img src="${esc(url)}" alt="from ${esc(s.tool)}" loading="lazy"></a>`);
+    }
+    describeWork(work);
+    prev = { sender: s.sender, at: new Date(s.created_at).getTime() };
+  }
+  function pre(text, cls) { return `<pre${cls ? ` class="${cls}"` : ''}>${esc(text)}</pre>`; }
+  function diff(oldText, newText) {
+    const lines = [];
+    String(oldText || '').split('\n').forEach(l => lines.push(`<span class="del">- ${esc(l)}</span>`));
+    String(newText || '').split('\n').forEach(l => lines.push(`<span class="add">+ ${esc(l)}</span>`));
+    return `<pre>${lines.join('\n')}</pre>`;
+  }
+  function renderDetail(d) {
+    const a = d.input || {};
+    let ask = '';
+    if (d.tool === 'Bash') ask = `<pre><span class="dim">$ </span>${esc(a.command || '')}</pre>`;
+    else if (d.tool === 'Edit') ask = `<div class="label">${esc(a.file_path || '')}</div>` + diff(a.old_string, a.new_string);
+    else if (d.tool === 'Write') ask = `<div class="label">${esc(a.file_path || '')}</div>` + pre(a.content || '');
+    else ask = pre(JSON.stringify(a, null, 2));
+    let out = '';
+    if (d.result) {
+      const shots = (d.result.text || '').match(/\/moods\/media\/[0-9a-f]{64}\.(?:png|jpg|gif|webp)/g) || [];
+      const text = (d.result.text || '').replace(/!\[[^\]]*\]\(\/moods\/media\/[^)]+\)\n?/g, '').trim() || (shots.length ? '' : '(no output kept)');
+      out = `<div class="${d.result.is_error ? 'err' : ''}"><div class="label">${d.result.is_error ? 'error' : 'result'}</div>${text ? pre(text) : ''}`
+        + (shots.length ? `<div class="shots">${shots.map(u => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="" loading="lazy"></a>`).join('')}</div>` : '')
+        + `</div>`;
+    }
+    const heading = ['Edit', 'Write'].includes(d.tool) ? '' : `<div class="label">${esc(d.verb)}</div>`;
+    return heading + ask + out;
+  }
+  document.addEventListener('click', async e => {
+    const head = e.target.closest('.work-head');
+    if (head) { head.parentElement.classList.toggle('open'); return; }
+    const stepHead = e.target.closest('.step-head');
+    if (!stepHead) return;
+    const step = stepHead.parentElement;
+    step.classList.toggle('open');
+    const box = step.querySelector('.step-detail');
+    if (!step.classList.contains('open') || box.dataset.loaded) return;
+    box.textContent = 'loading…';
+    try {
+      const r = await fetch(`/api/moods/${encodeURIComponent(current)}/steps/${encodeURIComponent(step.dataset.id)}/`);
+      if (!r.ok) throw new Error(r.status);
+      const d = await r.json();
+      box.innerHTML = renderDetail(d);
+      box.dataset.loaded = '1';
+      if (d.result && d.result.is_error) step.classList.add('err');
+    } catch (err) { box.textContent = 'could not load this step'; }
+  });
+
+  function addThought(t, container) {
+    const el = document.createElement('div');
+    el.className = 'thought';
+    el.title = `${t.sender} thinking · ${stamp(t.created_at)}`;
+    el.textContent = t.text;
+    container.appendChild(el);
+    prev = { sender: t.sender, at: new Date(t.created_at).getTime() };
+  }
+
+  function took(seconds) {
+    if (seconds == null) return '';
+    return seconds < 90 ? ` in ${seconds}s` : ` in ${Math.round(seconds / 60)}m`;
+  }
+  function addEvent(e, container) {
+    const el = document.createElement('div');
+    if (e.type === 'wiki') {  // a change on PickiPedia (services/wiki_feed.py), at the wiki's own time
+      const page = `${WIKI}/wiki/${encodeURIComponent((e.title || '').replace(/ /g, '_'))}`;
+      const diff = e.revid ? `${WIKI}/index.php?diff=${encodeURIComponent(e.revid)}` : page;
+      const one = `<a href="${esc(page)}" target="_blank" rel="noopener">${esc(e.title)}</a>`
+        + (e.kind === 'new' ? ' (new)' : ` <a class="delta" href="${esc(diff)}" target="_blank" rel="noopener">(${e.delta > 0 ? '+' : ''}${Number(e.delta) || 0})</a>`)
+        + (e.comment ? ` · <i>${esc(e.comment)}</i>` : '');
+      // A run of changes by one account folds into one line, opened on demand.
+      const last = container.lastElementChild;
+      if (last && last.classList.contains('wiki') && last.dataset.user === (e.user || '')) {
+        const n = Number(last.dataset.n) + 1;
+        last.dataset.n = n;
+        if (n === 2) last.innerHTML = `<details><summary></summary><div class="each">${last.dataset.first}</div></details>`;
+        last.querySelector('.each').insertAdjacentHTML('beforeend', `<div>${one}</div>`);
+        last.querySelector('summary').innerHTML = `✎ <b>${esc(e.user || 'someone')}</b> made ${n} changes on PickiPedia · ${esc(stamp(e.at || e.created_at))}`;
+        return;
+      }
+      el.className = 'event wiki';
+      el.dataset.user = e.user || ''; el.dataset.n = 1; el.dataset.first = `<div>${one}</div>`;
+      el.innerHTML = `✎ <b>${esc(e.user || 'someone')}</b> ${e.kind === 'new' ? 'started' : 'edited'} ${one} · ${esc(stamp(e.at || e.created_at))}`;
+      container.appendChild(el);
+      prev = null;
+      return;
+    }
+    if (e.type === 'access') {  // someone signed in, or an admin acted (services/access.py)
+      el.className = 'event access';
+      const who = `<b>${esc(shown(e.who || 'someone'))}</b>`, by = `<b>${esc(shown(e.by || 'an admin'))}</b>`;
+      const label = e.label ? ` · “${esc(e.label)}”` : '';
+      // A PickiPedia device is labelled 'PickiPedia sign-in (<wiki name>, <device>)': the device is the news.
+      const wikiDevice = ((e.label || '').match(/, ([^,()]+)\)$/) || [])[1];
+      el.innerHTML = ({
+        'signed-in': e.tier === 'wiki' ? `📖 ${who} signed in with PickiPedia${wikiDevice ? ` · ${esc(wikiDevice)}` : ''}`
+                                       : `🔑 ${who} signed in with their SSH key${label}`,
+        'kicked': `⛔ ${by} signed ${who} out of ${e.device ? `“${esc(e.device)}”` : 'every device'}`,
+        'banned': `⛔ ${by} signed ${who} out of every device and barred their key`,
+        'unbanned': `${by} let ${who} sign in again`,
+        'az5': `☢ ${who} pressed AZ5: everyone signed out, Moods locked`,
+        'lifted': `${who} lifted AZ5: Moods open again`,
+      }[e.kind] || `${who} · ${esc(e.kind || '')}`) + ` · ${esc(stamp(e.created_at))}`;
+      container.appendChild(el);
+      prev = null;
+      return;
+    }
+    if (e.type === 'interrupt' || e.type === 'created') {  // someone pressed stop; someone started this Mood
+      el.className = 'event';
+      el.innerHTML = e.type === 'created'
+        ? `✦ <b>${esc(e.by || 'someone')}</b> started this Mood · ${esc(stamp(e.created_at))}`
+        : `■ <b>${esc(e.by || 'someone')}</b> stopped ${esc(e.agent || 'the agent')} · ${esc(stamp(e.created_at))}`;
+      container.appendChild(el);
+      prev = null;
+      return;
+    }
+    el.className = 'event ' + (e.state || '');
+    const commit = e.commit ? ` · <code>${esc(e.commit.slice(0, 8))}</code>` : '';
+    const by = e.by ? ` · by ${esc(e.by)}` : '';
+    el.innerHTML = e.state === 'started' ? `⚙ <b>${esc(e.server)}</b> redeploying…${by}${commit} · ${esc(stamp(e.created_at))}`
+      : e.state === 'failed' ? `✗ <b>${esc(e.server)}</b> redeploy failed${took(e.took)}${by} · ${esc(stamp(e.created_at))}`
+      : `✓ <b>${esc(e.server)}</b> redeployed${took(e.took)}${commit}${by} · ${esc(stamp(e.created_at))}`;
+    container.appendChild(el);
+    prev = null;
+    refreshServers(true);  // the dots, now
+  }
+
+  // An attestation's proof: what was signed, the signature, the key, and how to check it anywhere.
+  document.addEventListener('click', e => {
+    const b = e.target.closest('.signed');
+    if (!b) return;
+    const turn = b.closest('.turn');
+    const open = turn.querySelector('.proof');
+    if (open) { open.remove(); return; }
+    const p = turn._proof || {};
+    const box = document.createElement('div');
+    box.className = 'proof';
+    box.innerHTML = `What was signed:<pre>${esc(p.signed)}</pre>Signature:<pre>${esc(p.signature)}</pre>`
+      + `Key:<pre>${esc(p.key || '(not on file)')}</pre>To check it: put the key in an allowed_signers line `
+      + `(<code>${esc(turn.querySelector('.name').innerText)} ${esc(p.key || '')}</code>), the signature in a file, and run `
+      + `<code>ssh-keygen -Y verify -f allowed_signers -I ${esc(turn.querySelector('.name').innerText)} -n ${esc(p.namespace)} -s sig</code> with what was signed on its input.`;
+    // Checked again by the server, now: the signature against the key kept with it, and whether that key is still theirs.
+    box.insertAdjacentHTML('afterbegin', '<div class="check">Checking the signature…</div>');
+    turn.appendChild(box);
+    fetch(`/api/moods/${encodeURIComponent(current)}/verify/${encodeURIComponent(turn.dataset.id)}/`)
+      .then(r => r.json()).then(v => {
+        const who = esc(v.signer || '');
+        const lines = v.error ? [`<span class="bad">${esc(v.error)}</span>`] : [
+          v.signature_valid ? `✓ The signature is valid: made with the key below, over exactly what was signed.`
+                            : `<span class="bad">✗ The signature does not verify against the key below.</span>`,
+          v.key_is_current ? `✓ That key is still ${who}'s, as the team's key list has it today.`
+                           : `<span class="bad">That key is not ${who}'s key on the list today (rotated since, or removed).</span>`,
+          v.statement_matches ? `✓ What was signed ends with exactly the words shown, for ${esc(v.origin)}.`
+                              : `<span class="bad">What was signed differs from the words shown.</span>`];
+        box.querySelector('.check').innerHTML = lines.join('<br>') + ` <small>(checked ${esc(stamp(v.checked_at || new Date().toISOString()))})</small>`;
+      }).catch(err => { box.querySelector('.check').textContent = 'Could not check: ' + err.message; });
+  });
+
+  // --- the servers: four dots, pulsing while one is redeployed ------------------
+  const serversEl = document.getElementById('servers');
+  const serverPop = document.createElement('div');
+  serverPop.id = 'serverPop'; serverPop.hidden = true;
+  document.querySelector('header').appendChild(serverPop);
+  let serversAt = 0, serverList = [];
+  async function refreshServers(force) {
+    if (!force && Date.now() - serversAt < 60000) return;
+    serversAt = Date.now();
+    try {
+      const r = await fetch('/api/servers/');
+      if (!r.ok) return;
+      serverList = (await r.json()).servers;
+    } catch (e) { return; }
+    serversEl.innerHTML = serverList.map(sv => {
+      const state = sv.deploying ? 'deploying' : sv.up ? 'up' : 'down';
+      const words = sv.deploying ? 'redeploying' : sv.up ? 'up' : 'not answering';
+      return `<span class="srv ${state}" title="${esc(sv.name)}: ${esc(words)}"></span>`;
+    }).join('');
+    if (!serverPop.hidden) renderServerPop();
+  }
+  function renderServerPop() {
+    serverPop.innerHTML = serverList.map(sv => {
+      const d = sv.deploy;
+      const last = d ? (d.state === 'started' && sv.deploying ? `redeploying since ${ago(d.at)}`
+        : `${d.state === 'failed' ? 'redeploy failed' : 'redeployed'} ${ago(d.at)}${d.commit ? ' · ' + d.commit.slice(0, 8) : ''}`) : 'no redeploy told yet';
+      const name = sv.url ? `<a href="${esc(sv.url)}" target="_blank" rel="noopener" title="${esc(sv.name)} on PickiPedia"><b>${esc(sv.name)}</b></a>` : `<b>${esc(sv.name)}</b>`;
+      return `<div>${sv.art ? `<pre class="art" aria-hidden="true">${esc(sv.art)}</pre>` : ''}<span>${name}`
+        + `${sv.role ? ` <span class="role">${esc(sv.role)}</span>` : ''} · ${sv.deploying ? 'redeploying' : sv.up ? 'up' : '<b>not answering</b>'}`
+        + `<br><span class="note">${esc(sv.about)} · ${esc(last)}</span></span></div>`;
+    }).join('');
+  }
+  serversEl.addEventListener('click', e => {
+    e.stopPropagation();
+    serverPop.hidden = !serverPop.hidden;
+    if (!serverPop.hidden) renderServerPop();
+  });
+  document.addEventListener('click', e => { if (!serverPop.hidden && !e.target.closest('#serverPop')) serverPop.hidden = true; });
+  setInterval(() => refreshServers(false), 60000);
+  refreshServers(true);
+
+  function addCompaction(c, container) {
+    const el = document.createElement('details');
+    el.className = 'compaction';
+    // The summary is the server's own rendering of the harness's text (render_html).
+    el.innerHTML = `<summary>context compacted · ${esc(stamp(c.created_at))} · the summary it went on from</summary>`
+      + `<div class="body">${c.html}</div>`;
+    container.appendChild(el);
+    prev = null;  // whoever speaks next starts afresh
+  }
+
+  // --- up and down a message at a time --------------------------------------
+  function jump(dir, only = '') {
+    const top = main.getBoundingClientRect().top;
+    const sel = only ? only.split(',').map(c => '#turns .turn' + c.trim()).join(', ') : '#turns .turn';
+    const turns = [...document.querySelectorAll(sel)].filter(t => !t.closest('.aturn.folded') || t.closest('.abody') === null);
+    const at = t => t.getBoundingClientRect().top - top;
+    const target = dir > 0 ? turns.find(t => at(t) > 16) : turns.reverse().find(t => at(t) < -16);
+    if (target) main.scrollTo({ top: main.scrollTop + at(target) - 8, behavior: 'smooth' });
+    else if (dir > 0) main.scrollTo({ top: main.scrollHeight, behavior: 'smooth' });
+    else {
+      const earlier = document.getElementById('earlier');
+      if (earlier && !earlier.hidden) earlier.click();  // past the top: bring in the page before
+      else main.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }
+  document.getElementById('jumpUp').addEventListener('click', () => jump(-1));
+  document.getElementById('jumpDown').addEventListener('click', () => jump(1));
+  document.getElementById('jumpMeUp').addEventListener('click', () => jump(-1, '.mentions-me, .for-me'));
+  document.getElementById('jumpMeDown').addEventListener('click', () => jump(1, '.mentions-me, .for-me'));
+  for (const [id, dir] of [['jumpHumanUp', -1], ['jumpHumanDown', 1]]) {
+    const b = document.getElementById(id);
+    b.innerHTML = ICONS.human + b.textContent;
+    b.addEventListener('click', () => jump(dir, '.human'));
+  }
+
+  // --- renaming a Mood: its title and description; the slug never changes ---
+  // The pencil sits by the Mood's name in the top bar, where it's always in view.
+  let headMood = null;  // the Mood the head was last drawn for
+  const crumb = document.getElementById('crumb');
+  const renameBox = document.getElementById('renameBox');
+  function showMoodName(m) {
+    headMood = m;
+    crumb.innerHTML = m ? esc(m.title) + (keyHolder ? '<button type="button" id="rename" title="Rename this Mood" aria-label="Rename this Mood">✎</button>' : '') : '';
+    const h1 = document.querySelector('.mood-head h1');
+    if (h1 && m) h1.textContent = m.title;
+    if (m) { baseTitle = m.title + ' · magenta'; setTitle(); }
+  }
+  const isArchived = slug => !!(moods.find(m => m.slug === slug) || {}).archived;
+  const isPinned = slug => !!(moods.find(m => m.slug === slug) || {}).pinned;
+  const newBox = document.getElementById('newBox');
+  document.addEventListener('click', async e => {
+    if (e.target.closest('#rename')) {
+      document.getElementById('renameTitle').value = headMood.title;
+      document.getElementById('renameDesc').value = headMood.description || '';
+      document.getElementById('archiveBtn').textContent = isArchived(current) ? 'Unarchive' : 'Archive';
+      document.getElementById('pinBtn').textContent = isPinned(current) ? 'Unpin' : 'Pin';
+      renameBox.hidden = false;
+      document.getElementById('renameTitle').focus();
+    } else if (e.target.closest('#renameCancel')) {
+      renameBox.hidden = true;
+    } else if (e.target.closest('#archiveBtn')) {
+      const r = await fetch(`/api/moods/${encodeURIComponent(current)}/archive/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+        body: JSON.stringify({ archived: !isArchived(current) }),
+      });
+      if (!r.ok) { showError('archive: ' + ((await r.json().catch(() => ({}))).error || r.status)); return; }
+      renameBox.hidden = true;
+      loadMoods();
+    } else if (e.target.closest('#pinBtn')) {
+      const r = await fetch(`/api/moods/${encodeURIComponent(current)}/pin/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+        body: JSON.stringify({ pinned: !isPinned(current) }),
+      });
+      if (!r.ok) { showError('pin: ' + ((await r.json().catch(() => ({}))).error || r.status)); return; }
+      renameBox.hidden = true;
+      loadMoods();
+    } else if (e.target.closest('#newMood')) {
+      document.getElementById('newTitle').value = '';
+      document.getElementById('newDesc').value = '';
+      newBox.hidden = false;
+      document.getElementById('newTitle').focus();
+    } else if (e.target.closest('#newCancel')) {
+      newBox.hidden = true;
+    }
+  });
+  newBox.addEventListener('submit', async e => {
+    e.preventDefault();
+    const r = await fetch('/api/moods/new/', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify({ title: document.getElementById('newTitle').value,
+                             description: document.getElementById('newDesc').value }),
+    });
+    if (!r.ok) { showError('new Mood: ' + ((await r.json().catch(() => ({}))).error || r.status)); return; }
+    const made = await r.json();
+    newBox.hidden = true;
+    await loadMoods();
+    open(made.slug, true);
+  });
+  renameBox.addEventListener('submit', async e => {
+    e.preventDefault();
+    const r = await fetch(`/api/moods/${encodeURIComponent(current)}/rename/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify({ title: document.getElementById('renameTitle').value,
+                             description: document.getElementById('renameDesc').value }),
+    });
+    if (!r.ok) { showError('rename: ' + ((await r.json().catch(() => ({}))).error || r.status)); return; }
+    const named = await r.json();
+    renameBox.hidden = true;
+    if (named.slug && named.slug !== current) { location.href = '/moods/' + encodeURIComponent(named.slug) + '/'; return; }  // its new name, its new address
+    showMoodName({ ...headMood, ...named });
+    const desc = document.querySelector('.mood-head .desc');
+    if (desc) desc.textContent = named.description || '';
+    loadMoods();
+  });
+
+  function addQuiet(q, container) {
+    let row = container.lastElementChild;
+    if (!row || !row.classList.contains('quiet')) {
+      row = document.createElement('div'); row.className = 'quiet';
+      container.appendChild(row);
+    }
+    const dot = document.createElement('button');
+    dot.type = 'button'; dot.className = 'dot' + (q.by === 'screen' ? ' screened' : '');
+    dot.title = q.by === 'screen'
+      ? `screened for ${q.sender}: let pass without waking it · ${stamp(q.created_at)}`
+      : `${q.sender} chose not to speak · ${stamp(q.created_at)}`;
+    dot.dataset.why = q.reason || '(no reason given)';
+    row.appendChild(dot);
+  }
+  document.addEventListener('click', e => {
+    const dot = e.target.closest('.quiet .dot');
+    if (!dot) return;
+    const row = dot.parentElement;
+    const wasOn = dot.classList.contains('on');
+    row.querySelectorAll('.dot').forEach(d => d.classList.remove('on'));
+    let why = row.querySelector('.why');
+    if (wasOn) { if (why) why.remove(); return; }
+    dot.classList.add('on');
+    if (!why) { why = document.createElement('div'); why.className = 'why'; row.appendChild(why); }
+    why.textContent = dot.title + ': ' + dot.dataset.why;
+  });
+
+  // Turns, steps and dots from one response, in the order they happened.
+  function itemsOf(data) {
+    return [...(data.turns || []).map(t => ({ kind: 'turn', v: t })), ...(data.steps || []).map(s => ({ kind: 'step', v: s })),
+            ...(data.quiet || []).map(q => ({ kind: 'quiet', v: q })),
+            ...(data.thoughts || []).map(t => ({ kind: 'thought', v: t })),
+            ...(data.compactions || []).map(c => ({ kind: 'compaction', v: c })),
+            ...(data.events || []).map(e => ({ kind: 'event', v: e }))]
+      .sort((a, b) => a.v.created_at < b.v.created_at ? -1 : a.v.created_at > b.v.created_at ? 1 : 0);
+  }
+  // A message's link: /moods/<slug>/#m-<id>. Clicking its time copies it.
+  document.addEventListener('click', async e => {
+    const a = e.target.closest('a.permalink');
+    if (!a) return;
+    e.preventDefault();
+    const url = `${location.origin}/moods/${encodeURIComponent(current)}/${a.getAttribute('href')}`;
+    try { await navigator.clipboard.writeText(url); a.dataset.copied = '1'; setTimeout(() => delete a.dataset.copied, 1500); }
+    catch (err) { history.replaceState(history.state, '', url); }
+  });
+
+  // --- an agent's turn, gathered under one header --------------------------------
+  // Everything an agent did between a person's words and its turn's end -- its
+  // words along the way, its thinking, its steps -- in one block: a header
+  // (who, how long, on what, how many tokens) that folds the rest away.
+  function agentOf(it) {
+    if (it.kind === 'turn') return it.v.is_human ? null : it.v.sender;
+    return it.kind === 'step' || it.kind === 'thought' ? it.v.sender : null;
+  }
+  function kTokens(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1000) return (n < 10000 && n % 1000 ? (n / 1000).toFixed(1) : Math.round(n / 1000)) + 'k';
+    return String(n);
+  }
+  function blockFor(container, agent, v) {
+    const last = container.lastElementChild;
+    if (last && last.classList.contains('aturn') && !last._ended && last._agent === agent) return last;
+    closeBlock(container);  // another agent's turn begins
+    const b = document.createElement('section');
+    b.className = 'aturn';
+    const at = new Date(v.created_at).getTime() / 1000;
+    // From the words that set it going, when they're just before it.
+    const asked = container._askedAt && container._askedAt <= at && at - container._askedAt < 6 * 3600 ? container._askedAt : at;
+    Object.assign(b, { _agent: agent, _start: asked, _end: at, _out: 0, _ctx: 0, _seen: new Set(), _how: {}, _ended: false, _final: '' });
+    b.innerHTML = '<button type="button" class="ahead"></button><div class="abody"></div>';
+    container.appendChild(b);
+    return b;
+  }
+  function tally(b, v) {
+    b._end = Math.max(b._end, new Date(v.created_at).getTime() / 1000);
+    if (v.out != null) {
+      const usage = v.out + ':' + v.ctx;  // one response stored as several rows carries one usage
+      if (!b._seen.has(usage)) { b._seen.add(usage); b._out += v.out; }
+      if (v.ctx) b._ctx = v.ctx;
+    }
+    if (v.model) b._how.model = v.model;
+    if (v.effort) b._how.effort = v.effort;
+  }
+  function drawBlockHead(b) {
+    const took = Math.max(0, Math.round(b._end - b._start));
+    const how = [b._how.model, b._how.effort].filter(Boolean).join(' · ');
+    const tokens = b._out || b._ctx ? `${kTokens(b._out)} out · ${kTokens(b._ctx)} context` : '';
+    b.querySelector('.ahead').innerHTML = `<span class="caret">${b.classList.contains('folded') ? '▸' : '▾'}</span>`
+      + `${icon(b._agent, false)}<b>${esc(b._agent)}</b>`
+      + [took ? elapsed(Date.now() / 1000 - took) : '', how, tokens].filter(Boolean).map(x => ' · ' + esc(x)).join('')
+      + (!b._ended && isWorking(b) ? ' · working…' : '')
+      + `<span class="preview">${esc(b._final)}</span>`;
+  }
+  // Working only if it's the newest thing here and the agent is at work now.
+  function isWorking(b) {
+    return b.parentNode && b.parentNode.lastElementChild === b && act && act.agent === b._agent && act.doing !== 'held';
+  }
+  // A turn that a person spoke after is over, whether or not its end was marked.
+  function closeBlock(container) {
+    const last = container.lastElementChild;
+    if (last && last.classList.contains('aturn') && !last._ended) { last._ended = true; drawBlockHead(last); }
+  }
+
+  function foldOld(container, keepNewest = true) {
+    // Older finished turns fold away; the newest stays open.
+    const blocks = [...container.querySelectorAll(':scope > .aturn')];
+    (keepNewest ? blocks.slice(0, -1) : blocks).forEach(b => { if (b._ended && !b.classList.contains('folded')) { b.classList.add('folded'); drawBlockHead(b); } });
+  }
+  document.addEventListener('click', e => {
+    const head = e.target.closest('.ahead');
+    if (!head) return;
+    const b = head.closest('.aturn');
+    b.classList.toggle('folded');
+    drawBlockHead(b);
+  });
+
+  function renderItems(items, container, isNew) {
+    for (const it of items) {
+      const agent = agentOf(it);
+      if (agent) {
+        const b = blockFor(container, agent, it.v);
+        const body = b.querySelector('.abody');
+        if (it.kind === 'turn') {
+          body.appendChild(turnEl(it.v, isNew));
+          if (it.v.stop === 'end_turn') { b._ended = true; b._final = (it.v.text || '').split('\n')[0].slice(0, 200); }
+        } else if (it.kind === 'thought') addThought(it.v, body);
+        else addStep(it.v, body);
+        tally(b, it.v);
+        drawBlockHead(b);
+        continue;
+      }
+      closeBlock(container);
+      if (it.kind === 'turn') {
+        container.appendChild(turnEl(it.v, isNew));
+        container._askedAt = new Date(it.v.created_at).getTime() / 1000;
+      }
+      else if (it.kind === 'quiet') addQuiet(it.v, container);
+      else if (it.kind === 'compaction') addCompaction(it.v, container);
+      else if (it.kind === 'event') addEvent(it.v, container);
+      else addStep(it.v, container);
+    }
+  }
+
+  function remarkAll() {
+    document.querySelectorAll('.turn').forEach(el => markTurn(el, JSON.parse(el.dataset.mentions || '[]')));
+  }
+
+  async function loadMoods() {
+    const r = await fetch('/api/moods/');
+    if (!r.ok) throw new Error('moods ' + r.status);
+    const body = await r.json();
+    moods = body.moods;
+    people = body.people || [];
+    people.forEach(p => { human[p.name] = p.is_human; });
+    moods.forEach(m => m.participants.forEach(p => names.add(p)));
+    renderMe();
+    renderNav();
+  }
+
+  // --- notices: mentions of `me`, and agents' answers to `me` ---------------
+  // Badges on each Mood count what's unread there; with notifications on, a
+  // new one also notifies (when this page is hidden, or it's in another Mood).
+  // Asked every 15 s, and only for what's new since the last ask: the first
+  // ask looks back to the oldest Mood seen (else a week), a scan on the server.
+  const NOTICE_MS = 15000;
+  const pageOpened = new Date().toISOString();
+  let badgeCursor = null, badgeAt = 0;
+  const counted = new Set();  // notices already seen, by turn id
+  const forMe = new Set();    // answers to me, marked in the thread
+  let unread = {};            // slug -> Map(turn id -> created_at)
+  function resetBadges() { badges = {}; unread = {}; badgeCursor = null; badgeAt = 0; counted.clear(); forMe.clear(); }
+  function countBadges() {
+    badges = {};
+    for (const [slug, ids] of Object.entries(unread)) if (ids.size) badges[slug] = ids.size;
+  }
+  async function refreshBadges(force) {
+    if (!me) { badges = {}; renderNav(); setTitle(); return; }
+    if (!force && Date.now() - badgeAt < NOTICE_MS) return;
+    badgeAt = Date.now();
+    const seen = Object.values(lastSeen).sort();
+    const since = badgeCursor || seen[0] || new Date(Date.now() - 7 * 86400 * 1000).toISOString();
+    // Next time, from a little before now: overlap is counted once (by id),
+    // and a clock a few minutes off still misses nothing.
+    const next = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    try {
+      const r = await fetch('/api/notices/' + encodeURIComponent(me) + '/?since=' + encodeURIComponent(since));
+      if (!r.ok) return;
+      const notices = (await r.json()).notices;
+      // A Mood opened since this page loaded: list it first, so its badge
+      // has somewhere to go and its notification its title.
+      if (notices.some(n => !moods.some(m => m.slug === n.mood))) await loadMoods();
+      for (const n of notices) {
+        if (counted.has(n.turn.id)) continue;
+        counted.add(n.turn.id);
+        if (n.kind === 'answer') {
+          forMe.add(n.turn.id);
+          const el = document.getElementById('m-' + n.turn.id);
+          if (el) el.classList.add('for-me');
+        }
+        const floor = lastSeen[n.mood];
+        if (floor && n.turn.created_at <= floor) continue;  // seen already
+        const looking = n.mood === current && !document.hidden;
+        if (!looking) (unread[n.mood] = unread[n.mood] || new Map()).set(n.turn.id, n.turn.created_at);
+        if (!looking && n.turn.created_at > pageOpened) notify(n);
+      }
+      badgeCursor = next;
+    } catch (e) {}
+    countBadges(); renderNav(); setTitle();
+  }
+
+  // Notifications: off until asked for, here, by this browser.
+  const bell = document.getElementById('notify');
+  let granted = false;  // what the browser said when asked (some report permission late)
+  function notifying() {
+    return 'Notification' in window && (granted || Notification.permission === 'granted') && store.get('notify', false);
+  }
+  function renderBell() {
+    bell.hidden = !me || !('Notification' in window);
+    bell.textContent = notifying() ? '🔔' : '🔕';
+    bell.title = notifying() ? 'Notifying you of mentions and answers (click to stop)'
+      : 'Notify me of mentions, and when an agent answers me';
+  }
+  bell.addEventListener('click', async () => {
+    if (notifying()) store.set('notify', false);
+    else if ((await Notification.requestPermission()) === 'granted') { granted = true; store.set('notify', true); }
+    renderBell();
+  });
+  async function notify(n) {
+    if (!notifying()) return;
+    const mood = moods.find(m => m.slug === n.mood);
+    const title = n.kind === 'answer' ? `${n.turn.sender} answered you` : `${n.turn.sender} mentioned you`;
+    const options = { body: (mood ? mood.title + ': ' : '') + n.turn.text.slice(0, 160), tag: n.turn.id,
+                      icon: '/moods/icon-192.png', data: { slug: n.mood, id: n.turn.id } };
+    try {
+      // Through the service worker: Android allows no other way.
+      const reg = await navigator.serviceWorker.getRegistration('/moods/');
+      if (reg) { await reg.showNotification(title, options); return; }
+    } catch (e) {}
+    try { new Notification(title, options); } catch (e) {}
+  }
+
+  // --- search: what was said, here or everywhere ------------------------------
+  const searchBox = document.getElementById('search');
+  const qInput = document.getElementById('q');
+  const qScope = document.getElementById('qscope');
+  const qResults = document.getElementById('qresults');
+  let qTimer = null, qSeq = 0;
+  function openSearch() {
+    searchBox.style.top = document.querySelector('header').getBoundingClientRect().bottom + 'px';  // just below it
+    searchBox.hidden = false;
+    qInput.focus(); qInput.select();
+    if (qInput.value.trim().length >= 2) runSearch();
+  }
+  function closeSearch() { searchBox.hidden = true; }
+  function marked(text, q) {
+    const safe = esc(text), needle = esc(q);
+    const at = safe.toLowerCase().indexOf(needle.toLowerCase());
+    return at < 0 ? safe : safe.slice(0, at) + '<mark>' + safe.slice(at, at + needle.length) + '</mark>' + safe.slice(at + needle.length);
+  }
+  async function runSearch() {
+    const q = qInput.value.trim(), seq = ++qSeq;
+    if (q.length < 2) { qResults.innerHTML = '<div class="note">Two letters at least.</div>'; return; }
+    qResults.innerHTML = '<div class="note">Searching…</div>';
+    const here = qScope.value === 'here' && current;
+    try {
+      const r = await fetch('/api/search/?q=' + encodeURIComponent(q) + (here ? '&mood=' + encodeURIComponent(current) : ''));
+      const { hits } = await r.json();
+      if (seq !== qSeq) return;  // a newer search is under way
+      qResults.innerHTML = hits.map(h => `<a class="hit" href="/moods/${encodeURIComponent(h.mood)}/#m-${esc(h.id)}" data-slug="${esc(h.mood)}" data-id="${esc(h.id)}">`
+        + `<b>${esc(h.sender)}</b>${here ? '' : ' in ' + esc(h.title)} · ${esc(stamp(h.created_at))}<span class="txt">${marked(h.text, q)}</span></a>`).join('')
+        || `<div class="note">Nothing said ${here ? 'in this Mood' : 'in any Mood'} contains “${esc(q)}”.</div>`;
+    } catch (e) { if (seq === qSeq) qResults.innerHTML = '<div class="note">Search failed; try again.</div>'; }
+  }
+  qInput.addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(runSearch, 300); });
+  qScope.addEventListener('change', runSearch);
+  document.getElementById('searchBtn').addEventListener('click', () => (searchBox.hidden ? openSearch() : closeSearch()));
+  document.getElementById('qclose').addEventListener('click', closeSearch);
+  document.addEventListener('keydown', e => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+    if (e.key === '/' && !typing) { e.preventDefault(); openSearch(); }
+    else if (e.key === 'Escape' && !searchBox.hidden) closeSearch();
+  });
+  qResults.addEventListener('click', async e => {
+    const a = e.target.closest('a.hit');
+    if (!a) return;
+    e.preventDefault();
+    if (matchMedia('(max-width: 720px)').matches) closeSearch();
+    if (a.dataset.slug !== current) await open(a.dataset.slug, true);
+    if (!(await reveal(a.dataset.id))) showError('That message is further back than this page reaches.');
+  });
+
+  // --- recent changes, under the Moods list ---------------------------------
+  const RECENT_MS = 30000;
+  const recentBox = document.getElementById('recent');
+  const recentList = document.getElementById('recentList');
+  let recentAt = 0;
+  recentBox.open = store.get('recentOpen', false);
+  recentBox.addEventListener('toggle', () => { store.set('recentOpen', recentBox.open); if (recentBox.open) refreshRecent(true); });
+  const VERBS = { said: '', answered: '', renamed: 'renamed', set: 'changed', opened: 'opened' };
+  async function refreshRecent(force) {
+    if (!recentBox.open || (!force && Date.now() - recentAt < RECENT_MS)) return;
+    recentAt = Date.now();
+    try {
+      const r = await fetch('/api/moods/recent/');
+      if (!r.ok) return;
+      const { events } = await r.json();
+      recentList.innerHTML = events.map(e => {
+        const head = e.kind === 'deploy'
+          ? `⚙ ${esc(e.text)}${e.who ? ' · by ' + esc(e.who) : ''}`
+          : e.kind === 'opened'
+          ? `<b>${esc(e.title)}</b> opened`
+          : `${e.who ? `<b>${esc(e.who)}</b> ` : ''}${VERBS[e.kind] ? esc(VERBS[e.kind]) + ' ' : ''}in ${esc(e.title)}`;
+        return `<a class="ev" href="/moods/${encodeURIComponent(e.mood || '')}/" data-slug="${esc(e.mood || '')}" data-id="${esc(e.id || '')}">`
+          + `<time datetime="${esc(e.at)}">${esc(ago(e.at))}</time>${head}`
+          + (e.kind === 'opened' || e.kind === 'deploy' ? '' : `<span class="txt">${esc(e.text)}</span>`) + '</a>';
+      }).join('') || '<div class="ev">Nothing in the last day.</div>';
+    } catch (e) {}
+  }
+  // --- open work: pull requests and new issues, with who asked, and where -------
+  const workBox = document.getElementById('work');
+  const workList = document.getElementById('workList');
+  let workAt = 0;
+  workBox.open = store.get('workOpen', false);
+  workBox.addEventListener('toggle', () => { store.set('workOpen', workBox.open); if (workBox.open) refreshWork(true); });
+  function workRow(i) {
+    const who = i.asked_by ? `asked by <b>${esc(i.asked_by)}</b>` : (i.people.length ? esc(i.people.join(', ')) : esc(i.author));
+    const where = i.moods.slice(0, 2).map(m => ` · <span class="mood" data-slug="${esc(m.slug)}" data-id="${esc(m.id)}">${esc(m.title)}</span>`).join('');
+    const kind = i.kind === 'pr' ? (i.draft ? 'draft' : 'PR') : 'issue';
+    return `<a class="ev" href="${esc(i.url)}" target="_blank" rel="noopener"><time datetime="${esc(i.updated_at)}">${esc(ago(i.updated_at))}</time>`
+      + `<span class="repo">${esc(i.repo.split('/')[1])}#${i.number} · ${kind}</span>`
+      + `<span class="txt">${esc(i.title)}</span>${who}${where}</a>`;
+  }
+  async function refreshWork(force) {
+    if (!workBox.open || (!force && Date.now() - workAt < 300000)) return;
+    workAt = Date.now();
+    workList.innerHTML = workList.innerHTML || '<div class="ev">Asking…</div>';
+    try {
+      const d = await (await fetch('/api/work/')).json();
+      if (d.error) { workList.innerHTML = `<div class="ev">${esc(d.error)}</div>`; return; }
+      const fortnight = Date.now() - 14 * 86400 * 1000;
+      const fresh = d.items.filter(i => new Date(i.updated_at) > fortnight);
+      const older = d.items.filter(i => new Date(i.updated_at) <= fortnight);
+      workList.innerHTML = (fresh.map(workRow).join('') || '<div class="ev">Nothing touched in two weeks.</div>')
+        + (older.length ? `<details class="older"><summary>${older.length} quieter for two weeks or more</summary>${older.map(workRow).join('')}</details>` : '');
+    } catch (e) { workList.innerHTML = '<div class="ev">Could not load open work.</div>'; }
+  }
+  workList.addEventListener('click', e => {
+    const mood = e.target.closest('.mood');
+    if (!mood) return;
+    e.preventDefault();
+    document.body.classList.remove('menu-open');
+    openAndReveal(mood.dataset.slug, mood.dataset.id);
+  });
+  setInterval(() => refreshWork(false), 300000);
+
+  recentList.addEventListener('click', e => {
+    const a = e.target.closest('a.ev');
+    if (!a || !a.dataset.slug) return;
+    e.preventDefault();
+    document.body.classList.remove('menu-open');
+    openAndReveal(a.dataset.slug, a.dataset.id || null);
+  });
+
+  function touch(slug) {
+    lastSeen[slug] = new Date().toISOString();
+    store.set('lastSeen', lastSeen);
+    if (unread[slug]) delete unread[slug];
+    if (badges[slug]) { delete badges[slug]; renderNav(); setTitle(); }
+    pushSeen(slug);
+  }
+  // Where you've read up to is kept on the server too (POST/GET /api/seen/), so
+  // a phone's counts know what the laptop read: pushed when a Mood is read (at
+  // most every 15 s each), pulled on load, every minute, and on coming back.
+  const pushedSeen = {};
+  function pushSeen(slug) {
+    if (!viewer || me !== viewer || Date.now() - (pushedSeen[slug] || 0) < 15000) return;
+    pushedSeen[slug] = Date.now();
+    fetch('/api/seen/', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+                          body: JSON.stringify({ mood: slug }) }).catch(() => {});
+  }
+  async function pullSeen() {
+    if (!viewer || me !== viewer) return;
+    let marks;
+    try {
+      const r = await fetch('/api/seen/');
+      if (!r.ok) return;
+      marks = (await r.json()).seen || {};
+    } catch (e) { return; }
+    let changed = false;
+    for (const [slug, at] of Object.entries(marks)) {
+      if (!lastSeen[slug] || at > lastSeen[slug]) { lastSeen[slug] = at; changed = true; }
+      const ids = unread[slug];  // read elsewhere since these were counted: not unread any more
+      if (ids) for (const [id, created] of ids) if (created <= lastSeen[slug]) ids.delete(id);
+    }
+    if (changed) store.set('lastSeen', lastSeen);
+    countBadges(); renderNav(); setTitle();
+  }
+  setInterval(pullSeen, 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) pullSeen().then(() => { if (current) touch(current); refreshBadges(true); });
+  });
+
+  // Bring a message into view, reaching back a few pages if need be.
+  async function reveal(id) {
+    if (!id) return false;
+    for (let i = 0; i < 12; i++) {
+      const el = document.getElementById('m-' + id);
+      if (el) {
+        const folded = el.closest('.aturn.folded');
+        if (folded) { folded.classList.remove('folded'); drawBlockHead(folded); }
+        el.scrollIntoView({ block: 'center' });
+        el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+        return true;
+      }
+      const earlier = document.getElementById('earlier');
+      if (!earlier || earlier.hidden) return false;
+      await loadEarlier();
+    }
+    return false;
+  }
+  async function openAndReveal(slug, id) {
+    if (slug !== current) await open(slug, true);
+    await reveal(id);
+  }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', e => {
+      if (e.data && e.data.open) openAndReveal(e.data.open, e.data.id);
+    });
+  }
+
+  // What's been drawn for each Mood this visit: switching back puts it back at
+  // once and asks only for what's new. The last few Moods are kept.
+  const drawn = new Map();  // slug -> {nodes, lastId, firstId, headMood, prev, scrollTop}
+  const KEEP_DRAWN = 8;
+  const FIRST_PAGE = 150;   // items on a first load; "Load earlier" for more
+  let gen = 0;              // bumped at every switch: answers for a Mood since left are dropped
+
+  function stash() {
+    if (!current || !document.getElementById('turns')) return;
+    const nodes = document.createDocumentFragment();
+    while (inner.firstChild) nodes.appendChild(inner.firstChild);
+    drawn.delete(current);
+    drawn.set(current, { nodes, lastId, firstId, headMood, prev, scrollTop: main.scrollTop });
+    while (drawn.size > KEEP_DRAWN) drawn.delete(drawn.keys().next().value);
+  }
+
+  async function open(slug, push) {
+    if (replyTo) cancelReply();  // a reply belongs to the Mood it started in
+    if (slug === current && document.getElementById('turns')) return;
+    stash();
+    gen++;
+    current = slug;
+    if (push) history.pushState({ slug }, '', '/moods/' + encodeURIComponent(slug) + '/');
+    newBelow = 0;
+    touch(slug);
+    renderNav();
+    // Nothing of the Mood just left may linger: not its agent's work, its
+    // tasks, who was typing there, or its agents' settings.
+    act = null; renderActivity();
+    tasks = []; renderTasks();
+    typingNow = []; renderTyping();
+    renderAgents({});
+    const saved = drawn.get(slug);
+    if (saved) {
+      drawn.delete(slug);
+      inner.replaceChildren(saved.nodes);
+      ({ lastId, firstId, prev } = saved);
+      showMoodName(saved.headMood);
+      await poll(false);
+    } else {
+      lastId = null;
+      inner.innerHTML = '<div class="empty">Loading…</div>';
+      await poll(true);
+    }
+    // A Mood opens at its newest, always: what's for you is marked, and the @
+    // arrows (or a notification, a search hit, a link) take you to it.
+    toNewest();
+    renderToBottom();
+  }
+  // To the newest, and stay there while images above it load and push it down.
+  function toNewest() {
+    main.scrollTop = main.scrollHeight;
+    const until = Date.now() + 4000;
+    document.querySelectorAll('#turns img').forEach(img => {
+      if (!img.complete) img.addEventListener('load', () => { if (Date.now() < until) main.scrollTop = main.scrollHeight; }, { once: true });
+    });
+  }
+
+  let firstId = null;      // the oldest item shown, for ?before=
+  async function loadEarlier() {
+    const button = document.getElementById('earlier');
+    if (!firstId || !button) return;
+    button.disabled = true; button.textContent = 'loading…';
+    const mine = gen;
+    try {
+      const r = await fetch('/api/moods/' + encodeURIComponent(current) + '/turns/?before=' + firstId);
+      const data = await r.json();
+      if (mine !== gen) return;  // switched away meanwhile
+      const items = itemsOf(data);
+      const box = document.createElement('div');
+      const saved = prev; prev = null;
+      renderItems(items, box, false);
+      foldOld(box, false);  // an earlier page: all of it is old
+      prev = saved;
+      const turnsEl = document.getElementById('turns');
+      const height = main.scrollHeight;
+      turnsEl.prepend(...box.children);
+      main.scrollTop += main.scrollHeight - height;
+      if (items.length) firstId = items[0].v.id;
+      button.hidden = !data.has_earlier;
+    } finally { button.disabled = false; button.textContent = 'Load earlier'; }
+  }
+  document.addEventListener('click', e => { if (e.target.id === 'earlier') loadEarlier(); });
+
+  async function poll(full) {
+    if (!current) return;
+    const mine = gen;
+    if (!full && pollingGen === mine) return;  // one poll at a time per Mood: two could draw the same items twice
+    pollingGen = mine;
+    try { await pollOnce(full, mine); } finally { if (pollingGen === mine) pollingGen = null; }
+  }
+  let pollingGen = null;
+  async function pollOnce(full, mine) {
+    const url = '/api/moods/' + encodeURIComponent(current) + '/turns/'
+      + (lastId && !full ? '?after=' + lastId : '?limit=' + FIRST_PAGE);
+    let data;
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(r.status);
+      data = await r.json();
+      setStatus('live', 'live');
+    } catch (e) {
+      if (mine === gen) setStatus('reconnecting…', 'stale');
+      return;
+    }
+    if (mine !== gen) return;  // an answer for a Mood since left: drawing it here would mislead
+    if (full) {
+      prev = null;
+      inner.innerHTML = renderHead(data.mood);
+      showMoodName(data.mood);
+    } else if (headMood && data.mood && data.mood.title !== headMood.title) {
+      // Someone renamed it: say so in place, without redrawing the thread.
+      showMoodName(data.mood);
+      loadMoods();
+    }
+    act = data.activity || null;
+    renderActivity();
+    tasks = data.tasks || [];
+    renderTasks();
+    renderAgents(data.agents || {});
+    renderLocked(data.scram || null);
+    typingNow = (data.typing || []).filter(n => n !== viewer);
+    renderTyping();
+    const turnsEl = document.getElementById('turns');
+    if (!turnsEl) return;
+    const items = itemsOf(data);
+    if (full) {
+      firstId = items.length ? items[0].v.id : null;
+      const earlier = document.getElementById('earlier');
+      earlier.hidden = !data.has_earlier;
+      if (!items.length) turnsEl.innerHTML = '<div class="empty">Nothing said here yet.</div>';
+    }
+    if (items.length) {
+      const nearBottom = main.scrollHeight - main.scrollTop - main.clientHeight < 120;
+      const emptyNote = turnsEl.querySelector('.empty'); if (emptyNote) emptyNote.remove();
+      renderItems(items, turnsEl, !full);
+      if (full) foldOld(turnsEl);
+      lastId = items[items.length - 1].v.id;
+      if (full || nearBottom) main.scrollTop = main.scrollHeight;
+      else if (!full) { newBelow += data.turns.length; }
+      renderToBottom();
+      // Seen only if someone's looking: an answer that lands while this page is
+      // hidden is still news, and is told as a notice.
+      if (!document.hidden) touch(current);
+      if (!full && data.turns.length) { await loadMoods(); }
+    }
+    // An agent just finished here: ask now, not in 15 s, whether it answered me.
+    const finished = wasBusy && !act;
+    wasBusy = !!act;
+    await refreshBadges(finished);
+    refreshRecent(false);
+  }
+  let wasBusy = false;
+
+  // --- back to the newest -----------------------------------------------------
+  const toBottom = document.getElementById('toBottom');
+  let newBelow = 0;  // turns that arrived while scrolled up
+  function renderToBottom() {
+    const far = main.scrollHeight - main.scrollTop - main.clientHeight > 400;
+    if (!far) newBelow = 0;
+    toBottom.classList.toggle('on', far);
+    toBottom.textContent = newBelow ? `↓ ${newBelow} new` : '↓ newest';
+  }
+  main.addEventListener('scroll', renderToBottom, { passive: true });
+  toBottom.addEventListener('click', () => main.scrollTo({ top: main.scrollHeight, behavior: 'smooth' }));
+
+  // --- what an agent is doing: read from the record, ticking locally ----------
+  const activityEl = document.getElementById('activity');
+  const activityText = document.getElementById('activityText');
+  function elapsed(since) {
+    const s = Math.max(0, Math.floor(Date.now() / 1000 - since));
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
+    return Math.floor(s / 3600) + 'h ' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + 'm';
+  }
+  // --- listening: hush an agent here, for a while or until changed ----------
+  const HUSH = [['on', 0, 'listening'], ['mentions', 60, 'mentions only · 1 hour'],
+                ['mentions', 0, 'mentions only · until changed'], ['off', 60, 'hushed · 1 hour'],
+                ['off', 120, 'hushed · 2 hours'], ['off', 0, 'hushed · until changed']];
+  // Model and effort for this agent's mention wakes here (settings: model,
+  // mention_effort), so changing them needs no trip to the settings page.
+  const MODELS = [['', 'default model'], ['opus', 'opus'], ['sonnet', 'sonnet'], ['fable', 'fable'], ['haiku', 'haiku']];
+  const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const EFFORT_LABELS = { xhigh: 'extra' };  // as the terminal names them
+  const DISCRETIONS = ['reserved', 'normal', 'chatty'];
+  const VERBOSITIES = ['brief', 'normal', 'thorough'];
+  const READS = [2500, 5000, 10000, 20000];  // tokens a wake reads word for word (catch_up_tokens)
+  let agentsNow = {}, agentsShown = '';
+  function describeListening(l) {
+    const until = l.until ? ' until ' + new Date(l.until).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
+    return l.mode === 'on' ? 'listening' : (l.mode === 'mentions' ? 'mentions only' : 'hushed') + until;
+  }
+  function shortModel(m) { return (m || '').replace(/^claude-/, '').replace(/-(\d+)-(\d+)$/, ' $1.$2'); }
+  // A pie for how full `name`'s context is here, or nothing if unknown.
+  function pieAttrs(name) {
+    const c = (agentsNow[name] || {}).context;
+    if (!c || !c.window) return null;
+    const pct = Math.min(100, Math.round(100 * c.tokens / c.window));
+    const title = c.compacted
+      ? `compacted ${stamp(c.at)} · about ${c.tokens.toLocaleString()} tokens of ${c.window.toLocaleString()}, the summary; its next turn measures it`
+      : `context ${pct}% full · ${c.tokens.toLocaleString()} of ${c.window.toLocaleString()} tokens`
+        + (c.model ? ` · ${shortModel(c.model)}` : '') + ` · as of ${stamp(c.at)}`;
+    return { pct, title };
+  }
+  // Wherever an agent is named with its settings -- the people chips, the
+  // agent rows -- its pie leads; drawn in place, since the rest changes rarely.
+  function refreshPies() {
+    // ⚙ on a phone carries the pie of whichever agent here is fullest.
+    const fullest = Object.keys(agentsNow).sort((a, b) => ((pieAttrs(b) || {}).pct || 0) - ((pieAttrs(a) || {}).pct || 0))[0];
+    const gear = document.getElementById('agentsBtn');
+    if (fullest) gear.dataset.who = fullest; else delete gear.dataset.who;
+    document.querySelectorAll('.people .who.agent, #hush .agent, #agentsBtn').forEach(el => {
+      const a = pieAttrs(el.dataset.who);
+      let p = el.querySelector('.pie');
+      if (!a) { if (p) p.remove(); return; }
+      if (!p) { p = document.createElement('span'); el.prepend(p); }
+      p.className = 'pie' + (a.pct > 90 ? ' full' : a.pct > 80 ? ' hot' : a.pct > 70 ? ' warm' : '');
+      p.style.setProperty('--p', a.pct + '%');
+      p.title = a.title;
+    });
+  }
+  function renderAgents(agents) {
+    agentsNow = agents;
+    const box = document.getElementById('hush');
+    // Redraw the menus only when a setting changed: never under someone's open menu.
+    const key = JSON.stringify(Object.entries(agents).map(([n, a]) => [n, a.listening, a.model, a.effort, a.ultracode, a.reads,
+                                                                       a.discretion, a.verbosity, viewer]));
+    if (box && (key !== agentsShown || !box.childElementCount)) {
+      agentsShown = key;
+      box.innerHTML = agentRows(agents);
+    }
+    refreshPies();
+  }
+  function agentRows(agents) {
+    return Object.entries(agents).map(([agent, a]) => {
+      const l = a.listening, ctx = a.context || {};
+      const row = `<span class="agent${l.mode === 'on' ? '' : ' off'}" data-who="${esc(agent)}">${icon(agent, false)}${esc(agent)}: `;
+      if (!keyHolder) {
+        return row
+          + `${esc(describeListening(l))} · ${esc(a.model || 'default model')} · effort ${esc(EFFORT_LABELS[a.effort] || a.effort)} · reads ${esc(kTokens(a.reads || 10000))}`
+          + ` · ${esc(a.discretion || 'normal')} · ${esc(a.verbosity || 'normal')} replies`
+          + (a.ultracode ? ' · ultracode' : '') + '</span>';
+      }
+      const listen = `<select data-agent="${esc(agent)}" data-knob="listening"><option selected disabled>${esc(describeListening(l))}</option>`
+        + HUSH.map(([mode, minutes, label], i) => `<option value="${i}">${esc(label)}</option>`).join('') + '</select>';
+      const models = MODELS.some(([v]) => v === a.model) ? MODELS : [...MODELS, [a.model, a.model]];
+      const model = `<select data-agent="${esc(agent)}" data-knob="model" title="model for its wakes here">`
+        + models.map(([v, label]) => `<option value="${esc(v)}"${v === a.model ? ' selected' : ''}>`
+          + `${esc(v ? label : (ctx.model ? `default (${shortModel(ctx.model)})` : label))}</option>`).join('') + '</select>';
+      const effort = `<select data-agent="${esc(agent)}" data-knob="mention_effort" title="how hard it thinks when @mentioned here">`
+        + EFFORTS.map(v => `<option value="${v}"${v === a.effort ? ' selected' : ''}>effort ${EFFORT_LABELS[v] || v}</option>`).join('') + '</select>';
+      // How much of what was said since its last word a wake reads word for word.
+      const reads = `<select data-agent="${esc(agent)}" data-knob="catch_up_tokens" title="How much of what was said here since it last spoke a wake reads word for word; older is summarized">`
+        + READS.map(n => `<option value="${n}"${n === a.reads ? ' selected' : ''}>reads ${kTokens(n)}</option>`).join('')
+        + (READS.includes(a.reads) ? '' : `<option value="${a.reads}" selected>reads ${kTokens(a.reads)}</option>`) + '</select>';
+      // How readily it speaks up unasked here, and how long its replies run.
+      const discretion = `<select data-agent="${esc(agent)}" data-knob="discretion" title="How readily it speaks up unasked here: reserved, normal, or chatty (joins in, small talk included)">`
+        + DISCRETIONS.map(v => `<option value="${v}"${v === (a.discretion || 'normal') ? ' selected' : ''}>${v}</option>`).join('') + '</select>';
+      const verbosity = `<select data-agent="${esc(agent)}" data-knob="verbosity" title="How long its replies run here">`
+        + VERBOSITIES.map(v => `<option value="${v}"${v === (a.verbosity || 'normal') ? ' selected' : ''}>${v} replies</option>`).join('') + '</select>';
+      const ultra = `<label class="ultra" title="Claude Code's standing multi-agent workflows, on wakes with full tools: thorough, and costly">`
+        + `<input type="checkbox" data-agent="${esc(agent)}" data-knob="ultracode"${a.ultracode ? ' checked' : ''}> ultracode</label>`;
+      return `${row}${listen} ${discretion} ${verbosity} ${model} ${effort} ${reads} ${ultra}</span>`;
+    }).join('');
+  }
+  document.addEventListener('change', async e => {
+    const select = e.target.closest('#hush select, #hush input[type=checkbox]');
+    if (!select) return;
+    let key = select.dataset.knob, value = select.type === 'checkbox' ? select.checked : select.value;
+    if (key === 'listening') {
+      const [mode, minutes] = HUSH[Number(select.value)];
+      value = { mode, until: minutes ? new Date(Date.now() + minutes * 60000).toISOString() : null };
+    }
+    const r = await fetch('/api/settings/', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify({ key, value, mood: current, agent: select.dataset.agent, note: 'from the Mood' }),
+    });
+    if (!r.ok) showError(key + ': ' + ((await r.json().catch(() => ({}))).error || r.status));
+    agentsShown = '';
+    poll(false);
+  });
+  function renderLocked(scram) {
+    document.body.classList.toggle('locked', !!scram);
+    document.getElementById('locked').textContent = scram
+      ? `Locked: AZ5 by ${scram.by} at ${new Date(scram.at).toLocaleString()}. Nobody can post or sign in, and every agent is still, until it's lifted.`
+      : '';
+  }
+
+  // What an agent left running in the background, as in its terminal.
+  let tasks = [];
+  const tasksEl = document.getElementById('tasks');
+  // One line -- how many, and the longest-running -- opened on demand.
+  function renderTasks() {
+    tasksEl.classList.toggle('on', tasks.length > 0);
+    if (!tasks.length) { tasksEl.innerHTML = ''; return; }
+    const oldest = Math.min(...tasks.map(t => t.since));
+    tasksEl.innerHTML = `<span class="sum" title="show them">⚙ ${tasks.length} running · longest ${elapsed(oldest)} ${tasksEl.classList.contains('open') ? '▾' : '▸'}</span>`
+      + `<span class="list">${tasks.map(t =>
+        `<span class="task ${t.kind === 'helper' ? 'helper' : ''}" title="${esc(t.kind)} ${esc(t.id)}">${esc(t.label)} · ${elapsed(t.since)}</span>`).join('')}</span>`;
+  }
+  tasksEl.addEventListener('click', e => {
+    if (e.target.closest('.sum')) { tasksEl.classList.toggle('open'); renderTasks(); }
+  });
+  setInterval(renderTasks, 1000);
+
+  const typingEl = document.getElementById('typing');
+  function renderTyping() {
+    document.querySelectorAll('.people .who').forEach(el => el.classList.toggle('typing', typingNow.includes(el.dataset.who)));
+    typingEl.classList.toggle('on', typingNow.length > 0);
+    typingEl.innerHTML = typingNow.map(n => `${icon(n, true)}<b>${esc(shown(n))}</b>`).join(', ')
+      + (typingNow.length ? (typingNow.length > 1 ? ' are typing…' : ' is typing…') : '');
+    markLive();
+  }
+
+  // Stop what the agent here is doing: a turn under way ends within seconds,
+  // and a mention it hasn't answered yet is let go (POST .../interrupt/).
+  const stopBtn = document.getElementById('stopBtn');
+  async function interrupt() {
+    if (!act || act.doing === 'held' || !keyHolder || !current) return false;
+    stopBtn.disabled = true;
+    try {
+      const r = await fetch('/api/moods/' + encodeURIComponent(current) + '/interrupt/', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+        body: JSON.stringify({ agent: act.agent }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+      act = null; renderActivity();
+      await poll(false);
+    } catch (e) { showError('stop: ' + e.message); }
+    finally { stopBtn.disabled = false; }
+    return true;
+  }
+  stopBtn.addEventListener('click', interrupt);
+
+  function renderActivity() {
+    const turnsEl = document.getElementById('turns');
+    const newest = turnsEl && turnsEl.lastElementChild;
+    if (newest && newest.classList.contains('aturn')) drawBlockHead(newest);
+    document.querySelectorAll('.people .who').forEach(el => el.classList.toggle('busy', !!act && act.doing !== 'held' && el.dataset.who === act.agent));
+    activityEl.classList.toggle('on', !!act);
+    activityEl.classList.toggle('held', !!act && act.doing === 'held');
+    markLive();
+    stopBtn.hidden = !(keyHolder && act && act.doing !== 'held');
+    if (!act) return;
+    const hhmm = iso => new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    activityText.innerHTML = act.doing === 'waking'
+      ? `waking ${icon(act.agent, false)}<b>${esc(act.agent)}</b> · ${elapsed(act.since)}`
+      : act.doing === 'held'
+      ? `${icon(act.agent, false)}<b>${esc(act.agent)}</b> · held: ${esc(act.why || 'not yet')}`
+        + (act.until ? ` · answers about ${esc(hhmm(act.until))}` : '') + ` · asked ${elapsed(act.since)} ago`
+      : `${icon(act.agent, false)}<b>${esc(act.agent)}</b> · ${esc(act.doing)} · ${elapsed(act.since)}`
+        + ([act.model, act.effort].filter(Boolean).length ? ` · ${esc([act.model, act.effort].filter(Boolean).join(' · '))}` : '');
+  }
+  setInterval(renderActivity, 1000);
+
+  // --- @-completion: people in this Mood first, then everyone else -------
+  const suggest = document.getElementById('suggest');
+  let choices = [], chosen = 0;
+  // Emoji by name, as `:name` -- a small set, favourites first.
+  const EMOJI = [
+    ['thumbsup', '👍'], ['heart', '❤️'], ['joy', '😂'], ['smile', '😄'], ['tada', '🎉'], ['fire', '🔥'],
+    ['pray', '🙏'], ['eyes', '👀'], ['100', '💯'], ['clap', '👏'], ['banjo', '🪕'], ['violin', '🎻'],
+    ['fiddle', '🎻'], ['guitar', '🎸'], ['notes', '🎶'], ['musical_note', '🎵'], ['microphone', '🎤'],
+    ['drum', '🥁'], ['cowboy', '🤠'], ['bus', '🚌'], ['train', '🚂'], ['sun', '☀️'], ['sunrise', '🌄'],
+    ['mountain', '⛰️'], ['hot_springs', '♨️'], ['coffee', '☕'], ['beer', '🍺'], ['wave', '👋'], ['ok', '👌'],
+    ['thinking', '🤔'], ['grin', '😁'], ['wink', '😉'], ['blush', '😊'], ['sweat_smile', '😅'], ['laughing', '😆'],
+    ['heart_eyes', '😍'], ['sunglasses', '😎'], ['cry', '😢'], ['sob', '😭'], ['scream', '😱'], ['zany', '🤪'],
+    ['upside_down', '🙃'], ['shrug', '🤷'], ['facepalm', '🤦'], ['raised_hands', '🙌'], ['muscle', '💪'],
+    ['thumbsdown', '👎'], ['point_up', '☝️'], ['point_right', '👉'], ['handshake', '🤝'], ['v', '✌️'],
+    ['rocket', '🚀'], ['star', '⭐'], ['sparkles', '✨'], ['zap', '⚡'], ['rainbow', '🌈'], ['moon', '🌙'],
+    ['earth', '🌎'], ['seedling', '🌱'], ['sunflower', '🌻'], ['rose', '🌹'], ['tree', '🌲'], ['cactus', '🌵'],
+    ['check', '✅'], ['x', '❌'], ['warning', '⚠️'], ['question', '❓'], ['exclamation', '❗'], ['bulb', '💡'],
+    ['memo', '📝'], ['books', '📚'], ['link', '🔗'], ['lock', '🔒'], ['key', '🔑'], ['bell', '🔔'],
+    ['no_bell', '🔕'], ['hourglass', '⏳'], ['clock', '🕐'], ['calendar', '📅'], ['pin', '📌'], ['gear', '⚙️'],
+    ['wrench', '🔧'], ['hammer', '🔨'], ['bug', '🐛'], ['robot', '🤖'], ['brain', '🧠'], ['computer', '💻'],
+    ['phone', '📱'], ['camera', '📷'], ['movie', '🎬'], ['headphones', '🎧'], ['radio', '📻'], ['cd', '💿'],
+    ['ticket', '🎫'], ['trophy', '🏆'], ['medal', '🏅'], ['gift', '🎁'], ['balloon', '🎈'], ['cake', '🎂'],
+    ['pizza', '🍕'], ['taco', '🌮'], ['apple', '🍎'], ['peach', '🍑'], ['dog', '🐶'], ['cat', '🐱'],
+    ['horse', '🐴'], ['turtle', '🐢'], ['snake', '🐍'], ['bird', '🐦'], ['owl', '🦉'], ['frog', '🐸'],
+    ['crab', '🦀'], ['dragon', '🐉'], ['unicorn', '🦄'], ['bee', '🐝'], ['butterfly', '🦋'], ['moneybag', '💰'],
+    ['chart', '📈'], ['ghost', '👻'], ['skull', '💀'], ['alien', '👽'], ['magenta', '🟣'], ['purple_heart', '💜'],
+  ];
+  // [[ suggests PickiPedia titles, as the wiki's own editor does (LinkSuggest).
+  // Its API answers any origin, so the browser asks the wiki directly.
+  const WIKI = "{{ pickipedia_url|escapejs }}" || 'https://pickipedia.xyz';
+  const wikiCache = new Map();
+  let wikiTimer = null;
+  function titleCase(s) { return s.replace(/(^|[\s:_(-])([a-z])/g, (m, p, c) => p + c.toUpperCase()); }
+  async function wikiTitles(prefix) {
+    if (wikiCache.has(prefix)) return wikiCache.get(prefix);
+    const ask = async q => {
+      const r = await fetch(`${WIKI}/api.php?action=query&list=prefixsearch&pslimit=8&format=json&origin=*&pssearch=${encodeURIComponent(q)}`);
+      return ((await r.json()).query || {}).prefixsearch || [];
+    };
+    let hits = [];
+    try {
+      hits = await ask(prefix);
+      // Titles are case-sensitive after the first letter: 'tony r' finds
+      // nothing, 'Tony R' finds Tony Rice.
+      if (!hits.length && titleCase(prefix) !== prefix) hits = await ask(titleCase(prefix));
+    } catch (e) { hits = []; }
+    const titles = hits.map(h => h.title);
+    wikiCache.set(prefix, titles);
+    return titles;
+  }
+
+  // /yarn <name> and /yarn forget <name>: the team's saved clips, by name.
+  let yarnCache = null;
+  async function yarnClips() {
+    if (yarnCache && Date.now() - yarnCache.at < 60000) return yarnCache.clips;
+    try {
+      const clips = (await (await fetch('/api/yarn/')).json()).clips || [];
+      yarnCache = { at: Date.now(), clips };
+      return clips;
+    } catch (e) { return []; }
+  }
+  function wordAtCaret() {
+    const upto = sayBox.value.slice(0, sayBox.selectionStart);
+    const y = upto.match(/^\/yarn(?:\s+forget)?\s+([a-z0-9_-]*)$/i);
+    if (y) return { kind: 'yarn', start: upto.length - y[1].length, prefix: y[1].toLowerCase() };
+    const w = upto.match(/\[\[([^\[\]|\n]{1,100})$/);
+    if (w) return { kind: 'wiki', start: upto.length - w[1].length, prefix: w[1] };
+    let m = upto.match(/(^|[^\w@\/.])@([A-Za-z][\w.-]*)?$/);
+    if (m) return { kind: 'mention', start: upto.length - (m[2] || '').length, prefix: (m[2] || '').toLowerCase() };
+    // `:` starting a word -- so 10:30 doesn't open it.
+    m = upto.match(/(^|[\s(]):([a-z0-9_+-]{0,30})$/);
+    if (m) return { kind: 'emoji', start: upto.length - m[2].length - 1, prefix: m[2] };
+    return null;
+  }
+  function closeSuggest() { suggest.classList.remove('on'); choices = []; }
+  function showSuggest() {
+    const at = wordAtCaret();
+    if (!at) return closeSuggest();
+    if (at.kind === 'wiki') {
+      clearTimeout(wikiTimer);
+      const prefix = at.prefix;
+      wikiTimer = setTimeout(async () => {
+        const titles = await wikiTitles(prefix);
+        const still = wordAtCaret();
+        if (!still || still.kind !== 'wiki' || still.prefix !== prefix) return;  // they've typed on
+        choices = titles.map(t => ({ insert: t + ']]', html: `<span class="emo">📖</span>${esc(t)}` }));
+        if (!choices.length) return closeSuggest();
+        chosen = Math.min(chosen, choices.length - 1);
+        suggest.innerHTML = choices.map((c, i) => `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">${c.html}</div>`).join('');
+        suggest.classList.add('on');
+      }, wikiCache.has(prefix) ? 0 : 150);
+      return;
+    }
+    if (at.kind === 'yarn') {
+      const prefix = at.prefix;
+      yarnClips().then(clips => {
+        const still = wordAtCaret();
+        if (!still || still.kind !== 'yarn' || still.prefix !== prefix) return;  // they've typed on
+        choices = clips.filter(c => c.name.startsWith(prefix)).slice(0, 8)
+          .map(c => ({ insert: c.name, html: `<span class="emo">🎬</span>${esc(c.name)}<small>${esc(shown(c.by))}</small>` }));
+        if (!choices.length) return closeSuggest();
+        chosen = Math.min(chosen, choices.length - 1);
+        suggest.innerHTML = choices.map((c, i) => `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">${c.html}</div>`).join('');
+        suggest.classList.add('on');
+      });
+      return;
+    }
+    if (at.kind === 'emoji') {
+      const hits = EMOJI.filter(([name]) => name.startsWith(at.prefix))
+        .concat(at.prefix ? EMOJI.filter(([name]) => !name.startsWith(at.prefix) && name.includes(at.prefix)) : [])
+        .slice(0, 8);
+      choices = hits.map(([name, char]) => ({ insert: char, html: `<span class="emo">${char}</span>:${esc(name)}:` }));
+    } else {
+      const here = new Set((moods.find(m => m.slug === current) || {}).participants || []);
+      // By either name; what's put in is the PickiPedia name, where there is one (the server knows both).
+      const typed = at.prefix.toLowerCase();
+      choices = people.map(p => p.name).filter(n => n.startsWith(typed) || shown(n).toLowerCase().startsWith(typed))
+        .sort((a, b) => (here.has(b) - here.has(a)) || a.localeCompare(b)).slice(0, 8)
+        .map(n => ({ insert: shown(n) + ' ', html: `${icon(n)}@${esc(shown(n))}<small>${shown(n) !== n ? esc(n) + ' · ' : ''}${human[n] ? 'person' : 'agent'}${here.has(n) ? '' : ' · not here yet'}</small>` }));
+    }
+    if (!choices.length) return closeSuggest();
+    chosen = Math.min(chosen, choices.length - 1);
+    suggest.innerHTML = choices.map((c, i) => `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">${c.html}</div>`).join('');
+    suggest.classList.add('on');
+  }
+  function acceptSuggest(i) {
+    const at = wordAtCaret(); if (!at || !choices[i]) return;
+    const before = sayBox.value.slice(0, at.start), after = sayBox.value.slice(sayBox.selectionStart);
+    sayBox.value = before + choices[i].insert + after;
+    const caret = (before + choices[i].insert).length;
+    sayBox.setSelectionRange(caret, caret);
+    closeSuggest(); sayBox.focus();
+  }
+  sayBox.addEventListener('input', () => { chosen = 0; showSuggest(); });
+  sayBox.addEventListener('keydown', e => {
+    if (!suggest.classList.contains('on')) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); chosen = (chosen + (e.key === 'ArrowDown' ? 1 : choices.length - 1)) % choices.length; showSuggest();
+    } else if ((e.key === 'Enter' && !e.ctrlKey && !e.metaKey) || e.key === 'Tab') {
+      e.preventDefault(); e.stopImmediatePropagation(); acceptSuggest(chosen);
+      return;
+    } else if (e.key === 'Escape') { e.preventDefault(); closeSuggest(); }
+  });
+  // Esc in the box, with no suggestions open: stop the agent, as in a terminal.
+  sayBox.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !e.defaultPrevented && act && act.doing !== 'held') { e.preventDefault(); interrupt(); }
+  });
+  suggest.addEventListener('mousedown', e => { const d = e.target.closest('[data-i]'); if (d) { e.preventDefault(); acceptSuggest(+d.dataset.i); } });
+  sayBox.addEventListener('blur', () => setTimeout(closeSuggest, 150));
+
+  meSelect.addEventListener('change', () => {
+    me = meSelect.value; store.set('me', me);
+    renderMe(); remarkAll(); resetBadges(); refreshBadges(true);
+  });
+  onlyMine.addEventListener('change', () => document.body.classList.toggle('only-mine', onlyMine.checked));
+  // Text size: what was said, larger or smaller, without zooming the page. Kept per browser.
+  const TEXT_SIZES = [0.85, 1, 1.15, 1.3, 1.5, 1.75, 2];
+  function applyTextSize(scale) {
+    document.documentElement.style.setProperty('--text-scale', scale);
+    document.getElementById('textSizeVal').textContent = Math.round(scale * 100) + '%';
+  }
+  applyTextSize(store.get('textScale', 1));
+  document.querySelector('#userMenu .textsize').addEventListener('click', e => {
+    const b = e.target.closest('button[data-step]');
+    if (!b) return;
+    e.stopPropagation();  // the menu stays open while you try sizes
+    const at = Math.max(0, TEXT_SIZES.indexOf(store.get('textScale', 1)));
+    const scale = TEXT_SIZES[Math.max(0, Math.min(TEXT_SIZES.length - 1, at + Number(b.dataset.step)))];
+    store.set('textScale', scale);
+    applyTextSize(scale);
+  });
+  const agentsBtn = document.getElementById('agentsBtn');
+  agentsBtn.addEventListener('click', () => {
+    agentsBtn.setAttribute('aria-expanded', document.body.classList.toggle('agents-open'));
+  });
+  const menu = document.getElementById('menu');
+  menu.addEventListener('click', () => {
+    menu.setAttribute('aria-expanded', document.body.classList.toggle('menu-open'));
+  });
+  nav.addEventListener('click', e => { if (e.target.closest('a.mood')) document.body.classList.remove('menu-open'); });
+  // On a phone: one line until there's more to say, growing with the text (to 40% of the screen).
+  const phone = matchMedia('(max-width: 720px)').matches;
+  function fitSay() {
+    if (!phone) return;
+    // Empty, it's one line again: an empty textarea's scrollHeight counts its
+    // placeholder, wrapped to the box's width, so measuring it then made the
+    // box as tall as the placeholder written a word per line.
+    if (!sayBox.value) { sayBox.style.height = ''; return; }
+    sayBox.style.height = 'auto';
+    sayBox.style.height = sayBox.scrollHeight + 2 + 'px';
+  }
+  // Short: a phone's box is narrow, and a placeholder can't wrap or end in an ellipsis there.
+  if (phone) { sayBox.placeholder = 'Say something…'; sayBox.rows = 1; }
+  sayBox.addEventListener('input', fitSay);
+  addEventListener('resize', fitSay);  // turning the phone rewraps what's typed
+
+  // Tell the Mood this person is typing: at most every 3s while there is
+  // text, and once when it is cleared or sent.
+  let typingSent = 0;
+  function sendTyping(on) {
+    if (!viewer || !current) return;
+    fetch('/api/moods/' + encodeURIComponent(current) + '/typing/', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify({ typing: on }),
+    }).catch(() => {});
+  }
+  sayBox.addEventListener('input', () => {
+    const now = Date.now();
+    if (sayBox.value.trim()) {
+      if (now - typingSent > 3000) { typingSent = now; sendTyping(true); }
+    } else if (typingSent) { typingSent = 0; sendTyping(false); }
+  });
+
+  // Images into the composer: paste, drop, or the + button. Each is stored
+  // first, then its markdown goes in at the caret.
+  function showError(message) {
+    composer.querySelectorAll('.err, .note').forEach(el => el.remove());
+    composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(message)}</span>`);
+  }
+  const fileInput = document.getElementById('file');
+  async function upload(file) {
+    const marker = `![uploading ${file.name || 'image'}…]()`;
+    insertAtCaret(marker + '\n');
+    try {
+      const r = await fetch('/api/moods/' + encodeURIComponent(current) + '/media/', {
+        method: 'POST', headers: { 'X-CSRFToken': csrf(), 'Content-Type': 'application/octet-stream' }, body: file,
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || r.status);
+      sayBox.value = sayBox.value.replace(marker, body.markdown);
+    } catch (e) {
+      sayBox.value = sayBox.value.replace(marker + '\n', '');
+      showError('image: ' + e.message);
+    }
+    sayBox.dispatchEvent(new Event('input'));
+  }
+  function insertAtCaret(text) {
+    const at = sayBox.selectionStart ?? sayBox.value.length;
+    sayBox.value = sayBox.value.slice(0, at) + text + sayBox.value.slice(sayBox.selectionEnd ?? at);
+    sayBox.selectionStart = sayBox.selectionEnd = at + text.length;
+  }
+  function imagesIn(list) { return [...(list || [])].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type)); }
+  // Android hands an image-only picker to its photo picker (Google Photos); with
+  // no filter it offers its full chooser -- Files, Camera, Photos. Only images are taken either way.
+  if (/Android/i.test(navigator.userAgent)) fileInput.removeAttribute('accept');
+  document.getElementById('attach').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    const skipped = [...fileInput.files].length - imagesIn(fileInput.files).length;
+    if (skipped) showError(`only images can be added (PNG, JPEG, GIF, WebP): ${skipped} file${skipped > 1 ? 's' : ''} left out`);
+  });
+  fileInput.addEventListener('change', () => { imagesIn(fileInput.files).forEach(upload); fileInput.value = ''; });
+  sayBox.addEventListener('paste', e => {
+    const files = imagesIn([...(e.clipboardData?.items || [])].map(i => i.getAsFile()).filter(Boolean));
+    if (files.length) { e.preventDefault(); files.forEach(upload); }
+  });
+  composer.addEventListener('dragover', e => { e.preventDefault(); composer.classList.add('dropping'); });
+  composer.addEventListener('dragleave', () => composer.classList.remove('dropping'));
+  composer.addEventListener('drop', e => {
+    composer.classList.remove('dropping');
+    const files = imagesIn(e.dataTransfer?.files);
+    if (files.length) { e.preventDefault(); files.forEach(upload); }
+  });
+
+  // A voice memo: recorded here, transcribed there, put in the box to look
+  // over before sending -- a player for the audio, then what was heard.
+  const memoBtn = document.getElementById('memoBtn');
+  const MEMO_MAX_S = 600;
+  let recorder = null, memoTimer = null;
+  if (voiceOn && viewer && window.MediaRecorder && navigator.mediaDevices) memoBtn.hidden = false;
+  const clock = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+  memoBtn.addEventListener('click', async () => {
+    if (recorder) { recorder.stop(); return; }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { showError('microphone: ' + e.message); return; }
+    const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm']
+      .find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
+    recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+    const chunks = [], started = Date.now();
+    recorder.addEventListener('dataavailable', e => { if (e.data.size) chunks.push(e.data); });
+    recorder.addEventListener('stop', async () => {
+      clearInterval(memoTimer);
+      stream.getTracks().forEach(t => t.stop());
+      const seconds = (Date.now() - started) / 1000;
+      recorder = null;
+      memoBtn.classList.remove('recording'); memoBtn.classList.add('busy'); memoBtn.textContent = 'transcribing…';
+      try {
+        const r = await fetch('/api/moods/' + encodeURIComponent(current) + '/memo/', {
+          method: 'POST', headers: { 'X-CSRFToken': csrf() }, body: new Blob(chunks, { type: chunks[0]?.type || type || 'audio/webm' }) });
+        const body = await r.json().catch(() => ({}));
+        if (body.url) {
+          const heard = body.text ? '\n\n' + body.text : '';
+          insertAtCaret(`🎙 [voice memo · ${clock(body.seconds || seconds)}](${body.url})${heard}`);
+          sayBox.dispatchEvent(new Event('input'));
+          sayBox.focus();
+        }
+        if (!r.ok) throw new Error(body.error || r.status);
+      } catch (e) { showError('voice memo: ' + e.message); }
+      finally { memoBtn.classList.remove('busy'); memoBtn.textContent = '🎙'; }
+    });
+    recorder.start(1000);
+    memoBtn.classList.add('recording');
+    memoBtn.textContent = '■ 0:00';
+    memoTimer = setInterval(() => {
+      const s = (Date.now() - started) / 1000;
+      memoBtn.textContent = '■ ' + clock(s);
+      if (s >= MEMO_MAX_S && recorder) recorder.stop();
+    }, 500);
+  });
+
+  function csrf() {
+    const m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  // --- you: your name, and a small menu ---------------------------------------
+  const userBtn = document.getElementById('userBtn');
+  const userMenu = document.getElementById('userMenu');
+  if (viewer) {
+    document.body.classList.add('writer');
+    userBtn.textContent = shown(viewer) + ' ▾';
+    auth.innerHTML = keyHolder ? `signed in as <b>${esc(shown(viewer))}</b>`
+      : `signed in as <b>${esc(shown(viewer))}</b> with PickiPedia: you can chat and mention people. To wake agents `
+        + `or start and archive Moods, sign in with your SSH key (<code>magenta.sh login</code>).`;
+    document.getElementById('signout').hidden = false;
+    document.getElementById('devicesLink').hidden = false;
+    document.getElementById('signout').addEventListener('click', async e => {
+      e.preventDefault();
+      await fetch('/api/auth/logout/', { method: 'POST', headers: { 'X-CSRFToken': csrf() } });
+      location.reload();
+    });
+  } else {
+    userBtn.textContent = 'read-only ▾';
+    auth.innerHTML = (wikiSignin ? '<a class="wikiin" href="/moods/auth/wiki/">Sign in with PickiPedia</a> to chat.<br>' : '')
+      + 'To wake agents and run Moods, run <code>magenta.sh login</code> on a machine with your SSH key.'
+      + '<form id="pasteLink"><label for="pasted">Have a sign-in link? Paste it here:</label>'
+      + '<span><input id="pasted" type="url" autocomplete="off" placeholder="…/moods/login/…/"><button type="submit">Go</button></span></form>';
+    // A home-screen app has no address bar, and keeps its own sign-in apart
+    // from the browser's: here it can open a link it was handed.
+    document.getElementById('pasteLink').addEventListener('submit', e => {
+      e.preventDefault();
+      const m = document.getElementById('pasted').value.trim().match(/\/moods\/login\/([\w-]+)\/?/);
+      if (!m) { showError('That isn\'t a sign-in link: it should contain /moods/login/…'); return; }
+      location.href = '/moods/login/' + m[1] + '/';  // this app's own origin, whatever host was pasted
+    });
+  }
+  // Your devices: when each signed in, last wrote, and times out; revoke any.
+  const devicesBox = document.getElementById('devicesBox');
+  // An admin can also see everyone's live devices, either tier. Seeing only:
+  // signing someone else out is magenta.sh kick, signed with a key.
+  let devicesAll = false;
+  async function showDevices() {
+    userMenu.hidden = true;
+    devicesBox.hidden = false;
+    const list = document.getElementById('devicesList');
+    list.textContent = 'Loading…';
+    document.getElementById('devicesTitle').textContent = devicesAll ? "Everyone's devices" : 'Your devices';
+    const r = await fetch('/api/auth/devices/' + (devicesAll ? '?all=1' : ''));
+    if (!r.ok) { list.textContent = 'Could not load the devices.'; return; }
+    const d = await r.json();
+    const which = (d.admin || devicesAll) ? `<div class="meta devwhich">`
+      + (devicesAll ? `<a href="#" data-devices="mine">mine</a> · <b>everyone</b>` : `<b>mine</b> · <a href="#" data-devices="all">everyone</a>`)
+      + `</div>` : '';
+    if (devicesAll) {
+      const n = d.people.reduce((sum, p) => sum + p.devices.length, 0);
+      list.innerHTML = which + `<div class="meta">${n} device${n === 1 ? '' : 's'} signed in. To sign someone out: `
+        + `<code>magenta.sh kick &lt;name&gt; --all</code>, or one device: click its id to copy the command.</div>` + d.people.map(p =>
+          `<div class="devperson"><b>${icon(p.name, true)}${esc(p.name)}</b></div>` + p.devices.map(v => {
+            const short = v.id.replace(/-/g, '').slice(0, 8);
+            return `<div class="dev"><b>${esc(v.label)}</b> · <span class="tier">${v.tier === 'wiki' ? 'WIKI' : 'KEY'}</span>`
+            + (v.this ? ' · this device' : '')
+            + (p.name === d.name ? ` <button type="button" data-revoke="${esc(v.id)}" data-this="${v.this ? 1 : ''}">revoke</button>`
+               : ` · <button type="button" class="devid" data-copy="magenta.sh kick ${esc(p.name)} --device ${short}" title="Copy the command that signs out just this device">${short}</button>`)
+            + `<div class="meta">signed in ${esc(ago(v.signed_in_at))} · last used ${esc(ago(v.last_used_at))}</div></div>`;
+          }).join('')
+        ).join('');
+      return;
+    }
+    list.innerHTML = which + `<div class="meta">A device unused for ${d.idle_days} days times out; bring it back with `
+      + `<code>magenta.sh renew &lt;its name&gt;</code>.</div>` + d.devices.map(v => {
+        const state = v.state === 'live' ? (v.this ? 'this device' : 'signed in')
+          : v.state === 'timed out' ? 'timed out' : 'revoked';
+        const out = v.times_out_at ? ` · times out ${esc(new Date(v.times_out_at).toLocaleDateString())}` : '';
+        return `<div class="dev ${v.state === 'revoked' ? 'revoked' : v.state === 'timed out' ? 'timed' : ''}">`
+          + `<b>${esc(v.label)}</b> · ${esc(state)}`
+          + (v.state !== 'revoked' ? ` <button type="button" data-revoke="${esc(v.id)}" data-this="${v.this ? 1 : ''}">revoke</button>` : '')
+          + `<div class="meta">signed in ${esc(ago(v.signed_in_at))} · last used ${esc(ago(v.last_used_at))}${out}`
+          + (v.state === 'timed out' ? ` · <code>magenta.sh renew ${esc(v.label)}</code>` : '') + '</div></div>';
+      }).join('');
+  }
+  document.getElementById('devicesLink').addEventListener('click', e => { e.preventDefault(); showDevices(); });
+  document.getElementById('devicesClose').addEventListener('click', () => { devicesBox.hidden = true; });
+  devicesBox.addEventListener('click', async e => {
+    const c = e.target.closest('.devid[data-copy]');
+    if (c) {
+      try { await navigator.clipboard.writeText(c.dataset.copy); c.dataset.copied = ''; setTimeout(() => delete c.dataset.copied, 1500); }
+      catch (err) { prompt('Copy this command:', c.dataset.copy); }
+      return;
+    }
+    const w = e.target.closest('[data-devices]');
+    if (w) { e.preventDefault(); devicesAll = w.dataset.devices === 'all'; showDevices(); return; }
+    const b = e.target.closest('[data-revoke]');
+    if (!b) return;
+    if (!confirm(b.dataset.this ? 'Sign this device out?' : 'Sign that device out, for good?')) return;
+    const r = await fetch(`/api/auth/devices/${b.dataset.revoke}/revoke/`, { method: 'POST', headers: { 'X-CSRFToken': csrf() } });
+    if (r.ok && b.dataset.this) { location.reload(); return; }
+    showDevices();
+  });
+
+  userBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    userMenu.hidden = !userMenu.hidden;
+    userBtn.setAttribute('aria-expanded', !userMenu.hidden);
+  });
+  document.addEventListener('click', e => {
+    if (!userMenu.hidden && !e.target.closest('.account')) { userMenu.hidden = true; userBtn.setAttribute('aria-expanded', false); }
+  });
+
+  // Signed in with PickiPedia, agents can't be addressed: said before sending,
+  // in a dialog (the server refuses such a post too).
+  function agentsAddressed(text) {
+    const byWiki = Object.fromEntries(Object.entries(WIKI_NAMES).map(([n, w]) => [w.toLowerCase(), n]));
+    const plain = text.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
+    return [...new Set([...plain.matchAll(/(?<![\w@/.])@([A-Za-z][\w.-]*)/g)]
+      .map(m => m[1].replace(/\.$/, '').toLowerCase()).map(n => byWiki[n] || n)
+      .filter(n => n in human && human[n] === false))];
+  }
+  // --- replies: ↩ on a message, then whatever is sent answers it -----------
+  // The post opens with '↩ #m-<id>' (services/mood_view.py): the server shows
+  // what it answers above it, and notifies its author if that's a person.
+  let replyTo = null;
+  const replying = document.getElementById('replying');
+  function setReply(id) {
+    const el = document.getElementById('m-' + id);
+    if (!el) return;
+    const sender = (el.querySelector('.who .name') || {}).textContent || '';
+    const snippet = ((el.querySelector('.body') || {}).innerText || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    replyTo = { id };
+    replying.querySelector('.what').innerHTML = `↩ Replying to <b>${esc(sender.trim())}</b>: ${esc(snippet)}`;
+    replying.hidden = false;
+    sayBox.focus();
+  }
+  function cancelReply() { replyTo = null; replying.hidden = true; }
+  document.addEventListener('click', e => {
+    const b = e.target.closest('.replybtn[data-reply]');
+    if (b) { e.preventDefault(); setReply(b.dataset.reply); return; }
+    const q = e.target.closest('a.replyto[data-reveal]');
+    if (q && !e.ctrlKey && !e.metaKey) { e.preventDefault(); reveal(q.dataset.reveal); }
+  });
+  document.getElementById('replyCancel').addEventListener('click', () => { cancelReply(); sayBox.focus(); });
+  // Esc with a reply under way drops the reply (before it would stop an agent).
+  sayBox.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && replyTo && !suggest.classList.contains('on')) { e.preventDefault(); e.stopImmediatePropagation(); cancelReply(); }
+  }, { capture: true });
+
+  const noAgents = document.getElementById('noAgents');
+  noAgents.querySelector('button').addEventListener('click', () => { noAgents.close(); sayBox.focus(); });
+  async function say() {
+    const text = sayBox.value.trim();
+    if (!text || !current) return;
+    if (viewerTier === 'wiki') {
+      const addressed = agentsAddressed(text);
+      if (addressed.length) {
+        noAgents.querySelector('.who').textContent = addressed.map(n => '@' + n).join(', ');
+        noAgents.showModal();
+        return;
+      }
+    }
+    sendBtn.disabled = true;
+    const old = composer.querySelector('.err'); if (old) old.remove();
+    try {
+      const r = await fetch('/api/moods/' + encodeURIComponent(current) + '/say/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+        body: JSON.stringify({ text: replyTo ? `↩ #m-${replyTo.id}\n${text}` : text }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+      const done = await r.json().catch(() => ({}));
+      sayBox.value = ''; fitSay(); typingSent = 0; sendTyping(false); cancelReply();
+      if (/^\/yarn\s+(save|forget)\b/i.test(text)) yarnCache = null;  // the library changed
+      if (done.note) {  // what a /yarn command did, for whoever sent it
+        composer.insertAdjacentHTML('beforeend', `<span class="note">${esc(done.note)}</span>`);
+        const note = composer.querySelector('.note:last-of-type');
+        setTimeout(() => note && note.remove(), 8000);
+      }
+      await poll(false);
+    } catch (e) {
+      composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(e.message)}</span>`);
+    } finally {
+      sendBtn.disabled = false;
+      sayBox.focus();
+    }
+  }
+  composer.addEventListener('submit', e => { e.preventDefault(); say(); });
+  // Enter sends; Ctrl+Enter (or Shift+Enter) makes a new line. On a touch
+  // screen there is no Ctrl, so Enter makes the new line and Send sends.
+  const touchScreen = matchMedia('(pointer: coarse)').matches;
+  sayBox.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;  // mid-composition (IME)
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault(); insertAtCaret('\n'); sayBox.dispatchEvent(new Event('input')); return;
+    }
+    if (e.shiftKey || e.altKey || touchScreen) return;  // the textarea's own new line
+    e.preventDefault(); say();
+  });
+
+  nav.addEventListener('click', e => {
+    const a = e.target.closest('a.mood'); if (!a) return;
+    e.preventDefault(); open(a.dataset.slug, true);
+  });
+  window.addEventListener('popstate', e => {
+    const slug = (e.state && e.state.slug) || location.pathname.split('/')[2];
+    if (slug) open(decodeURIComponent(slug), false);
+  });
+
+  (async function start() {
+    try { await loadMoods(); } catch (e) { setStatus('cannot reach memory-lane', 'stale'); return; }
+    await pullSeen();  // where you've read up to, on every device, before anything is counted
+    const slug = initialSlug || (moods[0] && moods[0].slug);
+    if (!slug) { inner.innerHTML = '<div class="empty">No Moods yet.</div>'; setStatus('live', 'live'); return; }
+    await open(slug, false);
+    const linked = location.hash.match(/^#m-([0-9a-f-]{36})$/);  // from a notification
+    if (linked) await reveal(linked[1]);
+    setInterval(() => poll(false), POLL_MS);
+  })();
+  // Installable as an app: the browser wants a service worker (it keeps nothing).
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/moods/sw.js', { scope: '/moods/' }).catch(() => {});
+})();
+</script>
+</body>
+</html>

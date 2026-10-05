@@ -263,131 +263,192 @@ class ContextHeap(models.Model):
 
 
 # ============================================================================
-# Motion
+# Mood
 # ============================================================================
 
-class Motion(models.Model):
+class Mood(models.Model):
     """
-    A Motion is what a conversation is *about*.
+    A Mood is what a conversation is *about*: a room people and agents share.
 
     It is deliberately orthogonal to the two groupings that already exist:
 
       Era         a phase of the relationship
       ContextHeap where a context window filled up and compacting occurred
-      Motion      the subject a conversation belongs to
+      Mood        the subject a conversation belongs to
 
     A message can sit in all three. Heaps and eras are artifacts of how the
-    machinery ran; a Motion is chosen by people, outlives any one session,
-    and can span directories, repositories and backends.
+    machinery ran; a Mood is chosen by people, outlives any one session, and
+    can span directories, repositories and backends.
 
-    The slug is the stable key. It is what a chat room, a wiki page, or any
-    other view names when it wants to render this conversation -- the view is
-    replaceable, the Motion is not.
-
-    Intentionally thin. The first real interface built on top of this should
-    be allowed to argue with the shape before more is added.
+    The slug is its name in URLs and APIs, and follows its title: renamed, a
+    Mood gets a new slug, and the old one is kept as an alias (MoodAlias), so
+    whatever still knows it by the old name -- a container's runner, a link --
+    still finds it. The id never changes. (Until October 2026 this was a "Motion".)
     """
 
-    slug = models.SlugField(max_length=100, primary_key=True)
+    slug = models.SlugField(max_length=100, unique=True)
     title = models.CharField(max_length=200, blank=True)
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     eth_blockheight = models.BigIntegerField(
         null=True, blank=True,
-        help_text='Block height at which this Motion was opened'
+        help_text='Block height at which this Mood was opened'
     )
 
     class Meta:
-        db_table = 'motions'
+        db_table = 'moods'
         ordering = ['slug']
 
+    @classmethod
+    def by_slug(cls, slug):
+        """The Mood called `slug`, now or before a rename; None if none."""
+        mood = cls.objects.filter(slug=slug).first()
+        if mood is None:
+            alias = MoodAlias.objects.filter(slug=slug).select_related('mood').first()
+            mood = alias.mood if alias else None
+        return mood
+
+    @classmethod
+    def by_slug_or_404(cls, slug):
+        from django.http import Http404
+        mood = cls.by_slug(slug)
+        if mood is None:
+            raise Http404('no such Mood')
+        return mood
+
     def earliest_blockheight(self):
-        """Returns the earliest blockheight from messages in this Motion."""
-        result = self.messages.filter(eth_blockheight__isnull=False).aggregate(
-            earliest=models.Min('eth_blockheight')
-        )
-        return result['earliest']
+        """Returns the earliest blockheight from messages in this Mood."""
+        return self.messages.filter(eth_blockheight__isnull=False).aggregate(
+            earliest=models.Min('eth_blockheight'))['earliest']
 
     def latest_blockheight(self):
-        """Returns the latest blockheight from messages in this Motion."""
-        result = self.messages.filter(eth_blockheight__isnull=False).aggregate(
-            latest=models.Max('eth_blockheight')
-        )
-        return result['latest']
+        """Returns the latest blockheight from messages in this Mood."""
+        return self.messages.filter(eth_blockheight__isnull=False).aggregate(
+            latest=models.Max('eth_blockheight'))['latest']
 
     def thinking_entities(self):
-        """Who has spoken in this Motion -- humans and agents, not tools."""
-        return ThinkingEntity.objects.filter(
-            sent_messages__motion=self
-        ).distinct()
+        """Who has spoken in this Mood -- humans and agents, not tools."""
+        return ThinkingEntity.objects.filter(sent_messages__mood=self).distinct()
 
     def claim(self, session_id):
-        """Route a session's messages into this Motion as they arrive."""
-        claim, _ = MotionSession.objects.update_or_create(
-            session_id=session_id, defaults={'motion': self}
-        )
+        """Route a session's messages into this Mood as they arrive."""
+        claim, _ = MoodSession.objects.update_or_create(session_id=session_id, defaults={'mood': self})
         return claim
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        _slugs['at'] = 0.0  # a new or renamed Mood: ids are looked up afresh
+
+    @classmethod
+    def free_slug(cls, title, mood=None):
+        """A slug for `title` that names no other Mood, now or before a rename.
+        `mood` may have it back: renamed back to an old name, it gets its old slug."""
+        from django.utils.text import slugify
+        base = slugify(title)[:60].strip('-') or 'mood'
+        slug, n = base, 2
+        while (cls.objects.filter(slug=slug).exclude(pk=getattr(mood, 'pk', None)).exists()
+               or MoodAlias.objects.filter(slug=slug).exclude(mood=mood).exists()):
+            slug, n = f'{base}-{n}', n + 1
+        return slug
+
+    def rename(self, title, description=None):
+        """A new title, and the slug that goes with it; the old slug becomes an alias."""
+        self.title = title
+        if description is not None:
+            self.description = description
+        slug = Mood.free_slug(title, self)
+        if slug != self.slug:
+            MoodAlias.objects.get_or_create(slug=self.slug, defaults={'mood': self})
+            MoodAlias.objects.filter(slug=slug, mood=self).delete()  # an old name of its own, taken back
+            self.slug = slug
+        self.save()
 
     def __str__(self):
         return self.title or self.slug
 
 
-class MotionSession(models.Model):
-    """A runtime session claimed by a Motion.
+_slugs = {'at': 0.0, 'by_id': {}}
 
-    Sessions are instances of a process; Motions are subjects. One Motion
+
+def mood_slug(mood_id):
+    """The slug a Mood goes by now, from its id (None for None). Kept a few
+    seconds per process: there are few Moods, and a rename shows soon enough."""
+    import time
+    if mood_id is None:
+        return None
+    if mood_id not in _slugs['by_id'] or time.monotonic() - _slugs['at'] > 5:
+        _slugs['by_id'] = dict(Mood.objects.values_list('id', 'slug'))
+        _slugs['at'] = time.monotonic()
+    return _slugs['by_id'].get(mood_id)
+
+
+class MoodAlias(models.Model):
+    """A slug a Mood went by before it was renamed: still found by it."""
+
+    slug = models.SlugField(max_length=100, unique=True)
+    mood = models.ForeignKey(Mood, models.CASCADE, related_name='aliases')
+    retired_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'mood_aliases'
+
+
+class MoodSession(models.Model):
+    """A runtime session claimed by a Mood.
+
+    Sessions are instances of a process; Moods are subjects. One Mood
     collects as many sessions as the subject needed -- across compactions,
     resumes, machines, people and backends.
 
     This exists so routing happens at import time. A message lands in its
-    Motion as it arrives, rather than being swept up by a later pass, which
-    means a Motion is live rather than periodically reconciled.
+    Mood as it arrives, rather than being swept up by a later pass, which
+    means a Mood is live rather than periodically reconciled.
     """
 
     session_id = models.UUIDField(primary_key=True)
-    motion = models.ForeignKey(Motion, models.CASCADE, related_name='claimed_sessions')
+    mood = models.ForeignKey(Mood, models.CASCADE, related_name='claimed_sessions')
     claimed_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'motion_sessions'
+        db_table = 'mood_sessions'
         ordering = ['claimed_at']
 
     @classmethod
-    def motion_for(cls, session_id):
-        """The Motion claiming this session, or None. Used by importers."""
+    def mood_for(cls, session_id):
+        """The Mood claiming this session, or None. Used by importers."""
         if not session_id:
             return None
-        claim = cls.objects.filter(session_id=session_id).select_related('motion').first()
-        return claim.motion if claim else None
+        claim = cls.objects.filter(session_id=session_id).select_related('mood').first()
+        return claim.mood if claim else None
 
     @classmethod
     def claim_by_history(cls, session_id, message_uuid):
-        """Claim an unclaimed session for the Motion of a message it carries.
+        """Claim an unclaimed session for the Mood of a message it carries.
 
         A resumed or forked session starts by copying its predecessor's
         history under the original uuids. When one of those is already in a
-        Motion, the new session is a continuation of it and belongs there
+        Mood, the new session is a continuation of it and belongs there
         too; the copied lines come first, so the claim lands before the
         session's own new messages are imported. This is how a turn woken by
-        the poller finds its way back into the Motion. Returns the Motion or
+        the poller finds its way back into the Mood. Returns the Mood or
         None.
         """
         if not session_id or not message_uuid:
             return None
-        row = Message.objects.filter(id=message_uuid).values('session_id', 'motion_id').first()
+        row = Message.objects.filter(id=message_uuid).values('session_id', 'mood_id').first()
         if row is None or str(row['session_id']) == str(session_id):
             return None
         # Where that session lives now, if it has been claimed since; the
-        # message's own Motion only if not.
-        current = cls.motion_for(row['session_id'])
-        motion_id = current.pk if current else row['motion_id']
-        if motion_id is None:
+        # message's own Mood only if not.
+        current = cls.mood_for(row['session_id'])
+        mood_id = current.pk if current else row['mood_id']
+        if mood_id is None:
             return None
-        claim, _ = cls.objects.get_or_create(session_id=session_id, defaults={'motion_id': motion_id})
-        return claim.motion
+        claim, _ = cls.objects.get_or_create(session_id=session_id, defaults={'mood_id': mood_id})
+        return claim.mood
 
     def __str__(self):
-        return f"{self.session_id} → {self.motion_id}"
+        return f"{self.session_id} → {self.mood_id}"
 
 
 # ============================================================================
@@ -414,11 +475,14 @@ class Message(models.Model):
     context_heap = models.ForeignKey('ContextHeap', models.CASCADE, related_name='messages', null=True, blank=True)
 
     # Subject - what this message is about, independent of where the context
-    # window happened to end. Nullable: most of the corpus predates Motions,
-    # and SET_NULL so that retiring a Motion never destroys messages.
-    motion = models.ForeignKey(
-        'Motion', models.SET_NULL, related_name='messages', null=True, blank=True
-    )
+    # window happened to end. Nullable: most of the corpus predates Moods,
+    # and SET_NULL so that retiring a Mood never destroys messages.
+    mood = models.ForeignKey('Mood', models.SET_NULL, related_name='messages', null=True, blank=True)
+
+    @property
+    def mood_slug(self):
+        """Its Mood's slug now (the key is its id, which never changes)."""
+        return mood_slug(self.mood_id)
 
     # Threading - optional parent for message chains
     parent = models.ForeignKey('self', models.CASCADE, related_name='children', null=True, blank=True)
@@ -466,7 +530,7 @@ class Message(models.Model):
         indexes = [
             models.Index(fields=['session_id', 'timestamp']),
             models.Index(fields=['sender']),
-            models.Index(fields=['motion', 'created_at']),
+            models.Index(fields=['mood', 'created_at']),
             # stamp_blockheights looks for these every few minutes; without
             # this each look is a full scan.
             models.Index(fields=['timestamp'], condition=models.Q(eth_blockheight__isnull=True),
@@ -1264,17 +1328,25 @@ class RawImportedContent(models.Model):
 
 class Device(models.Model):
     """
-    A browser or phone allowed to write into Motions as one person.
+    A browser or phone allowed to write into Moods as one person.
 
-    Reading Motions needs nothing. Writing needs a device, and a device is
-    enrolled by proving the person's SSH key (see services/motion_auth.py):
-    the same key hunter already knows them by. Only a hash of the token is
-    stored; the token itself lives in the device's cookie.
+    Reading Moods needs nothing. Writing needs a device, enrolled one of
+    two ways, which decides its tier:
+
+      key   the person's SSH key, the one hunter knows them by
+            (services/mood_auth.py): everything, including what makes
+            the machines act -- waking agents, starting and archiving Moods
+      wiki  signing in with PickiPedia (services/wiki_auth.py): chatting,
+            and mentioning people; an @agent from a wiki device is just text
+
+    Only a hash of the token is stored; the token lives in the device's cookie.
     """
+    TIERS = (('key', 'SSH key'), ('wiki', 'PickiPedia'))
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     entity = models.ForeignKey(ThinkingEntity, models.CASCADE, related_name='devices')
     label = models.CharField(max_length=100, blank=True)
+    tier = models.CharField(max_length=10, choices=TIERS, default='key')
     token_hash = models.CharField(max_length=64, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
@@ -1285,6 +1357,23 @@ class Device(models.Model):
 
     def __str__(self):
         return f"{self.entity_id} on {self.label or 'a device'}"
+
+
+class ReadMark(models.Model):
+    """
+    How far one person has read in one Mood: the newest moment they had it
+    open. Kept here rather than in a browser, so a phone knows what the
+    laptop read -- every device's unread counts start from the same place.
+    Only ever moves forward.
+    """
+
+    entity = models.ForeignKey(ThinkingEntity, models.CASCADE, related_name='read_marks')
+    mood = models.ForeignKey('Mood', models.CASCADE, related_name='read_marks')
+    seen_at = models.DateTimeField()
+
+    class Meta:
+        db_table = 'read_marks'
+        constraints = [models.UniqueConstraint(fields=['entity', 'mood'], name='one_read_mark_per_person_per_mood')]
 
 
 class LoginCode(models.Model):
@@ -1321,11 +1410,11 @@ class BlockAnchor(models.Model):
 
 class Media(models.Model):
     """
-    An image in a Motion, stored once by the hash of its bytes.
+    An image in a Mood, stored once by the hash of its bytes.
 
     Posted from the composer, pasted into a terminal session, or returned
     by a tool (a screenshot): messages refer to it by URL,
-    /motions/media/<sha256>.<ext>, so the record's text stays text. Only
+    /moods/media/<sha256>.<ext>, so the record's text stays text. Only
     raster formats, checked by their first bytes, never by what the
     uploader says they are.
     """
@@ -1347,22 +1436,22 @@ class Media(models.Model):
 
     @property
     def url(self):
-        return f'/motions/media/{self.sha256}.{self.EXTENSIONS[self.mime]}'
+        return f'/moods/media/{self.sha256}.{self.EXTENSIONS[self.mime]}'
 
 
 class Setting(models.Model):
     """
-    One change to a knob: what was set, for which agent in which Motion, by whom.
+    One change to a knob: what was set, for which agent in which Mood, by whom.
 
-    The newest row for a (motion, agent, key) is in force; the rest are its
+    The newest row for a (mood, agent, key) is in force; the rest are its
     history, and so the audit trail -- rows are only ever added. A null
-    motion means every Motion; a null agent means every agent (or, for a
+    mood means every Mood; a null agent means every agent (or, for a
     moderation key like 'banned', the person it names is in `agent`). See
     conversations/services/settings.py for the knobs and how they resolve.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    motion = models.ForeignKey('Motion', models.CASCADE, null=True, blank=True, related_name='settings')
+    mood = models.ForeignKey('Mood', models.CASCADE, null=True, blank=True, related_name='settings')
     agent = models.ForeignKey(ThinkingEntity, models.CASCADE, null=True, blank=True, related_name='settings')
     key = models.CharField(max_length=40)
     value = models.JSONField()
@@ -1372,10 +1461,10 @@ class Setting(models.Model):
 
     class Meta:
         db_table = 'settings'
-        indexes = [models.Index(fields=['key', 'motion', 'agent', 'created_at'])]
+        indexes = [models.Index(fields=['key', 'mood', 'agent', 'created_at'])]
 
     def __str__(self):
-        return f"{self.key}={self.value!r} ({self.motion_id or '*'}/{self.agent_id or '*'})"
+        return f"{self.key}={self.value!r} ({self.mood_id or '*'}/{self.agent_id or '*'})"
 
 
 # ============================================================================

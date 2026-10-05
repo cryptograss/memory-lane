@@ -210,32 +210,39 @@ LOGGING = {
 # public. Raise this deliberately.
 TOOL_RESULT_CONTENT_CHARS = int(os.getenv('TOOL_RESULT_CONTENT_CHARS', '0'))
 
-# Runners (poller/motion_poller.py) that stream agent turns into Motions:
+# Runners (poller/mood_poller.py) that stream agent turns into Moods:
 # "agent:key,agent2:key2", each key from the vault. Unset, nobody can.
-MOTION_RUNNER_KEYS = dict(
-    pair.split(':', 1) for pair in os.getenv('MOTION_RUNNER_KEYS', '').split(',') if ':' in pair)
+MOOD_RUNNER_KEYS = dict(
+    pair.split(':', 1) for pair in os.getenv('MOOD_RUNNER_KEYS', '').split(',') if ':' in pair)
 
 # The deploy scripts on maybelle (maybelle-config's report-deploy.sh) tell the
 # Moods when a server is being redeployed, with this key from the vault
 # (memory_lane_deploy_key). Unset, nobody can.
-MOTION_DEPLOY_KEY = os.getenv('MOTION_DEPLOY_KEY', '')
+MOOD_DEPLOY_KEY = os.getenv('MOOD_DEPLOY_KEY', '')
 # Voice (conversations/services/voice.py): ElevenLabs, for voice memos
 # (speech to text) and reading messages aloud. Unset: no voice, and the
 # page offers none.
 ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY', '')
+# Signing in with PickiPedia (conversations/services/wiki_auth.py): the
+# client registered at the wiki's Special:OAuthConsumerRegistration. Unset:
+# no wiki sign-in, only SSH keys.
+PICKIPEDIA_OAUTH_CLIENT_ID = os.getenv('PICKIPEDIA_OAUTH_CLIENT_ID', '')
+PICKIPEDIA_OAUTH_CLIENT_SECRET = os.getenv('PICKIPEDIA_OAUTH_CLIENT_SECRET', '')
+# Each person's PickiPedia name, from hunter's inventory: "<name> <WikiName>" lines.
+MOOD_WIKI_NAMES = os.getenv('MOOD_WIKI_NAMES', '')
 
 # Who may kick, ban, scram (AZ5) and lift, with their SSH key
 # (conversations/views_admin.py): "justin,skyler". Unset, nobody can.
-MOTION_ADMINS = tuple(n.strip().lower() for n in os.getenv('MOTION_ADMINS', '').split(',') if n.strip())
+MOOD_ADMINS = tuple(n.strip().lower() for n in os.getenv('MOOD_ADMINS', '').split(',') if n.strip())
 
-# Hosts a Motion may embed images from by URL, besides its own stored media.
-MOTION_IMAGE_HOSTS = {'pickipedia.xyz', 'www.pickipedia.xyz', 'raw.githubusercontent.com',
+# Hosts a Mood may embed images from by URL, besides its own stored media.
+MOOD_IMAGE_HOSTS = {'pickipedia.xyz', 'www.pickipedia.xyz', 'raw.githubusercontent.com',
                       'user-images.githubusercontent.com', 'private-user-images.githubusercontent.com'}
 
-# Writing into Motions (conversations/services/motion_auth.py): an OpenSSH
+# Writing into Moods (conversations/services/mood_auth.py): an OpenSSH
 # allowed_signers file listing each person's key, generated at deploy from
 # hunter's inventory. Unset or missing, nobody can enroll a device.
-MOTION_ALLOWED_SIGNERS = os.getenv('MOTION_ALLOWED_SIGNERS', '')
+MOOD_ALLOWED_SIGNERS = os.getenv('MOOD_ALLOWED_SIGNERS', '')
 
 # Behind Caddy, which terminates TLS and always sets X-Forwarded-Proto, so
 # Django knows the request was https and a POST's Origin matches its own

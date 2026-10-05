@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>settings · magenta</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b6560;
+    --line: #e6e1d8; --accent: #b8106b; --accent-soft: #fbe7f1; --code: #f3efe8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161417; --panel: #1f1c20; --ink: #ece7e1; --muted: #a39b93;
+            --line: #36313a; --accent: #ef5aa6; --accent-soft: #3a1a2b; --code: #29252c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         font-size: 14.5px; line-height: 1.45; color: var(--ink); background: var(--bg); }
+  header { display: flex; align-items: center; gap: 14px; padding: 8px 18px; border-bottom: 1px solid var(--line);
+           background: var(--panel); flex-wrap: wrap; }
+  header .brand { font-weight: 700; color: var(--accent); text-decoration: none; }
+  header .who { margin-left: auto; font-size: 13px; color: var(--muted); }
+  main { max-width: 1100px; margin: 0 auto; padding: 18px 16px 60px; }
+  h1 { font-size: 20px; margin: 4px 0 4px; }
+  .lede { color: var(--muted); margin: 0 0 16px; max-width: 760px; }
+  .scram { background: #3a0d0d; color: #ffd9d9; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .card h2 { font-size: 15px; margin: 0 0 2px; }
+  .card .sub { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .row { display: grid; grid-template-columns: 128px 1fr; gap: 8px; align-items: center; margin: 5px 0; }
+  .row label { font-size: 12.5px; color: var(--muted); }
+  .row .inherited select, .row .inherited input, .row .inherited textarea { color: var(--muted); font-style: italic; }
+  select, input, textarea { font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--line);
+                            border-radius: 5px; background: var(--panel); color: var(--ink); max-width: 100%; }
+  textarea { width: 100%; min-height: 54px; resize: vertical; }
+  .note { font-size: 11.5px; color: var(--muted); }
+  .saved { font-size: 11.5px; color: #2e9e5b; margin-left: 6px; }
+  .err { font-size: 11.5px; color: var(--accent); margin-left: 6px; }
+  .help { font-size: 11.5px; color: var(--muted); margin: -2px 0 6px 136px; }
+  h3 { font-size: 15px; margin: 26px 0 8px; }
+  table.history { width: 100%; border-collapse: collapse; font-size: 12.5px; background: var(--panel); }
+  table.history th, table.history td { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: left;
+                                       vertical-align: top; }
+  table.history th { color: var(--muted); font-weight: 600; }
+  table.history td.value { font-family: ui-monospace, monospace; word-break: break-word; max-width: 420px; }
+  @media (max-width: 720px) { .row { grid-template-columns: 1fr; } .help { margin-left: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/moods/">magenta</a><span>settings</span>
+  <span class="who" id="who"></span>
+</header>
+<main>
+  <h1>How each agent carries itself in each Mood</h1>
+  <p class="lede">The most specific setting wins: one agent in one Mood, then everyone in that Mood, then the agent
+    everywhere, then the defaults. Grey italic values are inherited. Every change is kept below, with who made it.</p>
+  <div id="scram"></div>
+  <div class="cards" id="cards">Loading…</div>
+  <h3>Every Mood, every agent</h3>
+  <div class="cards" id="global"></div>
+  <h3>History</h3>
+  <table class="history"><thead><tr><th>when</th><th>who</th><th>where</th><th>what</th><th>value</th><th>why</th></tr></thead>
+    <tbody id="history"></tbody></table>
+</main>
+<script>
+(function () {
+  const viewer = "{{ viewer|escapejs }}" || null;
+  const LABELS = {
+    listening: 'listening', consider_after: 'consider after (s)', idle_after: 'first unprompted look (min)',
+    considers_per_hour: 'considerations / hour', mention_effort: 'effort when mentioned',
+    consider_effort: 'effort when considering', model: 'model', rules: 'rules here', ultracode: 'ultracode', catch_up_tokens: 'reads (tokens)', discretion: 'discretion', verbosity: 'verbosity',
+  };
+  // As the terminal names them.
+  const EFFORT_LABELS = { xhigh: 'extra' };
+  let state = null;
+
+  function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function csrf() { const m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; }
+  function when(iso) { return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+
+  // Is this slot set right here (not inherited)?
+  function setHere(mood, agent, key) {
+    return state.set.some(s => s.key === key && (s.mood || null) === mood && (s.agent || null) === agent);
+  }
+  function everywhere(agent) {  // what (every Mood, agent) resolves to
+    const pick = (m, a, key) => state.set.find(s => s.key === key && (s.mood || null) === m && (s.agent || null) === a);
+    const out = {};
+    for (const key of Object.keys(state.knobs)) {
+      const row = pick(null, agent, key) || pick(null, null, key);
+      out[key] = row ? row.value : state.knobs[key].default;
+    }
+    return out;
+  }
+
+  function field(key, value, mood, agent) {
+    const here = setHere(mood, agent, key);
+    const attrs = `data-key="${key}" data-mood="${esc(mood || '')}" data-agent="${esc(agent || '')}" ${viewer ? '' : 'disabled'}`;
+    let input;
+    if (key === 'listening') {
+      const v = value || { mode: 'on' };
+      input = `<select ${attrs} data-kind="listening">${['on', 'mentions', 'off'].map(m =>
+        `<option value="${m}" ${v.mode === m ? 'selected' : ''}>${m === 'mentions' ? 'mentions only' : m}</option>`).join('')}</select>`
+        + (v.until ? ` <span class="note">until ${esc(when(v.until))}</span>` : '');
+    } else if (key === 'mention_effort' || key === 'consider_effort') {
+      input = `<select ${attrs}>${state.efforts.map(e => `<option value="${e}" ${e === value ? 'selected' : ''}>${EFFORT_LABELS[e] || e}</option>`).join('')}</select>`;
+    } else if (key === 'discretion' || key === 'verbosity') {
+      input = `<select ${attrs}>${state.choices[key].map(c => `<option value="${c}" ${c === value ? 'selected' : ''}>${c}</option>`).join('')}</select>`;
+    } else if (key === 'ultracode') {
+      input = `<label class="note"><input type="checkbox" ${attrs} ${value ? 'checked' : ''}> on for full-tools mention wakes</label>`;
+    } else if (key === 'rules') {
+      input = `<textarea ${attrs} placeholder="(none)">${esc(value)}</textarea>`;
+    } else if (key === 'idle_after') {
+      input = `<input type="number" min="0" step="5" ${attrs} data-scale="60" value="${Math.round((value || 0) / 60)}">`;
+    } else if (key === 'model') {
+      input = `<input type="text" ${attrs} placeholder="(harness default)" value="${esc(value)}">`;
+    } else {
+      input = `<input type="number" min="0" ${attrs} value="${esc(value)}">`;
+    }
+    return `<div class="row"><label title="${esc(state.knobs[key].help)}">${LABELS[key]}</label>`
+      + `<span class="${here ? '' : 'inherited'}">${input}<span class="status"></span></span></div>`;
+  }
+
+  function card(title, sub, values, mood, agent) {
+    return `<div class="card"><h2>${esc(title)}</h2><div class="sub">${esc(sub)}</div>`
+      + Object.keys(state.knobs).map(k => field(k, values[k], mood, agent)).join('') + '</div>';
+  }
+
+  function render() {
+    document.getElementById('who').innerHTML = viewer ? `changing as <b>${esc(viewer)}</b>`
+      : 'read-only · <a href="/moods/">sign in</a> to change';
+    const scram = state.scram;
+    document.getElementById('scram').innerHTML = scram
+      ? `<div class="scram"><b>Locked.</b> AZ5 by ${esc(scram.by)} at ${esc(when(scram.at))}: nobody can post or sign in, and every runner is still, until it's lifted.</div>` : '';
+    const cards = [];
+    for (const m of state.moods) {
+      for (const a of state.agents) cards.push(card(m.title, `${a} in #${m.slug}`, state.resolved[m.slug][a], m.slug, a));
+    }
+    document.getElementById('cards').innerHTML = cards.join('') || 'No Moods yet.';
+    const globals = state.agents.map(a => card(`${a}, everywhere`, `unless a Mood says otherwise`, everywhere(a), null, a));
+    globals.push(`<div class="card"><h2>Budget</h2><div class="sub">for all agents together</div>`
+      + `<div class="row"><label title="${esc(state.global_knobs.consider_usd_per_day.help)}">$ a day</label>`
+      + `<span><input type="number" min="0" step="0.5" data-key="consider_usd_per_day" data-mood="" data-agent="" value="${esc(state.global.consider_usd_per_day)}" ${viewer ? '' : 'disabled'}><span class="status"></span></span></div></div>`);
+    document.getElementById('global').innerHTML = globals.join('');
+    document.getElementById('history').innerHTML = state.history.map(h =>
+      `<tr><td>${esc(when(h.at))}</td><td>${esc(h.set_by || '')}</td><td>${esc(h.mood ? '#' + h.mood : 'everywhere')}${h.agent ? ' · ' + esc(h.agent) : ''}</td>`
+      + `<td>${esc(h.key)}</td><td class="value">${esc(JSON.stringify(h.value))}</td><td>${esc(h.note)}</td></tr>`).join('')
+      || '<tr><td colspan="6">Nothing changed yet: everything is at its default.</td></tr>';
+  }
+
+  async function load() {
+    state = await (await fetch('/api/settings/')).json();
+    render();
+  }
+
+  async function save(el) {
+    const key = el.dataset.key;
+    let value = el.value;
+    if (el.dataset.kind === 'listening') value = { mode: el.value, until: null };
+    else if (el.dataset.scale) value = Number(el.value) * Number(el.dataset.scale);
+    else if (el.type === 'number') value = Number(el.value);
+    else if (el.type === 'checkbox') value = el.checked;
+    const status = el.closest('span:not(.note)').querySelector('.status');
+    const r = await fetch('/api/settings/', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify({ key, value, mood: el.dataset.mood || null, agent: el.dataset.agent || null }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) { status.className = 'status err'; status.textContent = body.error || r.status; return; }
+    status.className = 'status saved'; status.textContent = 'saved';
+    setTimeout(load, 600);
+  }
+  document.addEventListener('change', e => { if (e.target.dataset && e.target.dataset.key) save(e.target); });
+  load();
+})();
+</script>
+</body>
+</html>
