@@ -104,6 +104,11 @@
   #devicesBox .dev.revoked, #devicesBox .dev.timed { opacity: .65; }
   #devicesBox button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel);
                        color: var(--ink); cursor: pointer; }
+  #noAgents { max-width: min(420px, 90vw); border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+              color: var(--ink); padding: 16px 18px; }
+  #noAgents::backdrop { background: rgba(0,0,0,.35); }
+  #noAgents p { margin: 0 0 10px; }
+  #noAgents button { font: inherit; border: 0; border-radius: 6px; padding: 6px 16px; background: var(--accent); color: #fff; cursor: pointer; }
   #renameBox, #newBox { position: fixed; z-index: 30; top: 44px; left: 50%; transform: translateX(-50%); width: min(520px, 94vw);
                background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.18);
                padding: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -543,6 +548,11 @@
     <button type="button" id="archiveBtn" class="archive" title="Out of the Moods list, into Archived. It stays readable, its sessions and container untouched, and a mention there is still answered.">Archive</button>
     <button type="button" id="pinBtn" class="archive" title="At the top of the Moods list, for everyone">Pin</button></span>
 </form>
+<dialog id="noAgents">
+  <p><b>Agents can't be addressed from a PickiPedia sign-in.</b></p>
+  <p>Take <span class="who"></span> out of your message and send it again. To wake an agent, sign in with your SSH key (<code>magenta.sh login</code>).</p>
+  <button type="button">OK</button>
+</dialog>
 <form id="newBox" hidden>
   <input id="newTitle" maxlength="200" aria-label="Title" placeholder="What the new Mood is about">
   <textarea id="newDesc" rows="2" maxlength="2000" aria-label="Description" placeholder="A line or two more (optional)"></textarea>
@@ -1566,9 +1576,38 @@
     store.set('lastSeen', lastSeen);
     if (unread[slug]) delete unread[slug];
     if (badges[slug]) { delete badges[slug]; renderNav(); setTitle(); }
+    pushSeen(slug);
   }
+  // Where you've read up to is kept on the server too (POST/GET /api/seen/), so
+  // a phone's counts know what the laptop read: pushed when a Mood is read (at
+  // most every 15 s each), pulled on load, every minute, and on coming back.
+  const pushedSeen = {};
+  function pushSeen(slug) {
+    if (!viewer || me !== viewer || Date.now() - (pushedSeen[slug] || 0) < 15000) return;
+    pushedSeen[slug] = Date.now();
+    fetch('/api/seen/', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+                          body: JSON.stringify({ motion: slug }) }).catch(() => {});
+  }
+  async function pullSeen() {
+    if (!viewer || me !== viewer) return;
+    let marks;
+    try {
+      const r = await fetch('/api/seen/');
+      if (!r.ok) return;
+      marks = (await r.json()).seen || {};
+    } catch (e) { return; }
+    let changed = false;
+    for (const [slug, at] of Object.entries(marks)) {
+      if (!lastSeen[slug] || at > lastSeen[slug]) { lastSeen[slug] = at; changed = true; }
+      const ids = unread[slug];  // read elsewhere since these were counted: not unread any more
+      if (ids) for (const [id, created] of ids) if (created <= lastSeen[slug]) ids.delete(id);
+    }
+    if (changed) store.set('lastSeen', lastSeen);
+    countBadges(); renderNav(); setTitle();
+  }
+  setInterval(pullSeen, 60000);
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && current) { touch(current); refreshBadges(true); }
+    if (!document.hidden) pullSeen().then(() => { if (current) touch(current); refreshBadges(true); });
   });
 
   // Bring a message into view, reaching back a few pages if need be.
@@ -2154,7 +2193,14 @@
     sayBox.selectionStart = sayBox.selectionEnd = at + text.length;
   }
   function imagesIn(list) { return [...(list || [])].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type)); }
+  // Android hands an image-only picker to its photo picker (Google Photos); with
+  // no filter it offers its full chooser -- Files, Camera, Photos. Only images are taken either way.
+  if (/Android/i.test(navigator.userAgent)) fileInput.removeAttribute('accept');
   document.getElementById('attach').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    const skipped = [...fileInput.files].length - imagesIn(fileInput.files).length;
+    if (skipped) showError(`only images can be added (PNG, JPEG, GIF, WebP): ${skipped} file${skipped > 1 ? 's' : ''} left out`);
+  });
   fileInput.addEventListener('change', () => { imagesIn(fileInput.files).forEach(upload); fileInput.value = ''; });
   sayBox.addEventListener('paste', e => {
     const files = imagesIn([...(e.clipboardData?.items || [])].map(i => i.getAsFile()).filter(Boolean));
@@ -2293,9 +2339,28 @@
     if (!userMenu.hidden && !e.target.closest('.account')) { userMenu.hidden = true; userBtn.setAttribute('aria-expanded', false); }
   });
 
+  // Signed in with PickiPedia, agents can't be addressed: said before sending,
+  // in a dialog (the server refuses such a post too).
+  function agentsAddressed(text) {
+    const byWiki = Object.fromEntries(Object.entries(WIKI_NAMES).map(([n, w]) => [w.toLowerCase(), n]));
+    const plain = text.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
+    return [...new Set([...plain.matchAll(/(?<![\w@/.])@([A-Za-z][\w.-]*)/g)]
+      .map(m => m[1].replace(/\.$/, '').toLowerCase()).map(n => byWiki[n] || n)
+      .filter(n => n in human && human[n] === false))];
+  }
+  const noAgents = document.getElementById('noAgents');
+  noAgents.querySelector('button').addEventListener('click', () => { noAgents.close(); sayBox.focus(); });
   async function say() {
     const text = sayBox.value.trim();
     if (!text || !current) return;
+    if (viewerTier === 'wiki') {
+      const addressed = agentsAddressed(text);
+      if (addressed.length) {
+        noAgents.querySelector('.who').textContent = addressed.map(n => '@' + n).join(', ');
+        noAgents.showModal();
+        return;
+      }
+    }
     sendBtn.disabled = true;
     const old = composer.querySelector('.err'); if (old) old.remove();
     try {
@@ -2338,6 +2403,7 @@
 
   (async function start() {
     try { await loadMotions(); } catch (e) { setStatus('cannot reach memory-lane', 'stale'); return; }
+    await pullSeen();  // where you've read up to, on every device, before anything is counted
     const slug = initialSlug || (motions[0] && motions[0].slug);
     if (!slug) { inner.innerHTML = '<div class="empty">No Moods yet.</div>'; setStatus('live', 'live'); return; }
     await open(slug, false);

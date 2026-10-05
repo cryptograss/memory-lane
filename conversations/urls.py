@@ -53,6 +53,7 @@ urlpatterns = [
     path('api/mentions/<slug:name>/', views_motions.api_mentions, name='api_mentions'),
     path('api/notices/<slug:name>/', views_motions.api_notices, name='api_notices'),
     path('api/motions/new/', views_auth.api_new_motion, name='api_motions_new'),
+    path('api/seen/', views_auth.api_seen, name='api_seen'),
     path('api/motions/recent/', views_motions.api_recent, name='api_motions_recent'),
     path('api/motions/live/', views_motions.api_motions_live, name='api_motions_live'),
     path('api/block/', views_motions.api_block, name='api_block'),

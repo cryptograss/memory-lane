@@ -144,9 +144,20 @@ class TiersTest(TestCase):
         key = self.client_for('justin', 'key')
         self.assertEqual(self.post(key, '/api/motions/m26/pin/', {'pinned': True}).status_code, 200)
 
-    def test_a_wiki_posts_agent_mention_wakes_nobody_but_people_are_told(self):
+    def test_a_wiki_post_addressing_an_agent_is_refused(self):
         sky = self.client_for('skyler', 'wiki')
-        self.post(sky, '/api/motions/m26/say/', {'text': '@magent @JMyles soundcheck at five?'})
+        refused = self.post(sky, '/api/motions/m26/say/', {'text': '@magent @JMyles soundcheck at five?'})
+        self.assertEqual((refused.status_code, refused.json()['agents']), (403, ['magent']))
+        self.assertFalse(Message.objects.filter(motion_id='m26').exists())
+        # Agents named in code, or a person addressed: fine.
+        self.assertEqual(self.post(sky, '/api/motions/m26/say/', {'text': 'run `@magent /compact`, @JMyles'}).status_code, 201)
+
+    def test_a_wiki_posts_agent_mention_wakes_nobody_but_people_are_told(self):
+        # Refused at the door now; one that got in anyhow (posted before, say) still wakes nobody.
+        sky = ThinkingEntity.objects.get(name='skyler')
+        Message.objects.create(id=uuid.uuid4(), sender=sky, motion_id='m26', source_file='motion-web',
+                               client_version='magenta-web/wiki', content='@magent @JMyles soundcheck at five?',
+                               timestamp=int(time.time() * 1000))
         self.assertEqual(Client().get('/api/mentions/magent/').json()['mentions'], [])  # the poller sees nothing
         told = Client().get('/api/mentions/justin/').json()['mentions']  # Justin is notified
         self.assertEqual([m['turn']['tier'] for m in told], ['wiki'])
@@ -160,3 +171,39 @@ class TiersTest(TestCase):
         page = self.client_for('skyler', 'wiki').get('/motions/m26/').content.decode()
         self.assertIn('const viewerTier = "wiki"', page)
         self.assertIn('"skyler": "SkymanJenkins"', page)
+
+
+class ReadMarksTest(TestCase):
+    """Where someone has read up to is kept on the server, so every device of theirs agrees."""
+
+    @classmethod
+    def setUpTestData(cls):
+        ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        Motion.objects.create(slug='m26')
+        Motion.objects.create(slug='general')
+
+    def device(self, tier='key'):
+        _, token = motion_auth.enrol_device(ThinkingEntity.objects.get(name='justin'), 'test', tier=tier)
+        client = Client()
+        client.cookies[motion_auth.COOKIE] = token
+        client.get('/motions/')
+        return client
+
+    def test_read_on_the_laptop_known_on_the_phone(self):
+        laptop, phone = self.device(), self.device('wiki')
+        self.assertEqual(Client().get('/api/seen/').status_code, 401)
+        self.assertEqual(phone.get('/api/seen/').json(), {'seen': {}})
+        marked = laptop.post('/api/seen/', json.dumps({'motion': 'm26'}), content_type='application/json',
+                             HTTP_X_CSRFTOKEN=laptop.cookies['csrftoken'].value).json()['seen']
+        self.assertEqual(list(marked), ['m26'])
+        self.assertEqual(phone.get('/api/seen/').json()['seen'], marked)  # the phone knows
+        # It only moves forward, and once per person per Mood.
+        from conversations.models import ReadMark
+        from django.utils import timezone
+        from datetime import timedelta
+        ReadMark.objects.update(seen_at=timezone.now() + timedelta(hours=1))
+        later = phone.get('/api/seen/').json()['seen']['m26']
+        phone.post('/api/seen/', json.dumps({'motion': 'm26'}), content_type='application/json',
+                   HTTP_X_CSRFTOKEN=phone.cookies['csrftoken'].value)
+        self.assertEqual(phone.get('/api/seen/').json()['seen']['m26'], later)
+        self.assertEqual(ReadMark.objects.count(), 1)
