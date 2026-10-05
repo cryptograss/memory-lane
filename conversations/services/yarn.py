@@ -5,11 +5,12 @@
     /yarn forget <name>             forgets a name
     /yarn                           lists the names (to whoever asked; nothing posted)
 
-Saving and forgetting are posts like any other ("🎬 saved tony", with the
-clip), so the team sees new names as they arrive, and the library is read
-back from those posts: no table of its own, and history and who-saved-what
-come with it. '/yarn tony' posts the clip itself ("🎬 tony <link>"), so
-saving the name again later never changes what was already said.
+Saving and forgetting are posts like any other (shown as one line, "🎬 saved
+tony", without the clip), so the team sees new names as they arrive, and the
+library is read back from those posts: no table of its own, and history and
+who-saved-what come with it. '/yarn tony' posts the clip itself, as
+'/yarn tony <link>' -- shown as just the clip; the name stays in the record --
+so saving the name again later never changes what was already said.
 
 A name is first come, first served: only whoever saved it can save over it or
 forget it. That rule is applied when the library is read back, so it holds
@@ -116,6 +117,6 @@ def command(text, who):
         name = args[0].lower()
         if name not in found:
             raise Refused(f'No clip called "{name}": save one with /yarn save {name} <yarn link>')
-        return f'🎬 {name} {clip_link(found[name]["clip"])}', ''
+        return f'/yarn {name} {clip_link(found[name]["clip"])}', ''
 
     raise Refused(USAGE)

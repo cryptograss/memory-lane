@@ -376,18 +376,24 @@ def _inline(text, mentionable=()):
     return text
 
 
-# /yarn save and /yarn forget are posts (services/yarn.py), shown as what they did.
+# The team's saved Yarn clips (services/yarn.py) are posts too: a save or a
+# forget shows as one line, without the clip; a use shows just the clip (its
+# name stays in the record). '🎬 name <link>' is how uses were first posted.
 _YARN_SAVED = re.compile(r'^/yarn save ([a-z0-9][a-z0-9_-]{0,34}) (https://\S+)$')
 _YARN_FORGOTTEN = re.compile(r'^/yarn forget ([a-z0-9][a-z0-9_-]{0,34})$')
+_YARN_USED = re.compile(r'^(?:/yarn|🎬) [a-z0-9][a-z0-9_-]{0,34} (https://www\.yarn\.co/yarn-clip/[0-9a-f-]{36})$')
 
 
 def render_html(text, mentionable=()):
     """Escape, then translate the markdown the agent writes into HTML."""
-    saved, forgotten = _YARN_SAVED.match(text.strip()), _YARN_FORGOTTEN.match(text.strip())
+    plain = text.strip()
+    saved, forgotten, used = _YARN_SAVED.match(plain), _YARN_FORGOTTEN.match(plain), _YARN_USED.match(plain)
     if saved:
-        text = f'🎬 saved **{saved[1]}** {saved[2]}'
+        text = f'🎬 saved **{saved[1]}**'
     elif forgotten:
         text = f'🎬 forgot **{forgotten[1]}**'
+    elif used:
+        text = used[1]
     text = html.escape(_PLACEHOLDER_CHARS.sub('', text), quote=True)
 
     def inline(s):

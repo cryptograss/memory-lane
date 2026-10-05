@@ -42,12 +42,14 @@ class YarnLibraryTest(TestCase):
         self.assertEqual(r.json()['note'], 'Saved "tony": /yarn tony posts it')
         self.assertEqual(self.say(justin, '/yarn tony').status_code, 201)
         self.assertEqual(self.posted(), [f'/yarn save tony https://www.yarn.co/yarn-clip/{CLIP}',
-                                         f'🎬 tony https://www.yarn.co/yarn-clip/{CLIP}'])
-        # Shown as what they did, each with the clip's card.
+                                         f'/yarn tony https://www.yarn.co/yarn-clip/{CLIP}'])
+        # The save is one line, without the clip; the use is just the clip.
         saved, used = (render_html(t) for t in self.posted())
-        self.assertIn('🎬 saved <strong>tony</strong>', saved)
-        for html in (saved, used):
-            self.assertIn(f'data-yarn="{CLIP}"', html)
+        self.assertEqual(saved, '<p>🎬 saved <strong>tony</strong></p>')
+        self.assertIn(f'data-yarn="{CLIP}"', used)
+        self.assertNotIn('tony', used.split('<a', 1)[0])
+        # As uses were first posted, the same.
+        self.assertEqual(render_html(f'🎬 tony https://www.yarn.co/yarn-clip/{CLIP}'), used)
 
     def test_listing_posts_nothing(self):
         justin = self.client_for(self.justin)
@@ -68,7 +70,7 @@ class YarnLibraryTest(TestCase):
         # Re-saved by its owner: later posts get the new clip; what was said stands.
         self.say(justin, f'/yarn save tony https://www.yarn.co/yarn-clip/{OTHER}')
         self.say(skyler, '/yarn tony')
-        clips = [t for t in self.posted() if t.startswith('🎬 tony')]
+        clips = [t for t in self.posted() if t.startswith('/yarn tony')]
         self.assertEqual([c.rsplit('/', 1)[1] for c in clips], [CLIP, OTHER])
 
     def test_the_rule_holds_even_for_a_post_that_skipped_the_checks(self):
