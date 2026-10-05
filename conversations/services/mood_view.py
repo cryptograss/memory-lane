@@ -13,6 +13,7 @@ produces HTML, escaped first so nothing in a message can inject markup, with
 
 import html
 import re
+from urllib.parse import unquote, urlparse
 
 from django.conf import settings
 
@@ -155,6 +156,25 @@ def _wikilink(match):
     return f'<a class="wikilink" href="{href}">{label}</a>'
 
 
+# A PickiPedia page's full address is a wikilink written longhand: shown as
+# one, titled by its page, and counted as one. Only an article's own
+# address -- /wiki/<Title>, perhaps with a #section -- not an edit, a diff
+# or anything else with a query.
+PICKIPEDIA_HOSTS = {'pickipedia.xyz', 'www.pickipedia.xyz', 'pickipedia.cryptograss.live'}
+_PAGE_URL = re.compile(r'https?://([A-Za-z0-9.-]+)/wiki/([^\s?#<>"]+)(?:#([^\s<>"]*))?$')
+
+
+def pickipedia_page(url):
+    """(title, section) when url is a PickiPedia article's address, else None."""
+    match = _PAGE_URL.match(html.unescape(url))
+    hosts = PICKIPEDIA_HOSTS | {urlparse(pickipedia_url()).netloc.lower()}
+    if not match or match.group(1).lower() not in hosts:
+        return None
+    title = wiki_title(unquote(match.group(2)))
+    section = unquote(match.group(3) or '').replace('_', ' ').strip()
+    return (title, section) if title else None
+
+
 def _image(match):
     alt, url = match.group(1), match.group(2)
     if url.startswith('/') or _image_host_allowed(url):
@@ -201,15 +221,20 @@ def wiki_title(target):
 
 
 def wikilinks_in(text):
-    """Ordered, de-duplicated PickiPedia titles a text links to with [[...]].
+    """Ordered, de-duplicated PickiPedia titles a text links to, with [[...]] or a page's full address.
 
     Code is literal, as in the renderer: a [[link]] inside backticks is an
     example, not a link.
     """
     text = _INLINE_CODE.sub('', _FENCE.sub('', text))
+    found = [(m.start(), wiki_title(m.group(1))) for m in _WIKILINK.finditer(text)]
+    # A page's full address counts too, labelled or not.
+    for match in _URL.finditer(text):
+        page = pickipedia_page(_trim_url(match.group(1))[0])
+        if page:
+            found.append((match.start(), page[0]))
     seen, out = set(), []
-    for match in _WIKILINK.finditer(text):
-        title = wiki_title(match.group(1))
+    for _, title in sorted(found):
         if title and title not in seen:
             seen.add(title)
             out.append(title)
@@ -270,11 +295,26 @@ def from_wiki_tier(msg):
     return 'wiki' in client_parts(msg)
 
 
+def _trim_url(url):
+    """(url, tail): sentence punctuation after a URL isn't part of it. A
+    closing parenthesis is, when it closes one the URL opened, as in
+    /wiki/Tony_Rice_(guitarist)."""
+    tail = ''
+    while url and url[-1] in _TRAILING_PUNCT:
+        if url[-1] == ')' and url.count('(') >= url.count(')'):
+            break
+        tail, url = url[-1] + tail, url[:-1]
+    return url, tail
+
+
 def _link_url(match):
     """Link a bare URL, leaving sentence punctuation outside the anchor."""
-    url, tail = match.group(1), ''
-    while url and url[-1] in _TRAILING_PUNCT:
-        tail, url = url[-1] + tail, url[:-1]
+    url, tail = _trim_url(match.group(1))
+    page = pickipedia_page(url)
+    if page:
+        title, section = page
+        label = html.escape(title + (f' § {section}' if section else ''), quote=False)
+        return f'<a class="wikilink" href="{url}">{label}</a>{tail}'
     return f'<a href="{url}">{url}</a>{tail}'
 
 
