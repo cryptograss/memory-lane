@@ -35,6 +35,7 @@ class AdminTest(TestCase):
         self.skyler = ThinkingEntity.objects.create(name='skyler', is_biological_human=True)
         ThinkingEntity.objects.create(name='magent', is_biological_human=False)
         Mood.objects.create(slug='m26')
+        Mood.objects.create(slug='general', title='general')
         for patch in (override_settings(MOOD_ALLOWED_SIGNERS=self.signers),
                       override_settings(MOOD_ADMINS=('justin',))):
             patch.enable()
@@ -153,3 +154,21 @@ class AdminTest(TestCase):
                                  capture_output=True, text=True)
             self.assertNotEqual(run.returncode, 0, args)
             self.assertIn(said, run.stderr, args)
+
+    def test_what_an_admin_does_is_said_in_general(self):
+        laptop = Device.objects.create(entity=self.skyler, label='laptop', token_hash=mood_auth.digest('sky-laptop'))
+        self.admin('kick-device', 'skyler', device=laptop.id.hex[:8])
+        self.admin('kick', 'skyler')
+        self.admin('ban', 'skyler')
+        self.admin('unban', 'skyler')
+        self.admin('az5')
+        self.admin('lift')
+        said = [(e['kind'], e['who'], e.get('by'), e.get('device'))
+                for e in self.client.get('/api/moods/general/turns/').json()['events'] if e['type'] == 'access']
+        self.assertEqual(said, [('kicked', 'skyler', 'justin', 'laptop'), ('kicked', 'skyler', 'justin', None),
+                                ('banned', 'skyler', 'justin', None), ('unbanned', 'skyler', 'justin', None),
+                                ('az5', 'justin', None, None), ('lifted', 'justin', None, None)])
+
+    def test_no_general_no_announcement_and_no_harm(self):
+        Mood.objects.filter(slug='general').delete()
+        self.assertEqual(self.admin('kick', 'skyler').status_code, 200)

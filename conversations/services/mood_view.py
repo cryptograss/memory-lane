@@ -28,7 +28,7 @@ COMPACTION_PREFIX = 'This session is being continued from a previous conversatio
 INTERRUPT_SOURCE = 'interrupt'
 # System rows shown as a line in the thread.
 NEW_MOOD_SOURCE = 'mood-new'
-EVENT_SOURCES = ('deploy', INTERRUPT_SOURCE, NEW_MOOD_SOURCE, 'wiki')  # wiki: services/wiki_feed.py
+EVENT_SOURCES = ('deploy', INTERRUPT_SOURCE, NEW_MOOD_SOURCE, 'wiki', 'access')  # wiki: services/wiki_feed.py; access: services/access.py
 # Words posted into a Mood directly, not typed into a session: from the
 # composer, or attested with a key (magenta.sh attest).
 POSTED = ('mood-web', 'mood-attest')

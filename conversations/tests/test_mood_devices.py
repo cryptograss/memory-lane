@@ -432,3 +432,14 @@ class EveryonesDevicesTest(TestCase):
         self.assertFalse(wiki.get('/api/auth/devices/').json()['admin'])
         self.assertEqual(wiki.get('/api/auth/devices/?all=1').status_code, 403)
         self.assertEqual(Client().get('/api/auth/devices/?all=1').status_code, 401)
+
+
+@skipUnless(HAS_SSH_KEYGEN, 'needs ssh-keygen')
+class SignInsAreAnnouncedTest(SignedInCase):
+
+    def test_an_ssh_sign_in_is_said_in_general(self):
+        Mood.objects.create(slug='general', title='general')
+        self.sign_in('laptop')
+        events = self.client.get('/api/moods/general/turns/').json()['events']
+        self.assertEqual([(e['kind'], e['who'], e['tier'], e['label']) for e in events],
+                         [('signed-in', 'justin', 'key', 'laptop')])

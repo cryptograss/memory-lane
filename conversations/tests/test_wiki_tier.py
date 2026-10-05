@@ -87,6 +87,7 @@ class SignInTest(TestCase):
     @classmethod
     def setUpTestData(cls):
         ThinkingEntity.objects.create(name='skyler', is_biological_human=True)
+        Mood.objects.create(slug='general', title='general')
 
     def test_off_to_the_wiki_and_back_as_a_wiki_device(self):
         client = Client()
@@ -104,6 +105,11 @@ class SignInTest(TestCase):
         device = Device.objects.get()
         self.assertEqual((device.entity_id, device.tier), ('skyler', 'wiki'))
         self.assertEqual(client.get('/api/auth/me/').json(), {'name': 'skyler'})
+        # Said in #general: who, and that it was PickiPedia.
+        events = client.get('/api/moods/general/turns/').json()['events']
+        self.assertEqual([(e['type'], e['kind'], e['who'], e['tier']) for e in events],
+                         [('access', 'signed-in', 'skyler', 'wiki')])
+        self.assertIn('SkymanJenkins', events[0]['label'])
 
     def test_not_set_up_no_wiki_sign_in(self):
         with override_settings(PICKIPEDIA_OAUTH_CLIENT_ID=''):
