@@ -500,7 +500,9 @@
     #jump { right: 3px; }
     :root { --text-base: 16.5px; }
     #composer { padding: 6px 8px 8px; gap: 6px; }
-    #composer textarea { min-height: 38px; padding: 7px 9px; }
+    /* No grip: a finger finds it by accident. The box grows with its text instead (fitSay). */
+    #composer textarea { min-height: 38px; padding: 7px 9px; resize: none; }
+    #composer textarea::placeholder { white-space: nowrap; overflow: hidden; }
     #composer #attach { padding: 8px 9px; }
     #composer #agentsBtn { display: block; }
     #composer #send { padding: 8px 10px; }
@@ -2142,11 +2144,17 @@
   const phone = matchMedia('(max-width: 720px)').matches;
   function fitSay() {
     if (!phone) return;
+    // Empty, it's one line again: an empty textarea's scrollHeight counts its
+    // placeholder, wrapped to the box's width, so measuring it then made the
+    // box as tall as the placeholder written a word per line.
+    if (!sayBox.value) { sayBox.style.height = ''; return; }
     sayBox.style.height = 'auto';
     sayBox.style.height = sayBox.scrollHeight + 2 + 'px';
   }
-  if (phone) { sayBox.placeholder = 'Say something · @name · [[Page]]'; sayBox.rows = 1; }
+  // Short: a phone's box is narrow, and a placeholder can't wrap or end in an ellipsis there.
+  if (phone) { sayBox.placeholder = 'Say something…'; sayBox.rows = 1; }
   sayBox.addEventListener('input', fitSay);
+  addEventListener('resize', fitSay);  // turning the phone rewraps what's typed
 
   // Tell the Mood this person is typing: at most every 3s while there is
   // text, and once when it is cleared or sent.
