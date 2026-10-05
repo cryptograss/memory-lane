@@ -1,4 +1,4 @@
-"""An agent's tool steps in the Motion view, typing, and paging back."""
+"""An agent's tool steps in the Mood view, typing, and paging back."""
 
 import json
 import uuid
@@ -6,8 +6,8 @@ import uuid
 from django.core.cache import cache
 from django.test import TestCase
 
-from conversations.models import ConversationParticipant, Message, Motion, ThinkingEntity, ToolResult, ToolUse
-from conversations.views_motions import PAGE
+from conversations.models import ConversationParticipant, Message, Mood, ThinkingEntity, ToolResult, ToolUse
+from conversations.views_moods import PAGE
 
 
 class StepsTest(TestCase):
@@ -17,15 +17,15 @@ class StepsTest(TestCase):
         cls.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
         cls.magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
         cls.tool = ConversationParticipant.objects.create(name='tool-result', participant_type='tool')
-        cls.motion = Motion.objects.create(slug='m26')
+        cls.mood = Mood.objects.create(slug='m26')
         cls.session = uuid.uuid4()
 
     def add(self, sender, content, model=Message, **fields):
-        return model.objects.create(id=uuid.uuid4(), sender=sender, motion=self.motion, content=content,
+        return model.objects.create(id=uuid.uuid4(), sender=sender, mood=self.mood, content=content,
                                     timestamp=1, session_id=self.session, **fields)
 
     def get(self, **params):
-        return self.client.get('/api/motions/m26/turns/', params).json()
+        return self.client.get('/api/moods/m26/turns/', params).json()
 
     def test_steps_come_separately_so_a_tool_call_is_never_an_answer(self):
         self.add(self.justin, '@magent check it')
@@ -58,7 +58,7 @@ class StepsTest(TestCase):
         # As stored before the importer knew the string form: under the
         # container's person, which made it look like their words.
         summary = ('This session is being continued from a previous conversation that ran out of context.\n\n'
-                   'Summary:\n- **Goal:** make the Motion home; @magent to build it.')
+                   'Summary:\n- **Goal:** make the Mood home; @magent to build it.')
         self.add(self.justin, summary)
         self.add(self.magent, summary)  # as stored from now on
         self.add(self.justin, '@magent and now?')
@@ -72,24 +72,24 @@ class StepsTest(TestCase):
     def test_answers_are_compressed_for_a_browser_that_asks(self):
         for i in range(40):
             self.add(self.justin, f'line {i}: what time do we load the bus, and who has the capo?')
-        plain = self.client.get('/api/motions/m26/turns/')
-        packed = self.client.get('/api/motions/m26/turns/', HTTP_ACCEPT_ENCODING='gzip')
+        plain = self.client.get('/api/moods/m26/turns/')
+        packed = self.client.get('/api/moods/m26/turns/', HTTP_ACCEPT_ENCODING='gzip')
         self.assertEqual(packed['Content-Encoding'], 'gzip')
         self.assertLess(len(packed.content), len(plain.content) / 3)
 
     def test_a_step_opens_to_its_input_and_result(self):
         step = self.add(self.magent, {'command': 'false'}, model=ToolUse, tool_name='Bash', tool_id='t9')
         self.add(self.tool, 'exit 1', model=ToolResult, tool_use_id='t9', is_error=True)
-        detail = self.client.get(f'/api/motions/m26/steps/{step.id}/').json()
+        detail = self.client.get(f'/api/moods/m26/steps/{step.id}/').json()
         self.assertEqual(detail['input'], {'command': 'false'})
         self.assertEqual(detail['result'], {'text': 'exit 1', 'is_error': True})
 
-    def test_a_step_is_only_found_in_its_own_motion(self):
-        other = Motion.objects.create(slug='elsewhere')
-        step = ToolUse.objects.create(id=uuid.uuid4(), sender=self.magent, motion=other, content={},
+    def test_a_step_is_only_found_in_its_own_mood(self):
+        other = Mood.objects.create(slug='elsewhere')
+        step = ToolUse.objects.create(id=uuid.uuid4(), sender=self.magent, mood=other, content={},
                                       timestamp=1, tool_name='Bash', tool_id='t2')
-        self.assertEqual(self.client.get(f'/api/motions/m26/steps/{step.id}/').status_code, 404)
-        self.assertEqual(self.client.get('/api/motions/m26/steps/not-a-uuid/').status_code, 404)
+        self.assertEqual(self.client.get(f'/api/moods/m26/steps/{step.id}/').status_code, 404)
+        self.assertEqual(self.client.get('/api/moods/m26/steps/not-a-uuid/').status_code, 404)
 
     def test_a_first_load_is_the_newest_page_and_earlier_pages_follow(self):
         for i in range(PAGE + 5):
@@ -113,7 +113,7 @@ class TypingTest(TestCase):
     @classmethod
     def setUpTestData(cls):
         ThinkingEntity.objects.create(name='skyler', is_biological_human=True)
-        Motion.objects.create(slug='m26')
+        Mood.objects.create(slug='m26')
 
     def setUp(self):
         cache.clear()
@@ -121,9 +121,9 @@ class TypingTest(TestCase):
     def test_typing_needs_a_device_and_shows_in_the_turns(self):
         from unittest import mock
         device = mock.Mock(entity_id='skyler')
-        self.assertEqual(self.client.post('/api/motions/m26/typing/', '{}', content_type='application/json').status_code, 401)
-        with mock.patch('conversations.services.motion_auth.device_for', return_value=device):
-            self.client.post('/api/motions/m26/typing/', json.dumps({'typing': True}), content_type='application/json')
-            self.assertEqual(self.client.get('/api/motions/m26/turns/').json()['typing'], ['skyler'])
-            self.client.post('/api/motions/m26/typing/', json.dumps({'typing': False}), content_type='application/json')
-        self.assertEqual(self.client.get('/api/motions/m26/turns/').json()['typing'], [])
+        self.assertEqual(self.client.post('/api/moods/m26/typing/', '{}', content_type='application/json').status_code, 401)
+        with mock.patch('conversations.services.mood_auth.device_for', return_value=device):
+            self.client.post('/api/moods/m26/typing/', json.dumps({'typing': True}), content_type='application/json')
+            self.assertEqual(self.client.get('/api/moods/m26/turns/').json()['typing'], ['skyler'])
+            self.client.post('/api/moods/m26/typing/', json.dumps({'typing': False}), content_type='application/json')
+        self.assertEqual(self.client.get('/api/moods/m26/turns/').json()['typing'], [])

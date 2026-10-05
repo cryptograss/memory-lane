@@ -10,9 +10,9 @@ from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from conversations.models import Device, LoginCode, Motion, Setting, ThinkingEntity
-from conversations.services import motion_auth
-from conversations.tests.test_motion_auth import HAS_SSH_KEYGEN, make_key, sign
+from conversations.models import Device, LoginCode, Mood, Setting, ThinkingEntity
+from conversations.services import mood_auth
+from conversations.tests.test_mood_auth import HAS_SSH_KEYGEN, make_key, sign
 from conversations.views_admin import admin_purpose
 
 
@@ -27,19 +27,19 @@ class AdminTest(TestCase):
         cls.signers = os.path.join(cls.dir, 'allowed_signers')
         with open(cls.signers, 'w') as f:
             for name, key in cls.keys.items():
-                f.write(f'{name} namespaces="{motion_auth.NAMESPACE}" {open(key + ".pub").read().strip()}\n')
+                f.write(f'{name} namespaces="{mood_auth.NAMESPACE}" {open(key + ".pub").read().strip()}\n')
 
     def setUp(self):
         cache.clear()
         self.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
         self.skyler = ThinkingEntity.objects.create(name='skyler', is_biological_human=True)
         ThinkingEntity.objects.create(name='magent', is_biological_human=False)
-        Motion.objects.create(slug='m26')
-        for patch in (override_settings(MOTION_ALLOWED_SIGNERS=self.signers),
-                      override_settings(MOTION_ADMINS=('justin',))):
+        Mood.objects.create(slug='m26')
+        for patch in (override_settings(MOOD_ALLOWED_SIGNERS=self.signers),
+                      override_settings(MOOD_ADMINS=('justin',))):
             patch.enable()
             self.addCleanup(patch.disable)
-        self.devices = {p.name: Device.objects.create(entity=p, label='phone', token_hash=motion_auth.digest(p.name))
+        self.devices = {p.name: Device.objects.create(entity=p, label='phone', token_hash=mood_auth.digest(p.name))
                         for p in (self.justin, self.skyler)}
         LoginCode.objects.create(code_hash='c-skyler', entity=self.skyler,
                                  expires_at=timezone.now() + timedelta(minutes=10))
@@ -47,14 +47,14 @@ class AdminTest(TestCase):
     def admin(self, action, target='', key='justin', signed_as=None):
         challenge = self.client.get('/api/auth/challenge/').json()['challenge']
         purpose = admin_purpose(*(signed_as or (action, target)))
-        signature = sign(self.keys[key], motion_auth.signed_message(challenge, 'http://testserver', purpose))
+        signature = sign(self.keys[key], mood_auth.signed_message(challenge, 'http://testserver', purpose))
         return self.client.post('/api/auth/admin/', json.dumps({'challenge': challenge, 'signature': signature,
                                                                 'action': action, 'target': target or None}),
                                 content_type='application/json')
 
     def enroll(self, key):
         challenge = self.client.get('/api/auth/challenge/').json()['challenge']
-        signature = sign(self.keys[key], motion_auth.signed_message(challenge, 'http://testserver'))
+        signature = sign(self.keys[key], mood_auth.signed_message(challenge, 'http://testserver'))
         return self.client.post('/api/auth/enroll/', json.dumps({'challenge': challenge, 'signature': signature}),
                                 content_type='application/json')
 
@@ -64,7 +64,7 @@ class AdminTest(TestCase):
     def test_only_an_admins_signature_acts(self):
         self.assertEqual(self.admin('kick', 'justin', key='skyler').status_code, 403)
         self.assertEqual(self.live('justin'), 1)
-        with override_settings(MOTION_ADMINS=()):
+        with override_settings(MOOD_ADMINS=()):
             self.assertEqual(self.admin('kick', 'skyler').status_code, 503)
 
     def test_a_signature_for_one_action_is_not_good_for_another(self):
@@ -92,16 +92,16 @@ class AdminTest(TestCase):
         self.assertEqual(result['scram']['by'], 'justin')
         self.assertEqual(self.live('justin') + self.live('skyler'), 0)
 
-        self.client.cookies[motion_auth.COOKIE] = 'skyler'  # even a device that somehow still worked
-        say = self.client.post('/api/motions/m26/say/', json.dumps({'text': 'hi'}), content_type='application/json')
+        self.client.cookies[mood_auth.COOKIE] = 'skyler'  # even a device that somehow still worked
+        say = self.client.post('/api/moods/m26/say/', json.dumps({'text': 'hi'}), content_type='application/json')
         self.assertEqual(say.status_code, 423)
         self.assertEqual(self.enroll('justin').status_code, 423)
-        self.assertEqual(self.client.post('/api/motions/m26/typing/', '{}', content_type='application/json').status_code, 423)
-        self.assertIsNotNone(self.client.get('/api/motions/pulse/').json()['scram'])  # runners stand still
-        self.assertIsNotNone(self.client.get('/api/motions/m26/turns/').json()['scram'])  # the page says so
+        self.assertEqual(self.client.post('/api/moods/m26/typing/', '{}', content_type='application/json').status_code, 423)
+        self.assertIsNotNone(self.client.get('/api/moods/pulse/').json()['scram'])  # runners stand still
+        self.assertIsNotNone(self.client.get('/api/moods/m26/turns/').json()['scram'])  # the page says so
 
         self.assertEqual(self.admin('lift').status_code, 200)
-        self.assertIsNone(self.client.get('/api/motions/pulse/').json()['scram'])
+        self.assertIsNone(self.client.get('/api/moods/pulse/').json()['scram'])
         self.assertEqual(self.enroll('justin').status_code, 200)
 
     def test_requests_are_checked(self):
@@ -112,8 +112,8 @@ class AdminTest(TestCase):
 
     def test_the_client_signs_what_the_server_checks(self):
         import importlib.util
-        spec = importlib.util.spec_from_file_location('motion_admin', 'tools/motion_admin.py')
+        spec = importlib.util.spec_from_file_location('mood_admin', 'tools/mood_admin.py')
         client = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(client)
         self.assertEqual(client.signed_message('c', 'https://ML.example', 'admin kick skyler'),
-                         motion_auth.signed_message('c', 'https://ml.example', admin_purpose('kick', 'skyler')))
+                         mood_auth.signed_message('c', 'https://ml.example', admin_purpose('kick', 'skyler')))

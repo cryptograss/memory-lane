@@ -9,15 +9,15 @@ bug of ours:
                  (or until their key leaves hunter's inventory).
   unban <name>
   az5            the scram: every device signed out, every login link spent,
-                 and the Motions locked -- nobody writes, nobody signs in,
+                 and the Moods locked -- nobody writes, nobody signs in,
                  and every runner wakes nothing -- until an admin lifts it.
   lift           the scram off; people sign in again as usual.
 
 The request is signed like a sign-in (`ssh-keygen -Y sign`), but the
 message names the action and its target, so a signature for one can't be
-replayed as another. Only names in settings.MOTION_ADMINS may act. Every
+replayed as another. Only names in settings.MOOD_ADMINS may act. Every
 action is recorded as a settings row (key 'scram' or 'banned'), so the
-settings page shows who did what, when. tools/motion_admin.py is the
+settings page shows who did what, when. tools/mood_admin.py is the
 client; `magenta.sh kick` and `magenta.sh AZ5` run it.
 """
 
@@ -31,7 +31,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from .models import Device, LoginCode, Setting, ThinkingEntity
-from .services import motion_auth
+from .services import mood_auth
 from .services import settings as knobs
 
 ACTIONS = ('kick', 'ban', 'unban', 'az5', 'lift')
@@ -54,7 +54,7 @@ def sign_out(devices, codes):
 def api_admin(request):
     from .views_auth import _under_limit
 
-    admins = getattr(settings, 'MOTION_ADMINS', ())
+    admins = getattr(settings, 'MOOD_ADMINS', ())
     if not admins:
         return JsonResponse({'error': 'no admins are configured'}, status=503)
     if not _under_limit('admin', 20):
@@ -69,11 +69,11 @@ def api_admin(request):
         return JsonResponse({'error': f"action: one of {', '.join(ACTIONS)}"}, status=400)
     if (action in TARGETED) != bool(target) or (target and not re.fullmatch(r'[a-z0-9._-]{1,60}', target)):
         return JsonResponse({'error': f'{action} takes {"a name" if action in TARGETED else "no name"}'}, status=400)
-    if not motion_auth.challenge_is_fresh(challenge):
+    if not mood_auth.challenge_is_fresh(challenge):
         return JsonResponse({'error': 'challenge expired; fetch a new one'}, status=400)
 
-    message = motion_auth.signed_message(challenge, motion_auth.origin_of(request), admin_purpose(action, target))
-    admin = motion_auth.signer_of(message, signature)
+    message = mood_auth.signed_message(challenge, mood_auth.origin_of(request), admin_purpose(action, target))
+    admin = mood_auth.signer_of(message, signature)
     if admin not in admins:
         return JsonResponse({'error': 'not an admin signature'}, status=403)
     admin_entity = ThinkingEntity.objects.filter(name=admin).first()
@@ -108,5 +108,5 @@ def locked_response():
     scram = knobs.scram()
     if scram is None:
         return None
-    return JsonResponse({'error': f"Motions are locked (scram by {scram['by']} at {scram['at'][:16]}Z)",
+    return JsonResponse({'error': f"Moods are locked (scram by {scram['by']} at {scram['at'][:16]}Z)",
                          'scram': scram}, status=423)

@@ -1,6 +1,6 @@
 """Devices that time out and are renewed by name; statements attested with a key; servers and their redeploys.
 
-Uses the real ssh-keygen with a throwaway key, as test_motion_auth does.
+Uses the real ssh-keygen with a throwaway key, as test_mood_auth does.
 """
 
 import json
@@ -13,9 +13,9 @@ from unittest import mock, skipUnless
 from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
-from conversations.models import Device, Message, Motion, ThinkingEntity
-from conversations.services import motion_auth, servers
-from conversations.tests.test_motion_auth import HAS_SSH_KEYGEN, make_key, sign
+from conversations.models import Device, Message, Mood, ThinkingEntity
+from conversations.services import mood_auth, servers
+from conversations.tests.test_mood_auth import HAS_SSH_KEYGEN, make_key, sign
 
 
 class SignedInCase(TestCase):
@@ -29,22 +29,22 @@ class SignedInCase(TestCase):
         cls.signers = os.path.join(cls.dir, 'allowed_signers')
         with open(cls.signers, 'w') as f:
             pub = open(cls.justin_key + '.pub').read().strip()
-            f.write(f'justin namespaces="{motion_auth.NAMESPACE}" {pub}\n')
+            f.write(f'justin namespaces="{mood_auth.NAMESPACE}" {pub}\n')
 
     def setUp(self):
         from django.core.cache import cache
         cache.clear()  # sign-in is rate-limited, and the cache outlives a test
         ThinkingEntity.objects.create(name='justin', is_biological_human=True)
         ThinkingEntity.objects.create(name='magent', is_biological_human=False)
-        Motion.objects.create(slug='m26')
-        patcher = override_settings(MOTION_ALLOWED_SIGNERS=self.signers)
+        Mood.objects.create(slug='m26')
+        patcher = override_settings(MOOD_ALLOWED_SIGNERS=self.signers)
         patcher.enable()
         self.addCleanup(patcher.disable)
 
     def sign_in(self, label='phone', client=None):
         client = client or Client()
         challenge = client.get('/api/auth/challenge/').json()['challenge']
-        message = motion_auth.signed_message(challenge, 'http://testserver')
+        message = mood_auth.signed_message(challenge, 'http://testserver')
         url = client.post('/api/auth/enroll/', json.dumps({'challenge': challenge, 'signature': sign(self.justin_key, message)}),
                           content_type='application/json').json()['url']
         path = url.split('testserver', 1)[1]
@@ -54,7 +54,7 @@ class SignedInCase(TestCase):
 
     def signed_post(self, url, purpose, extra, text=None):
         challenge = self.client.get('/api/auth/challenge/').json()['challenge']
-        message = motion_auth.signed_message(challenge, 'http://testserver', purpose=purpose)
+        message = mood_auth.signed_message(challenge, 'http://testserver', purpose=purpose)
         if text is not None:
             message += '\n' + text
         body = {'challenge': challenge, 'signature': sign(self.justin_key, message), **extra}
@@ -79,7 +79,7 @@ class DevicesTest(SignedInCase):
 
     def test_an_unused_device_times_out_and_renewing_brings_it_back(self):
         phone = self.sign_in('phone')
-        Device.objects.update(last_used_at=timezone.now() - motion_auth.DEVICE_IDLE_LIMIT - timedelta(days=1))
+        Device.objects.update(last_used_at=timezone.now() - mood_auth.DEVICE_IDLE_LIMIT - timedelta(days=1))
         self.assertEqual(phone.get('/api/auth/devices/').status_code, 401)  # timed out
         self.assertEqual(self.signed_post('/api/auth/renew/', 'renew laptop', {'label': 'laptop'}).status_code, 404)
         # A signature for one device can't renew another.
@@ -93,7 +93,7 @@ class DevicesTest(SignedInCase):
         words = "I'll bring the PA on Saturday."
         made = self.signed_post('/api/attest/', 'attest', {'text': words}, text=words)
         self.assertEqual(made.status_code, 201)
-        row = Message.objects.get(motion_id='general', source_file='motion-attest')
+        row = Message.objects.get(mood__slug='general', source_file='mood-attest')
         self.assertEqual((row.sender_id, row.content['text']), ('justin', words))
         self.assertTrue(row.content['key'].startswith('ssh-ed25519 '))
         # Anyone can check it with ssh-keygen alone, from what the record keeps.
@@ -105,7 +105,7 @@ class DevicesTest(SignedInCase):
                                     row.content['namespace'], '-s', sig], input=row.content['signed'],
                                    capture_output=True, text=True)
         self.assertEqual(check.returncode, 0, check.stderr)
-        body = self.client.get('/api/motions/general/turns/').json()
+        body = self.client.get('/api/moods/general/turns/').json()
         turns = body['turns']
         self.assertEqual(turns[0]['text'], words)
         self.assertIsNone(body['activity'])  # posted words, not a session's prompt with an agent at work
@@ -114,27 +114,27 @@ class DevicesTest(SignedInCase):
         forged = self.signed_post('/api/attest/', 'attest', {'text': 'I owe magent $100.'}, text=words)
         self.assertEqual(forged.status_code, 403)
         # Checked again on demand, by anyone: the signature, the key still being theirs, the words shown.
-        checked = self.client.get(f'/api/motions/general/verify/{row.id}/').json()
+        checked = self.client.get(f'/api/moods/general/verify/{row.id}/').json()
         self.assertEqual({k: checked[k] for k in ('signer', 'signature_valid', 'key_is_current', 'statement_matches',
                                                   'origin')},
                          {'signer': 'justin', 'signature_valid': True, 'key_is_current': True,
                           'statement_matches': True, 'origin': 'http://testserver'})
         # Tampered with in the record, it says so.
         Message.objects.filter(pk=row.pk).update(content={**row.content, 'text': 'I owe magent $100.'})
-        self.assertFalse(self.client.get(f'/api/motions/general/verify/{row.id}/').json()['statement_matches'])
+        self.assertFalse(self.client.get(f'/api/moods/general/verify/{row.id}/').json()['statement_matches'])
         Message.objects.filter(pk=row.pk).update(content={**row.content, 'signed': row.content['signed'] + '!'})
-        self.assertFalse(self.client.get(f'/api/motions/general/verify/{row.id}/').json()['signature_valid'])
-        self.assertEqual(self.client.get(f'/api/motions/m26/verify/{row.id}/').status_code, 404)  # not this Mood's
+        self.assertFalse(self.client.get(f'/api/moods/general/verify/{row.id}/').json()['signature_valid'])
+        self.assertEqual(self.client.get(f'/api/moods/m26/verify/{row.id}/').status_code, 404)  # not this Mood's
 
 
-@override_settings(MOTION_DEPLOY_KEY='d' * 40)
+@override_settings(MOOD_DEPLOY_KEY='d' * 40)
 class ServersTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
         ThinkingEntity.objects.create(name='justin', is_biological_human=True)
         for slug in ('m26', 'delivery-kid', 'pickipedia-and-rabbithole'):
-            Motion.objects.create(slug=slug, title=slug)
+            Mood.objects.create(slug=slug, title=slug)
 
     def setUp(self):
         from django.core.cache import cache
@@ -175,37 +175,37 @@ class ServersTest(TestCase):
         self.assertTrue(listed['hunter']['deploying'])
         self.assertFalse(listed['pickipedia']['deploying'])
         self.deploy({'server': 'hunter', 'state': 'finished', 'commit': 'abc123def'})
-        events = self.client.get('/api/motions/m26/turns/').json()['events']
+        events = self.client.get('/api/moods/m26/turns/').json()['events']
         self.assertEqual([(e['server'], e['state']) for e in events], [('hunter', 'started'), ('hunter', 'finished')])
         self.assertIsNotNone(events[1]['took'])
-        self.assertEqual(self.client.get('/api/motions/m26/turns/').json()['turns'], [])  # not a turn
+        self.assertEqual(self.client.get('/api/moods/m26/turns/').json()['turns'], [])  # not a turn
 
     def test_a_delivery_kid_redeploy_stays_in_its_own_mood(self):
         self.assertEqual(self.deploy({'server': 'delivery-kid', 'state': 'started'}).json()['moods'], 1)
-        self.assertEqual(self.client.get('/api/motions/m26/turns/').json()['events'], [])
-        self.assertEqual(len(self.client.get('/api/motions/delivery-kid/turns/').json()['events']), 1)
-        recent = self.client.get('/api/motions/recent/').json()['events']
+        self.assertEqual(self.client.get('/api/moods/m26/turns/').json()['events'], [])
+        self.assertEqual(len(self.client.get('/api/moods/delivery-kid/turns/').json()['events']), 1)
+        recent = self.client.get('/api/moods/recent/').json()['events']
         self.assertEqual([e['kind'] for e in recent].count('deploy'), 1)
 
     def test_a_redeploy_doesnt_make_a_mood_look_active(self):
-        before = {m['slug']: (m['last_at'], m['message_count']) for m in self.client.get('/api/motions/').json()['motions']}
+        before = {m['slug']: (m['last_at'], m['message_count']) for m in self.client.get('/api/moods/').json()['moods']}
         self.deploy({'server': 'maybelle', 'state': 'finished'})
-        after = {m['slug']: (m['last_at'], m['message_count']) for m in self.client.get('/api/motions/').json()['motions']}
+        after = {m['slug']: (m['last_at'], m['message_count']) for m in self.client.get('/api/moods/').json()['moods']}
         self.assertEqual(before, after)
 
     def test_without_a_key_nobody_tells_of_redeploys(self):
-        with override_settings(MOTION_DEPLOY_KEY=''):
+        with override_settings(MOOD_DEPLOY_KEY=''):
             self.assertEqual(self.deploy({'server': 'hunter', 'state': 'started'}).status_code, 503)
 
 
 @skipUnless(HAS_SSH_KEYGEN, 'needs ssh-keygen')
 class InterruptTest(SignedInCase):
-    """Stop in the Motion: who may, the line it leaves, and what a runner reads."""
+    """Stop in the Mood: who may, the line it leaves, and what a runner reads."""
 
     def test_only_a_signed_in_person_may_stop_an_agent(self):
-        self.assertEqual(self.client.post('/api/motions/m26/interrupt/', '{}', content_type='application/json').status_code, 401)
+        self.assertEqual(self.client.post('/api/moods/m26/interrupt/', '{}', content_type='application/json').status_code, 401)
         client = self.sign_in()
-        post = lambda body: client.post('/api/motions/m26/interrupt/', json.dumps(body), content_type='application/json',
+        post = lambda body: client.post('/api/moods/m26/interrupt/', json.dumps(body), content_type='application/json',
                                         HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value)
         self.assertEqual(post({'agent': 'justin'}).status_code, 400)  # a person, not an agent
         stopped = post({'agent': 'magent'}).json()['interrupt']
@@ -213,35 +213,35 @@ class InterruptTest(SignedInCase):
 
     def test_what_a_runner_reads_and_the_line_in_the_thread(self):
         from conversations.services import settings as knobs
-        self.assertEqual(self.client.get('/api/motions/m26/interrupt/', {'agent': 'magent'}).json(),
+        self.assertEqual(self.client.get('/api/moods/m26/interrupt/', {'agent': 'magent'}).json(),
                          {'scram': knobs.scram(), 'interrupt': None})
         client = self.sign_in()
-        client.post('/api/motions/m26/interrupt/', '{"agent": "magent"}', content_type='application/json',
+        client.post('/api/moods/m26/interrupt/', '{"agent": "magent"}', content_type='application/json',
                     HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value)
-        state = self.client.get('/api/motions/m26/interrupt/', {'agent': 'magent'}).json()
+        state = self.client.get('/api/moods/m26/interrupt/', {'agent': 'magent'}).json()
         self.assertEqual(state['interrupt']['by'], 'justin')
-        events = self.client.get('/api/motions/m26/turns/').json()['events']
+        events = self.client.get('/api/moods/m26/turns/').json()['events']
         self.assertEqual([(e['type'], e['agent'], e['by']) for e in events], [('interrupt', 'magent', 'justin')])
         # A line, not a word: the Mood's "last said" and its turns are untouched.
-        self.assertEqual(self.client.get('/api/motions/m26/turns/').json()['turns'], [])
+        self.assertEqual(self.client.get('/api/moods/m26/turns/').json()['turns'], [])
 
     def test_stopping_ends_waking_and_working_at_once(self):
         import time
         import uuid
-        from conversations.services.motion_view import activity
-        motion = Motion.objects.get(slug='m26')
+        from conversations.services.mood_view import activity
+        mood = Mood.objects.get(slug='m26')
         now = time.time()
-        Message.objects.create(id=uuid.uuid4(), sender_id='justin', motion=motion, source_file='motion-web',
+        Message.objects.create(id=uuid.uuid4(), sender_id='justin', mood=mood, source_file='mood-web',
                                content='@magent fix the', timestamp=int(now * 1000))
-        self.assertEqual(activity(motion, now=now + 1)['doing'], 'waking')
+        self.assertEqual(activity(mood, now=now + 1)['doing'], 'waking')
         client = self.sign_in()
-        client.post('/api/motions/m26/interrupt/', '{"agent": "magent"}', content_type='application/json',
+        client.post('/api/moods/m26/interrupt/', '{"agent": "magent"}', content_type='application/json',
                     HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value)
-        self.assertIsNone(activity(motion, now=time.time() + 1))
+        self.assertIsNone(activity(mood, now=time.time() + 1))
         # What's posted after the stop wakes as usual.
-        Message.objects.create(id=uuid.uuid4(), sender_id='justin', motion=motion, source_file='motion-web',
+        Message.objects.create(id=uuid.uuid4(), sender_id='justin', mood=mood, source_file='mood-web',
                                content='@magent ...banjo page, I meant', timestamp=int((time.time() + 2) * 1000))
-        self.assertEqual(activity(motion, now=time.time() + 3)['doing'], 'waking')
+        self.assertEqual(activity(mood, now=time.time() + 3)['doing'], 'waking')
 
 
 @skipUnless(HAS_SSH_KEYGEN, 'needs ssh-keygen')
@@ -253,46 +253,46 @@ class NewAndArchivedMoodsTest(SignedInCase):
                            HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value)
 
     def test_a_new_mood_gets_a_slug_from_its_title_and_a_line_saying_who(self):
-        self.assertEqual(self.client.post('/api/motions/new/', '{"title": "x"}', content_type='application/json').status_code, 401)
+        self.assertEqual(self.client.post('/api/moods/new/', '{"title": "x"}', content_type='application/json').status_code, 401)
         client = self.sign_in()
-        self.assertEqual(self.post(client, '/api/motions/new/', {'title': '  '}).status_code, 400)
-        made = self.post(client, '/api/motions/new/', {'title': 'Fiddle tunes, in C!', 'description': 'Which and why'})
+        self.assertEqual(self.post(client, '/api/moods/new/', {'title': '  '}).status_code, 400)
+        made = self.post(client, '/api/moods/new/', {'title': 'Fiddle tunes, in C!', 'description': 'Which and why'})
         self.assertEqual(made.status_code, 201)
         self.assertEqual(made.json()['slug'], 'fiddle-tunes-in-c')
-        again = self.post(client, '/api/motions/new/', {'title': 'Fiddle tunes in C'}).json()
+        again = self.post(client, '/api/moods/new/', {'title': 'Fiddle tunes in C'}).json()
         self.assertEqual(again['slug'], 'fiddle-tunes-in-c-2')  # never someone else's Mood
-        motion = Motion.objects.get(slug='fiddle-tunes-in-c')
-        self.assertEqual((motion.title, motion.description), ('Fiddle tunes, in C!', 'Which and why'))
-        line = Message.objects.get(motion=motion)
+        mood = Mood.objects.get(slug='fiddle-tunes-in-c')
+        self.assertEqual((mood.title, mood.description), ('Fiddle tunes, in C!', 'Which and why'))
+        line = Message.objects.get(mood=mood)
         self.assertEqual((line.sender_id, line.content['type'], line.content['by']), ('system', 'created', 'justin'))
-        listed = {m['slug']: m for m in self.client.get('/api/motions/').json()['motions']}
+        listed = {m['slug']: m for m in self.client.get('/api/moods/').json()['moods']}
         self.assertEqual(listed['fiddle-tunes-in-c']['message_count'], 0)  # a system line isn't a word
-        events = self.client.get('/api/motions/fiddle-tunes-in-c/turns/').json()['events']
+        events = self.client.get('/api/moods/fiddle-tunes-in-c/turns/').json()['events']
         self.assertEqual([(e['type'], e['by']) for e in events], [('created', 'justin')])
 
     def test_a_pinned_mood_leads_the_list_for_everyone(self):
-        Motion.objects.create(slug='general', title='general')
+        Mood.objects.create(slug='general', title='general')
         client = self.sign_in()
-        self.assertEqual(self.client.post('/api/motions/general/pin/', '{}', content_type='application/json').status_code, 401)
-        self.assertEqual(self.post(client, '/api/motions/general/pin/', {'pinned': True}).json(),
+        self.assertEqual(self.client.post('/api/moods/general/pin/', '{}', content_type='application/json').status_code, 401)
+        self.assertEqual(self.post(client, '/api/moods/general/pin/', {'pinned': True}).json(),
                          {'slug': 'general', 'pinned': True})
-        listed = self.client.get('/api/motions/').json()['motions']  # someone else's view: the same order
+        listed = self.client.get('/api/moods/').json()['moods']  # someone else's view: the same order
         self.assertEqual((listed[0]['slug'], listed[0]['pinned']), ('general', True))
-        self.post(client, '/api/motions/general/pin/', {'pinned': False})
-        self.assertFalse(any(m['pinned'] for m in self.client.get('/api/motions/').json()['motions']))
+        self.post(client, '/api/moods/general/pin/', {'pinned': False})
+        self.assertFalse(any(m['pinned'] for m in self.client.get('/api/moods/').json()['moods']))
 
     def test_archiving_takes_a_mood_out_of_the_list_and_back(self):
-        self.assertEqual(self.client.post('/api/motions/m26/archive/', '{}', content_type='application/json').status_code, 401)
+        self.assertEqual(self.client.post('/api/moods/m26/archive/', '{}', content_type='application/json').status_code, 401)
         client = self.sign_in()
-        self.assertEqual(self.post(client, '/api/motions/m26/archive/', {'archived': 'maybe'}).status_code, 400)
-        self.assertEqual(self.post(client, '/api/motions/m26/archive/', {'archived': True}).json(),
+        self.assertEqual(self.post(client, '/api/moods/m26/archive/', {'archived': 'maybe'}).status_code, 400)
+        self.assertEqual(self.post(client, '/api/moods/m26/archive/', {'archived': True}).json(),
                          {'slug': 'm26', 'archived': True})
-        listed = {m['slug']: m['archived'] for m in self.client.get('/api/motions/').json()['motions']}
+        listed = {m['slug']: m['archived'] for m in self.client.get('/api/moods/').json()['moods']}
         self.assertTrue(listed['m26'])
-        pulse = {m['slug']: m['archived'] for m in self.client.get('/api/motions/pulse/').json()['motions']}
+        pulse = {m['slug']: m['archived'] for m in self.client.get('/api/moods/pulse/').json()['moods']}
         self.assertTrue(pulse['m26'])
-        self.post(client, '/api/motions/m26/archive/', {'archived': False})
-        self.assertFalse({m['slug']: m['archived'] for m in self.client.get('/api/motions/').json()['motions']}['m26'])
+        self.post(client, '/api/moods/m26/archive/', {'archived': False})
+        self.assertFalse({m['slug']: m['archived'] for m in self.client.get('/api/moods/').json()['moods']}['m26'])
         # Its history is kept, like every setting: who, and when.
         from conversations.models import Setting
         self.assertEqual([(r.value, r.set_by_id) for r in Setting.objects.filter(key='archived').order_by('created_at')],
@@ -305,7 +305,7 @@ class LoginLinkStatesTest(SignedInCase):
 
     def link(self):
         challenge = self.client.get('/api/auth/challenge/').json()['challenge']
-        message = motion_auth.signed_message(challenge, 'http://testserver')
+        message = mood_auth.signed_message(challenge, 'http://testserver')
         url = Client().post('/api/auth/enroll/', json.dumps({'challenge': challenge, 'signature': sign(self.justin_key, message)}),
                             content_type='application/json').json()['url']
         return url.split('testserver', 1)[1]
@@ -341,7 +341,7 @@ class WikiFeedTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        Motion.objects.create(slug='general', title='general')
+        Mood.objects.create(slug='general', title='general')
         ThinkingEntity.objects.create(name='magent', is_biological_human=False)
 
     def setUp(self):
@@ -360,13 +360,13 @@ class WikiFeedTest(TestCase):
         # The wiki answers with older ones too, never shown: history, not news.
         self.assertEqual(wiki_feed.refresh(self.wiki(1, 2, 3, 4, 5, 6)), 1)
         self.assertEqual(wiki_feed.refresh(self.wiki(4, 5, 6)), 0)
-        body = self.client.get('/api/motions/general/turns/').json()
+        body = self.client.get('/api/moods/general/turns/').json()
         lines = [(e['type'], e['title'], e['user'], e['delta']) for e in body['events']]
         self.assertEqual(body['events'][0]['at'], '2026-10-03T23:00:00Z')  # the wiki's own time
         self.assertEqual(lines, [('wiki', 'Page 3', 'SkymanJenkins', 3), ('wiki', 'Page 4', 'SkymanJenkins', 4),
                                  ('wiki', 'Page 5', 'SkymanJenkins', 5), ('wiki', 'Page 6', 'SkymanJenkins', 6)])
         self.assertEqual(body['turns'], [])  # lines, not words: nothing to answer
-        self.assertEqual(self.client.get('/api/motions/').json()['motions'][0]['message_count'], 0)
+        self.assertEqual(self.client.get('/api/moods/').json()['moods'][0]['message_count'], 0)
 
     def test_at_most_once_a_minute(self):
         from conversations.services import wiki_feed
@@ -382,12 +382,12 @@ class FromPhoneTest(SignedInCase):
 
     def test_the_browser_says_where_it_was_written(self):
         client = self.sign_in()
-        say = lambda agent: client.post('/api/motions/m26/say/', json.dumps({'text': 'on my way'}),
+        say = lambda agent: client.post('/api/moods/m26/say/', json.dumps({'text': 'on my way'}),
                                         content_type='application/json', HTTP_USER_AGENT=agent,
                                         HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value)
         say('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148')
         say('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36')
-        turns = self.client.get('/api/motions/m26/turns/').json()['turns']
+        turns = self.client.get('/api/moods/m26/turns/').json()['turns']
         self.assertEqual([t['mobile'] for t in turns], [True, False])
         self.assertEqual(Message.objects.filter(client_version='magenta-web/mobile').count(), 1)
 

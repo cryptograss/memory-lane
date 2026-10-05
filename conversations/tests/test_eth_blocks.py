@@ -7,7 +7,7 @@ from unittest import mock
 from django.core.management import call_command
 from django.test import TestCase
 
-from conversations.models import BlockAnchor, Message, Motion, ThinkingEntity
+from conversations.models import BlockAnchor, Message, Mood, ThinkingEntity
 from conversations.services import eth_blocks
 from conversations.services.eth_blocks import ANCHOR_SPACING, BlockClock
 
@@ -127,10 +127,10 @@ class StampCommandTest(TestCase):
         self.assertIsNone(self.untimed.eth_blockheight)
         self.assertIn('messages=1', out)
 
-    def test_does_not_overwrite_a_motion_opened_at_a_known_block(self):
-        Motion.objects.create(slug='known', eth_blockheight=26_071_421)
+    def test_does_not_overwrite_a_mood_opened_at_a_known_block(self):
+        Mood.objects.create(slug='known', eth_blockheight=26_071_421)
         self.run_command('--no-sync')
-        self.assertEqual(Motion.objects.get(slug='known').eth_blockheight, 26_071_421)
+        self.assertEqual(Mood.objects.get(slug='known').eth_blockheight, 26_071_421)
 
     def test_rerun_is_a_no_op(self):
         self.run_command('--no-sync')

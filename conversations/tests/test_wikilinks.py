@@ -1,11 +1,11 @@
-"""PickiPedia reaches Motions through their [[wikilinks]] without storing them."""
+"""PickiPedia reaches Moods through their [[wikilinks]] without storing them."""
 
 import uuid
 
 from django.test import TestCase
 
-from conversations.models import ConversationParticipant, Message, Motion, ThinkingEntity
-from conversations.services.motion_view import wiki_title, wikilinks_in
+from conversations.models import ConversationParticipant, Message, Mood, ThinkingEntity
+from conversations.services.mood_view import wiki_title, wikilinks_in
 
 
 class WikilinksInTest(TestCase):
@@ -37,35 +37,35 @@ class WikilinksEndpointTest(TestCase):
         cls.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
         cls.magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
         tool = ConversationParticipant.objects.create(name='tool-result')
-        cls.m26 = Motion.objects.create(slug='m26')
-        cls.jams = Motion.objects.create(slug='jams')
+        cls.m26 = Mood.objects.create(slug='m26')
+        cls.jams = Mood.objects.create(slug='jams')
 
-        def say(sender, motion, content):
-            return Message.objects.create(id=uuid.uuid4(), sender=sender, motion=motion, content=content)
+        def say(sender, mood, content):
+            return Message.objects.create(id=uuid.uuid4(), sender=sender, mood=mood, content=content)
 
         cls.first = say(cls.justin, cls.m26, 'Is [[Bill Monroe]] on the page yet?')
         say(cls.magent, cls.jams, [{'type': 'text', 'text': 'Added to [[bill_Monroe|his page]] and [[Jam:Friday]].'}])
         say(tool, cls.m26, '[[Bill Monroe]] appears in a tool result')       # machinery
         say(cls.magent, cls.m26, '<command-name>[[Bill Monroe]]</command-name>')  # wrapper
-        Message.objects.create(id=uuid.uuid4(), sender=cls.justin, content='[[Bill Monroe]] before Motions')
+        Message.objects.create(id=uuid.uuid4(), sender=cls.justin, content='[[Bill Monroe]] before Moods')
 
     def get(self, **params):
         return self.client.get('/api/wikilinks/', params).json()
 
-    def test_backlinks_for_one_page_across_motions(self):
+    def test_backlinks_for_one_page_across_moods(self):
         links = self.get(page='bill_Monroe')['links']
-        self.assertEqual(sorted(l['motion'] for l in links), ['jams', 'm26'])
+        self.assertEqual(sorted(l['mood'] for l in links), ['jams', 'm26'])
         self.assertEqual({l['page'] for l in links}, {'Bill Monroe'})
 
     def test_all_links_oldest_first_and_read_to_the_end(self):
         body = self.get()
-        self.assertEqual([(l['motion'], l['page']) for l in body['links']],
+        self.assertEqual([(l['mood'], l['page']) for l in body['links']],
                          [('m26', 'Bill Monroe'), ('jams', 'Bill Monroe'), ('jams', 'Jam:Friday')])
         self.assertIsNone(body['next_since'])
 
     def test_since_is_incremental(self):
         links = self.get(since=self.first.created_at.isoformat())['links']
-        self.assertEqual({l['motion'] for l in links}, {'jams'})
+        self.assertEqual({l['mood'] for l in links}, {'jams'})
 
     def test_paging_never_splits_a_message_and_loses_nothing(self):
         first = self.get(limit=1)

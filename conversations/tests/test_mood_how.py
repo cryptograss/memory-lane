@@ -1,12 +1,12 @@
-"""Which model, at what effort, an agent's turn ran on -- kept at import, shown in the Motion."""
+"""Which model, at what effort, an agent's turn ran on -- kept at import, shown in the Mood."""
 
 import json
 import uuid
 
 from django.test import SimpleTestCase, TestCase
 
-from conversations.models import Era, Message, Motion, ThinkingEntity
-from conversations.services.motion_view import model_label
+from conversations.models import Era, Message, Mood, ThinkingEntity
+from conversations.services.mood_view import model_label
 from importers_and_parsers.claude_code_v2 import import_line_from_claude_code_v2
 
 
@@ -32,9 +32,9 @@ class ImportAndShowTest(TestCase):
         cls.era = Era.objects.create(name='Test Era')
         ThinkingEntity.objects.create(name='justin', is_biological_human=True)
         ThinkingEntity.objects.create(name='magent', is_biological_human=False)
-        cls.motion = Motion.objects.create(slug='m26')
+        cls.mood = Mood.objects.create(slug='m26')
         cls.session = uuid.uuid4()
-        cls.motion.claim(cls.session)
+        cls.mood.claim(cls.session)
 
     def assistant_line(self, text='hello', **extra):
         return json.dumps({
@@ -55,5 +55,5 @@ class ImportAndShowTest(TestCase):
 
     def test_the_turn_says_how_it_ran(self):
         import_line_from_claude_code_v2(self.assistant_line('the answer'), self.era, 'a.jsonl', 'justin')
-        turn = self.client.get('/api/motions/m26/turns/').json()['turns'][-1]
+        turn = self.client.get('/api/moods/m26/turns/').json()['turns'][-1]
         self.assertEqual((turn['text'], turn['model'], turn['effort']), ('the answer', 'Opus 5.5', 'xhigh'))

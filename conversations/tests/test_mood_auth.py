@@ -1,4 +1,4 @@
-"""Writing into Motions: SSH keys enroll devices; devices say things.
+"""Writing into Moods: SSH keys enroll devices; devices say things.
 
 Uses the real ssh-keygen with a throwaway key, so the signature check is
 the one production runs.
@@ -13,8 +13,8 @@ import shutil
 
 from django.test import Client, TestCase, override_settings
 
-from conversations.models import Device, Message, Motion, ThinkingEntity
-from conversations.services import motion_auth
+from conversations.models import Device, Message, Mood, ThinkingEntity
+from conversations.services import mood_auth
 
 HAS_SSH_KEYGEN = shutil.which('ssh-keygen') is not None
 
@@ -25,7 +25,7 @@ def make_key(directory, name):
     return key
 
 
-def sign(key, challenge, namespace=motion_auth.NAMESPACE):
+def sign(key, challenge, namespace=mood_auth.NAMESPACE):
     with tempfile.TemporaryDirectory() as tmp:
         message = os.path.join(tmp, 'm')
         with open(message, 'w') as f:
@@ -36,7 +36,7 @@ def sign(key, challenge, namespace=motion_auth.NAMESPACE):
 
 
 @skipUnless(HAS_SSH_KEYGEN, 'needs ssh-keygen')
-class MotionAuthTest(TestCase):
+class MoodAuthTest(TestCase):
 
     @classmethod
     def setUpClass(cls):
@@ -47,20 +47,20 @@ class MotionAuthTest(TestCase):
         cls.signers = os.path.join(cls.dir, 'allowed_signers')
         with open(cls.signers, 'w') as f:
             pub = open(cls.justin_key + '.pub').read().strip()
-            f.write(f'justin namespaces="{motion_auth.NAMESPACE}" {pub}\n')
+            f.write(f'justin namespaces="{mood_auth.NAMESPACE}" {pub}\n')
 
     def setUp(self):
         ThinkingEntity.objects.create(name='justin', is_biological_human=True)
         ThinkingEntity.objects.create(name='skyler', is_biological_human=True)
         ThinkingEntity.objects.create(name='magent', is_biological_human=False)
-        self.motion = Motion.objects.create(slug='m26')
-        patcher = override_settings(MOTION_ALLOWED_SIGNERS=self.signers)
+        self.mood = Mood.objects.create(slug='m26')
+        patcher = override_settings(MOOD_ALLOWED_SIGNERS=self.signers)
         patcher.enable()
         self.addCleanup(patcher.disable)
 
-    def enroll(self, name=None, key=None, namespace=motion_auth.NAMESPACE, origin='http://testserver'):
+    def enroll(self, name=None, key=None, namespace=mood_auth.NAMESPACE, origin='http://testserver'):
         challenge = self.client.get('/api/auth/challenge/').json()['challenge']
-        message = motion_auth.signed_message(challenge, origin)
+        message = mood_auth.signed_message(challenge, origin)
         body = {'challenge': challenge, 'signature': sign(key or self.justin_key, message, namespace)}
         if name:
             body['name'] = name
@@ -85,10 +85,10 @@ class MotionAuthTest(TestCase):
         self.assertFalse(Device.objects.exists())  # a GET (a link preview) spends nothing
 
         done = self.client.post(path, {'label': 'phone'})
-        self.assertRedirects(done, '/motions/', fetch_redirect_response=False)
+        self.assertRedirects(done, '/moods/', fetch_redirect_response=False)
         device = Device.objects.get()
         self.assertEqual((device.entity_id, device.label), ('justin', 'phone'))
-        cookie = done.cookies[motion_auth.COOKIE]
+        cookie = done.cookies[mood_auth.COOKIE]
         self.assertTrue(cookie['httponly'])
         self.assertNotEqual(device.token_hash, cookie.value)  # only the hash is stored
 
@@ -129,12 +129,12 @@ class MotionAuthTest(TestCase):
 
     def test_the_client_signs_what_the_server_checks(self):
         import importlib.util
-        spec = importlib.util.spec_from_file_location('motion_login', 'tools/motion_login.py')
+        spec = importlib.util.spec_from_file_location('mood_login', 'tools/mood_login.py')
         client = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(client)
-        self.assertEqual(client.NAMESPACE, motion_auth.NAMESPACE)
+        self.assertEqual(client.NAMESPACE, mood_auth.NAMESPACE)
         self.assertEqual(client.signed_message('c', 'https://Memory-Lane.example/'),
-                         motion_auth.signed_message('c', 'https://memory-lane.example'))
+                         mood_auth.signed_message('c', 'https://memory-lane.example'))
 
     def test_enrolling_is_rate_limited_and_size_capped(self):
         from django.core.cache import cache
@@ -148,21 +148,21 @@ class MotionAuthTest(TestCase):
         self.assertEqual(big.status_code, 413)
 
     def test_a_stale_challenge_is_refused(self):
-        with mock.patch.object(motion_auth, 'CHALLENGE_MAX_AGE', -1):
+        with mock.patch.object(mood_auth, 'CHALLENGE_MAX_AGE', -1):
             self.assertEqual(self.enroll().status_code, 400)
 
     def test_without_a_signers_file_nobody_enrolls(self):
-        with override_settings(MOTION_ALLOWED_SIGNERS=''):
+        with override_settings(MOOD_ALLOWED_SIGNERS=''):
             self.assertEqual(self.enroll().status_code, 403)
 
     # --- saying things --------------------------------------------------------
 
     def say(self, text, client=None):
-        return (client or self.client).post('/api/motions/m26/say/', json.dumps({'text': text}),
+        return (client or self.client).post('/api/moods/m26/say/', json.dumps({'text': text}),
                                             content_type='application/json')
 
     def test_reading_needs_nothing_writing_needs_a_device(self):
-        self.assertEqual(self.client.get('/api/motions/m26/turns/').status_code, 200)
+        self.assertEqual(self.client.get('/api/moods/m26/turns/').status_code, 200)
         self.assertEqual(self.say('hello').status_code, 401)
 
     def test_a_device_says_things_as_its_person_redacted(self):
@@ -170,7 +170,7 @@ class MotionAuthTest(TestCase):
         response = self.say('@magent the key is DB_PASSWORD=hunter22, [[Tony Rice]]')
         self.assertEqual(response.status_code, 201)
 
-        turns = self.client.get('/api/motions/m26/turns/').json()['turns']
+        turns = self.client.get('/api/moods/m26/turns/').json()['turns']
         self.assertEqual([t['sender'] for t in turns], ['justin'])
         self.assertIn('DB_PASSWORD=[REDACTED]', turns[0]['text'])
         self.assertEqual(self.client.get('/api/mentions/magent/').json()['mentions'][0]['turn']['sender'], 'justin')
@@ -178,9 +178,9 @@ class MotionAuthTest(TestCase):
     def test_writes_need_the_csrf_token(self):
         strict = self.sign_in(Client(enforce_csrf_checks=True))
         self.assertEqual(self.say('hello', client=strict).status_code, 403)
-        strict.get('/motions/')  # sets csrftoken, as the page does
+        strict.get('/moods/')  # sets csrftoken, as the page does
         token = strict.cookies['csrftoken'].value
-        ok = strict.post('/api/motions/m26/say/', json.dumps({'text': 'hello'}),
+        ok = strict.post('/api/moods/m26/say/', json.dumps({'text': 'hello'}),
                          content_type='application/json', HTTP_X_CSRFTOKEN=token)
         self.assertEqual(ok.status_code, 201)
 
@@ -196,11 +196,11 @@ class MotionAuthTest(TestCase):
         self.sign_in()
         token = self.client.cookies['csrftoken'].value
         for body in ('{"text": 5}', '{"text": ["a"]}', '[1]'):
-            response = self.client.post('/api/motions/m26/say/', body, content_type='application/json',
+            response = self.client.post('/api/moods/m26/say/', body, content_type='application/json',
                                         HTTP_X_CSRFTOKEN=token)
             self.assertEqual(response.status_code, 400, body)
         self.assertEqual(self.say('a\x00b').status_code, 201)
-        self.assertEqual(Message.objects.get(source_file='motion-web').content, 'ab')
+        self.assertEqual(Message.objects.get(source_file='mood-web').content, 'ab')
 
     def test_signing_out_revokes_the_device(self):
         self.sign_in()
@@ -209,7 +209,7 @@ class MotionAuthTest(TestCase):
         self.assertEqual(self.say('still here?').status_code, 401)
 
     def test_the_page_knows_who_is_writing(self):
-        self.assertContains(self.client.get('/motions/'), 'const viewer = "" || null')
+        self.assertContains(self.client.get('/moods/'), 'const viewer = "" || null')
         self.sign_in()
-        self.assertContains(self.client.get('/motions/'), 'const viewer = "justin" || null')
+        self.assertContains(self.client.get('/moods/'), 'const viewer = "justin" || null')
         self.assertEqual(self.client.get('/api/auth/me/').json(), {'name': 'justin'})

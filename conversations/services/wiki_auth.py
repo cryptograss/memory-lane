@@ -6,12 +6,12 @@ OAuth extension) enrols a device of tier 'wiki': it can chat and mention
 people, and their mentions notify as anyone's do. It can't do what makes
 the machines act -- an @agent from it is just text, and starting, archiving,
 renaming or pinning a Mood, stopping an agent or changing a setting all need
-the SSH-key tier (motion_auth). Nothing is shared with the wiki but a
+the SSH-key tier (mood_auth). Nothing is shared with the wiki but a
 yes-this-is-them: the grant asked for is identity only.
 
 **Names.** Each person on hunter can carry their PickiPedia name in its
 inventory (`pickipedia:`); maybelle writes those to a file, one
-"<name here> <PickiPedia name>" per line (settings.MOTION_WIKI_NAMES). The
+"<name here> <PickiPedia name>" per line (settings.MOOD_WIKI_NAMES). The
 thread shows the wiki name, links it to their user page, and @-mentions
 work with either. A wiki sign-in by a mapped account is that person;
 anyone else gets a name of their own here, from their wiki name, unless it
@@ -26,7 +26,7 @@ from urllib.parse import urlencode
 import requests
 from django.conf import settings
 
-from conversations.services.motion_view import pickipedia_url
+from conversations.services.mood_view import pickipedia_url
 
 STATE_COOKIE = 'wiki_signin'
 STATE_AGE = 600  # seconds to come back from the wiki
@@ -48,7 +48,7 @@ _read = {}  # path -> (mtime, names): the file is asked for per message shown
 
 def names():
     """{name here: PickiPedia name}, from hunter's inventory (empty if not set up)."""
-    path = getattr(settings, 'MOTION_WIKI_NAMES', '') or os.environ.get('MOTION_WIKI_NAMES', '')
+    path = getattr(settings, 'MOOD_WIKI_NAMES', '') or os.environ.get('MOOD_WIKI_NAMES', '')
     if not path or not os.path.exists(path):
         return {}
     mtime = os.path.getmtime(path)
@@ -126,7 +126,7 @@ def local_name_for(wiki_name):
 def entity_for(wiki_name):
     """The person a PickiPedia account signs in as; SignInRefused if it can't be anyone."""
     from conversations.models import ThinkingEntity
-    from conversations.services import motion_auth
+    from conversations.services import mood_auth
     name = local_name_for(wiki_name)
     if not name or not name[0].isalpha():
         raise SignInRefused(f'"{wiki_name}" makes no name usable here; ask an admin')
@@ -135,7 +135,7 @@ def entity_for(wiki_name):
     if entity is not None and not mapped:
         # Only an unmapped wiki person's own name may be reused: never an
         # agent's, never someone with a key, never a name mapped to another account.
-        if (not entity.is_biological_human or motion_auth.public_key_of(name)
+        if (not entity.is_biological_human or mood_auth.public_key_of(name)
                 or name in names()):
             raise SignInRefused(f'the name "{name}" here belongs to someone else; ask an admin to map your account')
     if entity is not None and not entity.is_biological_human:

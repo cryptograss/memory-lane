@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="color-scheme" content="light dark">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{ agent }}'s rules in {{ motion.title|default:motion.slug }} · magenta</title>
+<title>{{ agent }}'s rules in {{ mood.title|default:mood.slug }} · magenta</title>
 <style>
   :root {
     --bg: #fbfaf7; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b6560;
@@ -42,19 +42,19 @@
 </head>
 <body>
 <header>
-  <a class="brand" href="/motions/{{ motion.slug }}/">magenta</a>
-  <a href="/motions/{{ motion.slug }}/">back to {{ motion.title|default:motion.slug }}</a>
-  <a href="/motions/settings/">settings</a>
+  <a class="brand" href="/moods/{{ mood.slug }}/">magenta</a>
+  <a href="/moods/{{ mood.slug }}/">back to {{ mood.title|default:mood.slug }}</a>
+  <a href="/moods/settings/">settings</a>
 </header>
 <main>
-  <h1>How {{ agent }} is told to be, in {{ motion.title|default:motion.slug }}</h1>
+  <h1>How {{ agent }} is told to be, in {{ mood.title|default:mood.slug }}</h1>
   <p class="lede">What reaches {{ agent }} here, read from the code that sends it, so it can't drift from what's sent.
-    The rules and settings are changed on the <a href="/motions/settings/">settings page</a>; the wording of each wake
-    lives in memory-lane's <code>poller/motion_poller.py</code>.</p>
+    The rules and settings are changed on the <a href="/moods/settings/">settings page</a>; the wording of each wake
+    lives in memory-lane's <code>poller/mood_poller.py</code>.</p>
 
   <h2>Rules for this Mood</h2>
   {% if rules %}<div class="rules">{{ rules }}</div>
-  {% else %}<p class="note">None set: {{ agent }} carries itself here as everywhere. Set some on the <a href="/motions/settings/">settings page</a>, and every wake here will carry them.</p>{% endif %}
+  {% else %}<p class="note">None set: {{ agent }} carries itself here as everywhere. Set some on the <a href="/moods/settings/">settings page</a>, and every wake here will carry them.</p>{% endif %}
 
   <h2>Settings in force here</h2>
   <table>

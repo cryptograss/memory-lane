@@ -1,6 +1,6 @@
-"""Turn a Motion into something a person can read.
+"""Turn a Mood into something a person can read.
 
-A Motion is mostly machinery. Of the first 42 messages in the first Motion,
+A Mood is mostly machinery. Of the first 42 messages in the first Mood,
 30 were tool calls, their results, system notices and thinking blocks. A
 conversation view keeps the prose from thinking entities and drops the rest.
 What it drops is a product decision, made here in one place.
@@ -22,15 +22,15 @@ MACHINERY_SENDERS = {'tool-result', 'system'}
 # but they are not conversation.
 # The summary Claude Code starts a session with after compacting it. Not
 # anyone's words -- the harness writes it, as a prompt -- so never a turn or
-# a mention; the Motion shows it folded, as the moment a context was compacted.
+# a mention; the Mood shows it folded, as the moment a context was compacted.
 COMPACTION_PREFIX = 'This session is being continued from a previous conversation'
 INTERRUPT_SOURCE = 'interrupt'
 # System rows shown as a line in the thread.
-NEW_MOOD_SOURCE = 'motion-new'
+NEW_MOOD_SOURCE = 'mood-new'
 EVENT_SOURCES = ('deploy', INTERRUPT_SOURCE, NEW_MOOD_SOURCE, 'wiki')  # wiki: services/wiki_feed.py
-# Words posted into a Motion directly, not typed into a session: from the
+# Words posted into a Mood directly, not typed into a session: from the
 # composer, or attested with a key (magenta.sh attest).
-POSTED = ('motion-web', 'motion-attest')
+POSTED = ('mood-web', 'mood-attest')
 _WRAPPER_PREFIXES = ('<', '[Request interrupted', COMPACTION_PREFIX)
 
 
@@ -92,8 +92,8 @@ def is_compaction(text):
     return text.startswith(COMPACTION_PREFIX)
 
 
-def turns(motion, after=None):
-    """Yield (message, text) for the readable conversation in a Motion.
+def turns(mood, after=None):
+    """Yield (message, text) for the readable conversation in a Mood.
 
     `after` is a Message; only turns created after it are yielded, which is
     what a polling client needs.
@@ -101,7 +101,7 @@ def turns(motion, after=None):
     from conversations.models import ThinkingEntity
 
     speakers = set(ThinkingEntity.objects.values_list('name', flat=True))
-    messages = motion.messages.filter(is_sidechain=False).select_related('sender').order_by('created_at')
+    messages = mood.messages.filter(is_sidechain=False).select_related('sender').order_by('created_at')
     if after is not None:
         messages = messages.filter(created_at__gt=after.created_at)
 
@@ -124,12 +124,12 @@ _WIKILINK = re.compile(r'\[\[([^\]|]+)(?:\|([^\]]+))?\]\]')
 # @name, but not inside an email, a URL path, or another handle.
 _MENTION = re.compile(r'(?<![\w@/.])@([A-Za-z][\w.-]*)')
 # ![alt](url): our own stored media, or https from hosts we trust to serve
-# images (settings.MOTION_IMAGE_HOSTS); any other host renders as a link,
+# images (settings.MOOD_IMAGE_HOSTS); any other host renders as a link,
 # so a viewer's browser never fetches from somewhere nobody chose.
-_IMAGE = re.compile(r'!\[([^\]\n]*)\]\((/motions/media/[0-9a-f]{64}\.(?:png|jpg|gif|webp)|https://[^)\s]+)\)')
+_IMAGE = re.compile(r'!\[([^\]\n]*)\]\((/(?:moods|motions)/media/[0-9a-f]{64}\.(?:png|jpg|gif|webp)|https://[^)\s]+)\)')
 _MD_LINK = re.compile(r'\[([^\]]+)\]\((https?://[^)\s]+)\)')
 # [label](a stored recording): a voice memo, played in place (services/voice.py).
-_AUDIO = re.compile(r'\[([^\]\n]*)\]\((/motions/media/[0-9a-f]{64}\.(?:webm|ogg|m4a|mp3|wav))\)')
+_AUDIO = re.compile(r'\[([^\]\n]*)\]\((/(?:moods|motions)/media/[0-9a-f]{64}\.(?:webm|ogg|m4a|mp3|wav))\)')
 _URL = re.compile(r'(https?://(?:(?!&quot;|&#x27;|&lt;|&gt;)[^\s<>"\x01\x02])+)')
 # Placeholders the renderer uses for markup it has already made; never input.
 _PLACEHOLDER_CHARS = re.compile(r'[\x00\x01\x02]')
@@ -165,7 +165,7 @@ def _image(match):
 def _image_host_allowed(url):
     from urllib.parse import urlsplit
     host = (urlsplit(url.replace('&amp;', '&')).hostname or '').lower()
-    return host in getattr(settings, 'MOTION_IMAGE_HOSTS', ())
+    return host in getattr(settings, 'MOOD_IMAGE_HOSTS', ())
 
 
 def step_images(step_messages):
@@ -178,7 +178,7 @@ def step_images(step_messages):
         return {}
     found = {}
     results = (ToolResult.objects.filter(tool_use_id__in={t for t, _ in by_tool},
-                                         content__icontains='/motions/media/')
+                                         content__icontains='/media/')  # /moods/media/, or /motions/ before
                .values_list('tool_use_id', 'session_id', 'content'))
     for tool_id, session_id, content in results:
         step = by_tool.get((tool_id, session_id))
@@ -403,7 +403,7 @@ def render_html(text, mentionable=()):
     return out
 
 
-def timeline(motion, after=None, before=None, limit=None, start=None):
+def timeline(mood, after=None, before=None, limit=None, start=None):
     """Readable turns and the agent's tool steps, oldest first.
 
     Yields ('turn', message, text), ('quiet', message, reason) for an
@@ -418,7 +418,7 @@ def timeline(motion, after=None, before=None, limit=None, start=None):
     from conversations.models import ThinkingEntity
 
     speakers = set(ThinkingEntity.objects.values_list('name', flat=True))
-    rows = motion.messages.filter(is_sidechain=False).select_related('sender', 'tooluse', 'thought')
+    rows = mood.messages.filter(is_sidechain=False).select_related('sender', 'tooluse', 'thought')
     if after is not None:
         rows = rows.filter(created_at__gt=after.created_at)
     if start is not None:
@@ -559,7 +559,7 @@ def attestation_of(msg):
     """What makes a turn an attestation -- exactly what was signed, the
     signature, the key -- or None."""
     c = msg.content
-    if msg.source_file != 'motion-attest' or not isinstance(c, dict) or c.get('type') != 'attestation':
+    if msg.source_file != 'mood-attest' or not isinstance(c, dict) or c.get('type') != 'attestation':
         return None
     return {k: c.get(k, '') for k in ('signed', 'signature', 'key', 'namespace')}
 
@@ -624,7 +624,7 @@ def _when(msg):
 
 # --- how full an agent's context is ------------------------------------------
 # Every assistant line records what its model read to write it: fresh input
-# plus cache reads and writes. The newest such line in a Motion's newest
+# plus cache reads and writes. The newest such line in a Mood's newest
 # session is how full that agent's context is now -- what a wake would
 # resume into. Windows by model; the record shows Opus 5.5 sessions passing
 # 865k tokens, so its window is 1M. Anything unlisted is taken as 200k,
@@ -638,11 +638,11 @@ def context_window(model, tokens=0):
     return window if tokens <= window else max(window, 1_000_000)
 
 
-def context_in(motion, agent):
+def context_in(mood, agent):
     """{'tokens', 'window', 'model', 'at'} for `agent`'s context here, or None."""
     # A slash command's output (/context, /usage) is a "<synthetic>" message
     # (stored with no model) that read nothing: it says nothing about the context.
-    row = (motion.messages.filter(sender_id=agent, is_sidechain=False, input_tokens__isnull=False,
+    row = (mood.messages.filter(sender_id=agent, is_sidechain=False, input_tokens__isnull=False,
                                   model_backend__isnull=False)
            .order_by('-created_at')
            .values('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'model_backend',
@@ -653,7 +653,7 @@ def context_in(motion, agent):
     window = context_window(row['model_backend'], tokens)
     # Compacted since (`@magent /compact`): no turn has measured the context
     # yet, so it is about the summary's size until the next one does.
-    summary = compacted_since(motion, agent, row['created_at'])
+    summary = compacted_since(mood, agent, row['created_at'])
     if summary is not None:
         return {'tokens': len(summary.text) // CHARS_PER_TOKEN, 'window': window, 'model': row['model_backend'] or '',
                 'at': summary.at.isoformat(), 'compacted': True}
@@ -668,11 +668,11 @@ class _Summary:
         self.text, self.at = text, at
 
 
-def compacted_since(motion, agent, when):
+def compacted_since(mood, agent, when):
     """The summary `agent`'s context went on from, if it was compacted after
     `when` (its last measured turn); else None. What follows a summary
     before the next turn is only the command's own echo."""
-    for row in (motion.messages.filter(sender_id=agent, is_sidechain=False, created_at__gt=when)
+    for row in (mood.messages.filter(sender_id=agent, is_sidechain=False, created_at__gt=when)
                 .order_by('-created_at').values('content', 'created_at')[:20]):
         content = row['content']
         if isinstance(content, list):
@@ -686,8 +686,8 @@ def compacted_since(motion, agent, when):
 # The record can show that a post names an agent and nothing has answered it,
 # but not why: a runner may be holding it -- its hourly cap reached, the
 # agent hushed here, a turn already under way. The runner says so, and the
-# Motion shows "held" instead of an endless "waking". Ephemeral, like typing:
-# a shared cache entry per Motion, agent -> {reason, until, at}, which lapses
+# Mood shows "held" instead of an endless "waking". Ephemeral, like typing:
+# a shared cache entry per Mood, agent -> {reason, until, at}, which lapses
 # unless the runner renews it, so a runner that dies leaves no stale hold.
 HELD_FOR = 600  # seconds a hold lasts unless renewed
 
@@ -718,22 +718,22 @@ def set_held(slug, agent, reason, until=None, now=None):
     return holds
 
 
-def activity(motion, now=None):
-    """What an agent in this Motion is doing now, or None: see _activity.
+def activity(mood, now=None):
+    """What an agent in this Mood is doing now, or None: see _activity.
     Someone stopping the agent since that began ends it at once, without
     waiting for its runner to notice."""
-    doing = _activity(motion, now)
+    doing = _activity(mood, now)
     if doing and doing['doing'] != 'held':
-        stopped = latest_interrupt(motion, doing['agent'])
+        stopped = latest_interrupt(mood, doing['agent'])
         if stopped and stopped['at_ts'] >= doing['since']:
             return None
     return doing
 
 
-def latest_interrupt(motion, agent=None):
+def latest_interrupt(mood, agent=None):
     """{'agent', 'by', 'at', 'at_ts'} for the newest time someone stopped
     `agent` (any agent, if None) here; None if nobody ever has."""
-    for msg in (motion.messages.filter(source_file=INTERRUPT_SOURCE).order_by('-created_at')
+    for msg in (mood.messages.filter(source_file=INTERRUPT_SOURCE).order_by('-created_at')
                 .only('content', 'timestamp', 'created_at')[:20]):
         c = msg.content if isinstance(msg.content, dict) else {}
         if agent is None or c.get('agent') == agent:
@@ -744,11 +744,11 @@ def latest_interrupt(motion, agent=None):
     return None
 
 
-def _activity(motion, now=None):
-    """What an agent in this Motion is doing now, or None if nothing is underway.
+def _activity(mood, now=None):
+    """What an agent in this Mood is doing now, or None if nothing is underway.
 
     Read straight from the record, so no process has to report in: every
-    thought, tool call and prompt streams into the Motion as it happens, and
+    thought, tool call and prompt streams into the Mood as it happens, and
     an assistant line whose stop_reason is end_turn closes the turn. So an
     agent is working from the first line after its last finished turn until
     the next one, and the newest line says what it's doing. A web post that
@@ -764,7 +764,7 @@ def _activity(motion, now=None):
     # they neither describe nor end its turn. System lines are the harness's
     # bookkeeping -- Claude Code writes one just after a turn ends -- and
     # say nothing about whether anyone is working.
-    recent = list(motion.messages.filter(is_sidechain=False).exclude(sender_id='system')
+    recent = list(mood.messages.filter(is_sidechain=False).exclude(sender_id='system')
                   .select_related('sender', 'tooluse', 'thought', 'toolresult')
                   .order_by('-created_at')[:RECENT])
     if not recent:
@@ -780,7 +780,7 @@ def _activity(motion, now=None):
         # waking until the runner has looked at it. A hold is shown for as
         # long as the runner keeps it -- an hour, at the hourly cap -- not
         # just the window an unexplained wait is shown for.
-        hold = held_in(motion.slug, now).get(named[0])
+        hold = held_in(mood.slug, now).get(named[0])
         if hold and hold['at'] >= _when(newest):
             return {'agent': named[0], 'doing': 'held', 'why': hold['reason'], 'until': hold.get('until'),
                     'since': _when(newest)}
@@ -811,7 +811,7 @@ def _activity(motion, now=None):
     if len(streak) == len(recent) == RECENT:
         # A long turn runs past the rows read above: find where it began.
         from django.db.models import Q
-        mine = motion.messages.filter(is_sidechain=False)
+        mine = mood.messages.filter(is_sidechain=False)
         boundary = (mine.filter(created_at__lt=start.created_at)
                     .filter(Q(sender_id__in=agents, stop_reason__in=TURN_ENDS) | Q(source_file__in=POSTED))
                     .order_by('-created_at').first())
@@ -833,7 +833,7 @@ TASK_HORIZONS = {'command': 2.5 * 3600, 'helper': 12 * 3600}
 TASK_HORIZON = max(TASK_HORIZONS.values())
 
 
-def background_tasks(motion, now=None):
+def background_tasks(mood, now=None):
     """Commands and helpers an agent started in the background here and that
     haven't ended, read from the record: the tool result that started each
     one, and the <task-notification> that says it ended.
@@ -845,7 +845,7 @@ def background_tasks(motion, now=None):
 
     now = now or time.time()
     since = datetime.fromtimestamp(now - TASK_HORIZON, tz.utc)
-    rows = (motion.messages.filter(is_sidechain=False, created_at__gte=since)
+    rows = (mood.messages.filter(is_sidechain=False, created_at__gte=since)
             .filter(models_q(content__icontains='in background with ID')
                     | models_q(content__icontains='Async agent launched')
                     | models_q(content__icontains='<task-id>'))
@@ -884,18 +884,18 @@ def models_q(**kwargs):
     return Q(**kwargs)
 
 
-def motion_payload(motion):
+def mood_payload(mood):
     from django.db.models import Max
     # What was said, not the system's own rows (a redeploy announced in every
     # Mood, a rename, a turn's tally): those mustn't make a Mood look active.
-    said = motion.messages.exclude(sender_id='system')
+    said = mood.messages.exclude(sender_id='system')
     last = said.aggregate(last=Max('created_at'))['last']
     return {
-        'slug': motion.slug,
-        'title': motion.title or motion.slug,
-        'description': motion.description,
-        'eth_blockheight': motion.eth_blockheight,
+        'slug': mood.slug,
+        'title': mood.title or mood.slug,
+        'description': mood.description,
+        'eth_blockheight': mood.eth_blockheight,
         'message_count': said.count(),
         'last_at': last.isoformat() if last else None,
-        'participants': sorted(e.name for e in motion.thinking_entities()),
+        'participants': sorted(e.name for e in mood.thinking_entities()),
     }

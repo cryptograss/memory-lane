@@ -1,4 +1,4 @@
-"""Images in Motions: uploads, serving, rendering, and images lifted out of transcripts."""
+"""Images in Moods: uploads, serving, rendering, and images lifted out of transcripts."""
 
 import base64
 import json
@@ -8,9 +8,9 @@ from unittest import mock
 from django.core.cache import cache
 from django.test import TestCase, override_settings
 
-from conversations.models import Era, Media, Message, Motion, ThinkingEntity, ToolResult, ToolUse
+from conversations.models import Era, Media, Message, Mood, ThinkingEntity, ToolResult, ToolUse
 from conversations.services import media
-from conversations.services.motion_view import render_html
+from conversations.services.mood_view import render_html
 from conversations.services.redaction import redact_line
 from importers_and_parsers.claude_code_v2 import import_line_from_claude_code_v2
 
@@ -32,7 +32,7 @@ class SniffAndStoreTest(TestCase):
         first, again = media.store(PNG), media.store(PNG)
         self.assertEqual(first.pk, again.pk)
         self.assertEqual(Media.objects.count(), 1)
-        self.assertRegex(first.url, r'^/motions/media/[0-9a-f]{64}\.png$')
+        self.assertRegex(first.url, r'^/moods/media/[0-9a-f]{64}\.png$')
 
     def test_too_big_or_not_an_image_is_refused(self):
         with mock.patch.object(media, 'MAX_BYTES', 10):
@@ -45,16 +45,16 @@ class UploadAndServeTest(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.sky = ThinkingEntity.objects.create(name='skyler', is_biological_human=True)
-        Motion.objects.create(slug='m26')
+        Mood.objects.create(slug='m26')
 
     def setUp(self):
         cache.clear()
 
     def post(self, body):
-        return self.client.post('/api/motions/m26/media/', body, content_type='application/octet-stream')
+        return self.client.post('/api/moods/m26/media/', body, content_type='application/octet-stream')
 
     def as_sky(self):
-        return mock.patch('conversations.services.motion_auth.device_for',
+        return mock.patch('conversations.services.mood_auth.device_for',
                           return_value=mock.Mock(entity=self.sky, pk=1, entity_id='skyler'))
 
     def test_writing_an_image_needs_a_device(self):
@@ -75,11 +75,11 @@ class UploadAndServeTest(TestCase):
         self.assertIn('sandbox', served['Content-Security-Policy'])
         self.assertEqual(served.content, PNG)
         self.assertEqual(self.client.get(url.replace('.png', '.gif')).status_code, 404)
-        self.assertEqual(self.client.get('/motions/media/' + '0' * 64 + '.png').status_code, 404)
+        self.assertEqual(self.client.get('/moods/media/' + '0' * 64 + '.png').status_code, 404)
 
     def test_what_it_claims_to_be_does_not_matter(self):
         with self.as_sky():
-            response = self.client.post('/api/motions/m26/media/', b'<svg onload="x">', content_type='image/png')
+            response = self.client.post('/api/moods/m26/media/', b'<svg onload="x">', content_type='image/png')
         self.assertEqual(response.status_code, 400)
 
 
@@ -87,9 +87,9 @@ class RenderImagesTest(TestCase):
 
     def test_stored_media_and_trusted_hosts_embed_others_link(self):
         sha = 'a' * 64
-        out = render_html(f'look ![the stage](/motions/media/{sha}.png) here')
-        self.assertIn(f'<img src="/motions/media/{sha}.png" alt="the stage" loading="lazy">', out)
-        with override_settings(MOTION_IMAGE_HOSTS={'pickipedia.xyz'}):
+        out = render_html(f'look ![the stage](/moods/media/{sha}.png) here')
+        self.assertIn(f'<img src="/moods/media/{sha}.png" alt="the stage" loading="lazy">', out)
+        with override_settings(MOOD_IMAGE_HOSTS={'pickipedia.xyz'}):
             self.assertIn('<img src="https://pickipedia.xyz/images/a/ab/Banjo.jpg"',
                           render_html('![banjo](https://pickipedia.xyz/images/a/ab/Banjo.jpg)'))
             other = render_html('![pixel](https://tracker.example/p.gif)')
@@ -97,11 +97,11 @@ class RenderImagesTest(TestCase):
         self.assertIn('<a href="https://tracker.example/p.gif">pixel</a>', other)
 
     def test_an_image_cannot_carry_markup(self):
-        from conversations.tests.test_motion_view import RenderHtmlTest
+        from conversations.tests.test_mood_view import RenderHtmlTest
         check = RenderHtmlTest()
         sha = 'b' * 64
-        for attack in (f'![x" onerror="alert(1)](/motions/media/{sha}.png)',
-                       f'![a](/motions/media/{sha}.png" onerror="alert(1))',
+        for attack in (f'![x" onerror="alert(1)](/moods/media/{sha}.png)',
+                       f'![a](/moods/media/{sha}.png" onerror="alert(1))',
                        '![a](https://pickipedia.xyz/x.png" onerror="alert(1))',
                        '![[[Page]]](https://pickipedia.xyz/a.png)'):
             with self.subTest(attack=attack):
@@ -122,9 +122,9 @@ class LiftImagesTest(TestCase):
         cls.era = Era.objects.create(name='Test Era')
         cls.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
         ThinkingEntity.objects.create(name='magent', is_biological_human=False)
-        cls.motion = Motion.objects.create(slug='m26')
+        cls.mood = Mood.objects.create(slug='m26')
         cls.session = uuid.uuid4()
-        cls.motion.claim(cls.session)
+        cls.mood.claim(cls.session)
 
     def image_block(self, data=PNG):
         return {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png',
@@ -153,7 +153,7 @@ class LiftImagesTest(TestCase):
         import_line_from_claude_code_v2(result, self.era, 'a.jsonl', 'justin')
         stored = Media.objects.get()
         self.assertIsNone(stored.added_by)
-        steps = self.client.get('/api/motions/m26/turns/').json()['steps']
+        steps = self.client.get('/api/moods/m26/turns/').json()['steps']
         self.assertEqual(steps[0]['images'], [stored.url])
 
     def test_redaction_leaves_image_bytes_alone(self):

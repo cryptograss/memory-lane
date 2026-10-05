@@ -60,7 +60,7 @@ def wiki_card(server):
     """{'url', 'role', 'art'} from a server's PickiPedia page: the ASCII art
     and role in its infobox, so the dots' popover shows what the wiki does.
     Kept six hours; a wiki that doesn't answer leaves just the link."""
-    from conversations.services.motion_view import pickipedia_url
+    from conversations.services.mood_view import pickipedia_url
     base, title = pickipedia_url(), server.get('page') or ''
     url = f"{base}/wiki/{title.replace(' ', '_')}" if title else f'{base}/'
     if not title:
@@ -114,11 +114,11 @@ def status(now=None):
 
 
 def moods_for(name):
-    from conversations.models import Motion
+    from conversations.models import Mood
     server = next(s for s in SERVERS if s['name'] == name)
     if server['moods'] == '*':
-        return list(Motion.objects.all())
-    return list(Motion.objects.filter(slug__in=server['moods']))
+        return list(Mood.objects.all())
+    return list(Mood.objects.filter(slug__in=server['moods']))
 
 
 def record_deploy(name, state, commit='', by='', note=''):
@@ -135,7 +135,7 @@ def record_deploy(name, state, commit='', by='', note=''):
     moods = moods_for(name)
     stamp = int(time.time() * 1000)
     Message.objects.bulk_create([
-        Message(id=uuid.uuid4(), sender=system, motion=mood, content=content, timestamp=stamp, source_file=SOURCE)
+        Message(id=uuid.uuid4(), sender=system, mood=mood, content=content, timestamp=stamp, source_file=SOURCE)
         for mood in moods])
     cache.delete(f'server-check:{name}')  # look again: it may be back, or gone
     return len(moods)

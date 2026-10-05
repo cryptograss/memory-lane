@@ -1,4 +1,4 @@
-"""Tests for the read-only Motion view: rendering, filtering, and the API."""
+"""Tests for the read-only Mood view: rendering, filtering, and the API."""
 
 import json
 import uuid
@@ -7,8 +7,8 @@ from datetime import timedelta
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from conversations.models import ConversationParticipant, Message, Motion, ThinkingEntity
-from conversations.services.motion_view import prose, render_html, turns
+from conversations.models import ConversationParticipant, Message, Mood, ThinkingEntity
+from conversations.services.mood_view import prose, render_html, turns
 
 
 class RenderHtmlTest(TestCase):
@@ -51,7 +51,7 @@ class RenderHtmlTest(TestCase):
 
     def test_combinations_of_markup_stay_well_formed(self):
         import itertools
-        pieces = ['[[', ']]', '|', '[', '](', ')', 'https://x.test/', '@magent', '**', '*', '`', '![', '/motions/media/' + 'a' * 64 + '.png',
+        pieces = ['[[', ']]', '|', '[', '](', ')', 'https://x.test/', '@magent', '**', '*', '`', '![', '/moods/media/' + 'a' * 64 + '.png',
                   '"', "'", '<', '>', '/', '=', 'onclick=alert(1)', ' ', '\n']
         for combo in itertools.product(pieces, repeat=4):
             text = ''.join(combo)
@@ -72,7 +72,7 @@ class RenderHtmlTest(TestCase):
                 for name, value in attrs:
                     case.assertIn(name, allowed[tag], (source, out))
                     if name in ('href', 'src'):  # decoded: entities are fine
-                        case.assertRegex(value, r'^(https?://|/motions/media/[0-9a-f]{64}\.(png|jpg|gif|webp)$)',
+                        case.assertRegex(value, r'^(https?://|/moods/media/[0-9a-f]{64}\.(png|jpg|gif|webp)$)',
                                          (source, out))
         Check().feed(out)
 
@@ -125,7 +125,7 @@ class RenderHtmlTest(TestCase):
         self.assertNotIn('mention', render_html('hi @justin'))
 
     def test_mentions_inside_code_are_literal(self):
-        from conversations.services.motion_view import mentions_in
+        from conversations.services.mood_view import mentions_in
         text = 'run `@justin` and ```\n@justin\n```'
         self.assertNotIn('class="mention"', render_html(text, mentionable={'justin'}))
         # The count must agree with the rendering.
@@ -133,7 +133,7 @@ class RenderHtmlTest(TestCase):
         self.assertEqual(mentions_in(text + ' but @justin here', {'justin'}), ['justin'])
 
     def test_mentions_in(self):
-        from conversations.services.motion_view import mentions_in
+        from conversations.services.mood_view import mentions_in
         self.assertEqual(mentions_in('@Magent @justin @magent @nobody.', {'justin', 'magent'}),
                          ['magent', 'justin'])
         self.assertEqual(mentions_in('nothing here', {'justin'}), [])
@@ -178,7 +178,7 @@ class ProseAndTurnsTest(TestCase):
         cls.magent = ThinkingEntity.objects.create(name="magent", is_biological_human=False)
         cls.tool = ConversationParticipant.objects.create(name="tool-result")
         cls.system = ConversationParticipant.objects.create(name="system")
-        cls.motion = Motion.objects.create(slug="m", title="M")
+        cls.mood = Mood.objects.create(slug="m", title="M")
 
         script = [
             (cls.justin, "hello there"),
@@ -193,7 +193,7 @@ class ProseAndTurnsTest(TestCase):
         base = timezone.now() - timedelta(minutes=10)
         cls.ids = []
         for i, (sender, content) in enumerate(script):
-            m = Message.objects.create(id=uuid.uuid4(), sender=sender, content=content, motion=cls.motion)
+            m = Message.objects.create(id=uuid.uuid4(), sender=sender, content=content, mood=cls.mood)
             Message.objects.filter(id=m.id).update(created_at=base + timedelta(seconds=i))
             cls.ids.append(m.id)
 
@@ -205,12 +205,12 @@ class ProseAndTurnsTest(TestCase):
         self.assertEqual(prose(None), "")
 
     def test_turns_keep_only_readable_conversation(self):
-        texts = [t for _, t in turns(self.motion)]
+        texts = [t for _, t in turns(self.mood)]
         self.assertEqual(texts, ["hello there", "reply **one**", "untyped block"])
 
     def test_turns_after(self):
         first = Message.objects.get(id=self.ids[0])
-        texts = [t for _, t in turns(self.motion, after=first)]
+        texts = [t for _, t in turns(self.mood, after=first)]
         self.assertEqual(texts, ["reply **one**", "untyped block"])
 
 
@@ -221,27 +221,27 @@ class MentionsApiTest(TestCase):
         cls.justin = ThinkingEntity.objects.create(name="justin", is_biological_human=True)
         cls.magent = ThinkingEntity.objects.create(name="magent", is_biological_human=False)
         tool = ConversationParticipant.objects.create(name="tool-result")
-        a = Motion.objects.create(slug="a")
-        b = Motion.objects.create(slug="b")
+        a = Mood.objects.create(slug="a")
+        b = Mood.objects.create(slug="b")
         base = timezone.now() - timedelta(hours=2)
         rows = [
             (a, cls.magent, "@justin first", 0),
             (b, cls.magent, "no mention", 1),
             (b, cls.justin, "@magent are you there", 2),
             (a, cls.magent, "second, @Justin.", 3),
-            (None, cls.magent, "@justin but not in any motion", 4),
+            (None, cls.magent, "@justin but not in any mood", 4),
             (a, tool, "@justin from a tool result", 5),
         ]
         cls.ids = []
-        for motion, sender, text, minute in rows:
-            m = Message.objects.create(id=uuid.uuid4(), sender=sender, content=text, motion=motion)
+        for mood, sender, text, minute in rows:
+            m = Message.objects.create(id=uuid.uuid4(), sender=sender, content=text, mood=mood)
             Message.objects.filter(id=m.id).update(created_at=base + timedelta(minutes=minute))
             cls.ids.append(m.id)
 
-    def test_newest_first_across_motions_from_thinking_entities_only(self):
+    def test_newest_first_across_moods_from_thinking_entities_only(self):
         data = self.client.get('/api/mentions/justin/').json()
         self.assertEqual(data['name'], 'justin')
-        self.assertEqual([(m['motion'], m['turn']['sender']) for m in data['mentions']],
+        self.assertEqual([(m['mood'], m['turn']['sender']) for m in data['mentions']],
                          [('a', 'magent'), ('a', 'magent')])
         self.assertEqual(data['mentions'][0]['turn']['mentions'], ['justin'])
         self.assertIn('data-who="justin"', data['mentions'][0]['turn']['html'])
@@ -257,7 +257,7 @@ class MentionsApiTest(TestCase):
 
     def test_bots_are_mentionable(self):
         data = self.client.get('/api/mentions/magent/').json()
-        self.assertEqual([(m['motion'], m['turn']['sender']) for m in data['mentions']],
+        self.assertEqual([(m['mood'], m['turn']['sender']) for m in data['mentions']],
                          [('b', 'justin')])
 
     def test_unknown_name_is_404_and_read_only(self):
@@ -265,61 +265,61 @@ class MentionsApiTest(TestCase):
         self.assertEqual(self.client.post('/api/mentions/justin/').status_code, 405)
 
     def test_turns_carry_mentions(self):
-        data = self.client.get('/api/motions/b/turns/').json()
+        data = self.client.get('/api/moods/b/turns/').json()
         self.assertEqual([t['mentions'] for t in data['turns']], [[], ['magent']])
 
 
-class MotionApiTest(TestCase):
+class MoodApiTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
         cls.justin = ThinkingEntity.objects.create(name="justin", is_biological_human=True)
         cls.magent = ThinkingEntity.objects.create(name="magent", is_biological_human=False)
-        cls.old = Motion.objects.create(slug="old-motion", title="Old")
-        cls.new = Motion.objects.create(slug="new-motion", title="New", eth_blockheight=26_071_421)
+        cls.old = Mood.objects.create(slug="old-mood", title="Old")
+        cls.new = Mood.objects.create(slug="new-mood", title="New", eth_blockheight=26_071_421)
         base = timezone.now() - timedelta(hours=1)
-        for i, (motion, sender, text) in enumerate([
+        for i, (mood, sender, text) in enumerate([
             (cls.old, cls.justin, "older"),
             (cls.new, cls.justin, "hi [[Tony Rice]]"),
             (cls.new, cls.magent, [{"type": "text", "text": "hello **you**"}]),
         ]):
-            m = Message.objects.create(id=uuid.uuid4(), sender=sender, content=text, motion=motion)
+            m = Message.objects.create(id=uuid.uuid4(), sender=sender, content=text, mood=mood)
             Message.objects.filter(id=m.id).update(created_at=base + timedelta(minutes=i))
 
     def test_list_is_most_recent_first(self):
-        data = self.client.get('/api/motions/').json()
-        self.assertEqual([m['slug'] for m in data['motions']], ['new-motion', 'old-motion'])
-        new = data['motions'][0]
+        data = self.client.get('/api/moods/').json()
+        self.assertEqual([m['slug'] for m in data['moods']], ['new-mood', 'old-mood'])
+        new = data['moods'][0]
         self.assertEqual(new['participants'], ['justin', 'magent'])
         self.assertEqual(new['message_count'], 2)
         self.assertEqual(new['eth_blockheight'], 26_071_421)
 
     def test_turns_render_and_attribute(self):
-        data = self.client.get('/api/motions/new-motion/turns/').json()
-        self.assertEqual(data['motion']['slug'], 'new-motion')
+        data = self.client.get('/api/moods/new-mood/turns/').json()
+        self.assertEqual(data['mood']['slug'], 'new-mood')
         senders = [(t['sender'], t['is_human']) for t in data['turns']]
         self.assertEqual(senders, [('justin', True), ('magent', False)])
         self.assertIn('wikilink', data['turns'][0]['html'])
         self.assertIn('<strong>you</strong>', data['turns'][1]['html'])
 
     def test_turns_after_and_unknown_after_recovers(self):
-        first = self.client.get('/api/motions/new-motion/turns/').json()['turns']
-        since = self.client.get(f"/api/motions/new-motion/turns/?after={first[0]['id']}").json()['turns']
+        first = self.client.get('/api/moods/new-mood/turns/').json()['turns']
+        since = self.client.get(f"/api/moods/new-mood/turns/?after={first[0]['id']}").json()['turns']
         self.assertEqual([t['sender'] for t in since], ['magent'])
-        stale = self.client.get(f"/api/motions/new-motion/turns/?after={uuid.uuid4()}").json()['turns']
+        stale = self.client.get(f"/api/moods/new-mood/turns/?after={uuid.uuid4()}").json()['turns']
         self.assertEqual(len(stale), 2)
 
-    def test_unknown_motion_is_404(self):
-        self.assertEqual(self.client.get('/api/motions/nope/turns/').status_code, 404)
-        self.assertEqual(self.client.get('/motions/nope/').status_code, 404)
+    def test_unknown_mood_is_404(self):
+        self.assertEqual(self.client.get('/api/moods/nope/turns/').status_code, 404)
+        self.assertEqual(self.client.get('/moods/nope/').status_code, 404)
 
     def test_page_renders(self):
-        r = self.client.get('/motions/new-motion/')
+        r = self.client.get('/moods/new-mood/')
         self.assertEqual(r.status_code, 200)
         # escapejs renders the hyphen as -; the browser decodes it.
-        self.assertContains(r, 'const initialSlug = "new\\u002Dmotion"')
-        self.assertEqual(self.client.get('/motions/').status_code, 200)
+        self.assertContains(r, 'const initialSlug = "new\\u002Dmood"')
+        self.assertEqual(self.client.get('/moods/').status_code, 200)
 
     def test_read_only(self):
-        self.assertEqual(self.client.post('/api/motions/').status_code, 405)
-        self.assertEqual(self.client.post('/api/motions/new-motion/turns/').status_code, 405)
+        self.assertEqual(self.client.post('/api/moods/').status_code, 405)
+        self.assertEqual(self.client.post('/api/moods/new-mood/turns/').status_code, 405)

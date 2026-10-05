@@ -1,5 +1,5 @@
 """
-Hardening of the legacy (pre-Motion) JSON endpoints for public traffic.
+Hardening of the legacy (pre-Mood) JSON endpoints for public traffic.
 
 Every one of these is unauthenticated, so each must serve a bounded page,
 answer a malformed parameter with a 400 rather than a 500, and run a fixed

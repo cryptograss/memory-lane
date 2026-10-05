@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Get a login link for writing into Motions, vouched for by your SSH key.
+"""Get a login link for writing into Moods, vouched for by your SSH key.
 
 Signs a fresh challenge from memory-lane with your SSH key (ssh-keygen -Y
 sign, the same mechanism git uses for signed commits) and prints a one-time
@@ -10,10 +10,10 @@ works, by its camera -- and confirm.
 Your key must be the one hunter's inventory lists for you; it also tells
 memory-lane who you are, so there is no name to type.
 
-    python3 motion_login.py                      # a link for a new device
-    python3 motion_login.py --key ~/.ssh/id_rsa
-    python3 motion_login.py renew phone          # bring a timed-out device back, by its name
-    python3 motion_login.py attest "I'll bring the PA Saturday."   # signed, into #general
+    python3 mood_login.py                      # a link for a new device
+    python3 mood_login.py --key ~/.ssh/id_rsa
+    python3 mood_login.py renew phone          # bring a timed-out device back, by its name
+    python3 mood_login.py attest "I'll bring the PA Saturday."   # signed, into #general
 
 Standard library only, so it runs anywhere Python and OpenSSH do.
 """
@@ -32,11 +32,11 @@ import urllib.request
 DEFAULT_BASE = 'https://memory-lane.maybelle.cryptograss.live'
 # Fixed here, never taken from the server: a server must not choose what
 # your key signs for (`git` would make it a commit signature).
-NAMESPACE = 'magenta-motions'
+NAMESPACE = 'magenta-moods'
 
 
 def signed_message(challenge, base, purpose='login'):
-    """The challenge bound to the server it came from (motion_auth.signed_message)."""
+    """The challenge bound to the server it came from (mood_auth.signed_message)."""
     parts = urllib.parse.urlsplit(base)
     return f'{NAMESPACE} {purpose}\n{parts.scheme}://{parts.netloc}'.lower() + f'\n{challenge}'
 
@@ -44,7 +44,7 @@ def signed_message(challenge, base, purpose='login'):
 def call(url, payload=None):
     data = json.dumps(payload).encode() if payload is not None else None
     request = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json',
-                                                              'User-Agent': 'motion-login'})
+                                                              'User-Agent': 'mood-login'})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
@@ -325,7 +325,7 @@ def main():
                         help='login (default): a link for a new device; renew NAME: bring a timed-out device '
                              'back; attest "WORDS": post a statement signed with your key into #general')
     parser.add_argument('words', nargs='*', help="renew: the device's name; attest: the statement")
-    parser.add_argument('--name', default=os.environ.get('MOTION_NAME'),
+    parser.add_argument('--name', default=os.environ.get('MOOD_NAME'),
                         help='Only needed if one key is listed for several people; the key names you')
     parser.add_argument('--key', default=default_key(), help='SSH private key (default: ~/.ssh/id_ed25519, …)')
     parser.add_argument('--base', default=os.environ.get('MEMORY_LANE_URL', DEFAULT_BASE))

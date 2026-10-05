@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Moderate Motions with your SSH key: kick someone out, or stop everything.
+"""Moderate Moods with your SSH key: kick someone out, or stop everything.
 
-    python3 motion_admin.py kick skyler          # sign out every device of theirs
-    python3 motion_admin.py kick skyler --ban    # ...and bar their key from signing in
-    python3 motion_admin.py unban skyler
-    python3 motion_admin.py az5                  # the scram: everyone out, Motions locked, runners still
-    python3 motion_admin.py lift                 # the scram off
+    python3 mood_admin.py kick skyler          # sign out every device of theirs
+    python3 mood_admin.py kick skyler --ban    # ...and bar their key from signing in
+    python3 mood_admin.py unban skyler
+    python3 mood_admin.py az5                  # the scram: everyone out, Moods locked, runners still
+    python3 mood_admin.py lift                 # the scram off
 
-Your key must be an admin's (memory-lane's MOTION_ADMINS). The signature
+Your key must be an admin's (memory-lane's MOOD_ADMINS). The signature
 covers the action and its name, so it can't be replayed as anything else
-(conversations/views_admin.py). Standard library only, like motion_login.py.
+(conversations/views_admin.py). Standard library only, like mood_login.py.
 """
 
 import argparse
@@ -24,11 +24,11 @@ import urllib.parse
 import urllib.request
 
 DEFAULT_BASE = 'https://memory-lane.maybelle.cryptograss.live'
-NAMESPACE = 'magenta-motions'  # fixed here: a server must not choose what your key signs for
+NAMESPACE = 'magenta-moods'  # fixed here: a server must not choose what your key signs for
 
 
 def signed_message(challenge, base, purpose):
-    """motion_auth.signed_message: the challenge, the server, and what this signature is for."""
+    """mood_auth.signed_message: the challenge, the server, and what this signature is for."""
     parts = urllib.parse.urlsplit(base)
     return f'{NAMESPACE} {purpose}\n{parts.scheme}://{parts.netloc}'.lower() + f'\n{challenge}'
 
@@ -36,7 +36,7 @@ def signed_message(challenge, base, purpose):
 def call(url, payload=None):
     data = json.dumps(payload).encode() if payload is not None else None
     request = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json',
-                                                              'User-Agent': 'motion-admin'})
+                                                              'User-Agent': 'mood-admin'})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
@@ -103,9 +103,9 @@ def main():
         print(f'{target} may sign in again.')
     elif action == 'az5':
         print(f"AZ5: {result.get('devices_signed_out', 0)} device(s) signed out, {result.get('links_spent', 0)} "
-              f"login link(s) spent. Motions are locked and every runner is still until `lift`.")
+              f"login link(s) spent. Moods are locked and every runner is still until `lift`.")
     elif action == 'lift':
-        print('Lifted: Motions are open again; people sign in as usual.')
+        print('Lifted: Moods are open again; people sign in as usual.')
 
 
 if __name__ == '__main__':
