@@ -63,7 +63,9 @@ class RenderHtmlTest(TestCase):
         allowed = {'p': set(), 'br': set(), 'strong': set(), 'em': set(), 'code': set(), 'pre': set(),
                    'ul': set(), 'ol': set(), 'li': set(), 'h4': set(), 'table': set(), 'thead': set(),
                    'tbody': set(), 'tr': set(), 'th': set(), 'td': set(),
-                   'a': {'href', 'class'}, 'span': {'class', 'data-who'}, 'img': {'src', 'alt', 'loading'}}
+                   'a': {'href', 'class', 'target', 'rel'}, 'span': {'class', 'data-who'},
+                   'img': {'src', 'alt', 'loading'}}
+        fixed = {'target': '_blank', 'rel': 'noopener'}  # the renderer's own, never a post's
         case = self
 
         class Check(HTMLParser):
@@ -71,13 +73,15 @@ class RenderHtmlTest(TestCase):
                 case.assertIn(tag, allowed, (source, out))
                 for name, value in attrs:
                     case.assertIn(name, allowed[tag], (source, out))
+                    if name in fixed:
+                        case.assertEqual(value, fixed[name], (source, out))
                     if name in ('href', 'src'):  # decoded: entities are fine
                         case.assertRegex(value, r'^(https?://|/moods/media/[0-9a-f]{64}\.(png|jpg|gif|webp)$)',
                                          (source, out))
         Check().feed(out)
 
     def test_a_url_at_the_start_of_a_line_links(self):
-        self.assertIn('<a href="https://x.test/b">', render_html('a\nhttps://x.test/b'))
+        self.assertIn('<a href="https://x.test/b" target="_blank" rel="noopener">', render_html('a\nhttps://x.test/b'))
 
     def test_a_quoted_url_links_without_the_quote(self):
         out = render_html('see "https://pickipedia.xyz/wiki/Tony_Rice" there')
@@ -140,12 +144,12 @@ class RenderHtmlTest(TestCase):
 
     def test_markdown_links(self):
         out = render_html('see [the PR](https://github.com/x/y/pull/10), then.')
-        self.assertIn('<a href="https://github.com/x/y/pull/10">the PR</a>, then.', out)
+        self.assertIn('<a href="https://github.com/x/y/pull/10" target="_blank" rel="noopener">the PR</a>, then.', out)
 
     def test_bare_url_stops_before_punctuation(self):
         out = render_html('(at https://example.com/a). And https://example.com/b, ok')
-        self.assertIn('<a href="https://example.com/a">https://example.com/a</a>).', out)
-        self.assertIn('<a href="https://example.com/b">https://example.com/b</a>, ok', out)
+        self.assertIn('<a href="https://example.com/a" target="_blank" rel="noopener">https://example.com/a</a>).', out)
+        self.assertIn('<a href="https://example.com/b" target="_blank" rel="noopener">https://example.com/b</a>, ok', out)
 
     def test_inline_code_is_literal(self):
         out = render_html('write `**bold**` and `[[x]]` and `https://a.b` literally')
@@ -167,7 +171,7 @@ class RenderHtmlTest(TestCase):
 
     def test_bare_urls_link(self):
         out = render_html('at https://example.com/x?a=1&b=2 now')
-        self.assertIn('<a href="https://example.com/x?a=1&amp;b=2">', out)
+        self.assertIn('<a href="https://example.com/x?a=1&amp;b=2" target="_blank" rel="noopener">', out)
 
 
 class ProseAndTurnsTest(TestCase):

@@ -50,7 +50,7 @@ class PageAddressTest(TestCase):
     def test_shown_as_a_wikilink_titled_by_its_page(self):
         html = render_html('Have you heard https://pickipedia.xyz/wiki/Tony_Rice_(guitarist)? And '
                            'https://pickipedia.xyz/wiki/Cryptograss:Magenta_26_Million#Speaking_in_a_Mood.')
-        self.assertIn('<a class="wikilink" href="https://pickipedia.xyz/wiki/Tony_Rice_(guitarist)">'
+        self.assertIn('<a class="wikilink" href="https://pickipedia.xyz/wiki/Tony_Rice_(guitarist)" target="_blank" rel="noopener">'
                       'Tony Rice (guitarist)</a>?', html)
         self.assertIn('>Cryptograss:Magenta 26 Million § Speaking in a Mood</a>.', html)
 

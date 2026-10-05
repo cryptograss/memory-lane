@@ -149,11 +149,17 @@ def _is_table_separator(cells):
     return all(_TABLE_SEP_CELL.match(c) for c in cells if c) and any(cells)
 
 
+# Every link in what was said opens beside the Mood, never in its place.
+# Installed as an app, a link that navigated in place would take over the
+# app's own window; this way it opens in the browser instead.
+_OUT = ' target="_blank" rel="noopener"'
+
+
 def _wikilink(match):
     target = match.group(1).strip()
     label = (match.group(2) or target).strip()
     href = f"{pickipedia_url()}/wiki/{target.replace(' ', '_')}"
-    return f'<a class="wikilink" href="{href}">{label}</a>'
+    return f'<a class="wikilink" href="{href}"{_OUT}>{label}</a>'
 
 
 # A PickiPedia page's full address is a wikilink written longhand: shown as
@@ -179,7 +185,7 @@ def _image(match):
     alt, url = match.group(1), match.group(2)
     if url.startswith('/') or _image_host_allowed(url):
         return f'<a class="img" href="{url}"><img src="{url}" alt="{alt}" loading="lazy"></a>'
-    return f'<a href="{url}">{alt or url}</a>'
+    return f'<a href="{url}"{_OUT}>{alt or url}</a>'
 
 
 def _image_host_allowed(url):
@@ -314,8 +320,8 @@ def _link_url(match):
     if page:
         title, section = page
         label = html.escape(title + (f' § {section}' if section else ''), quote=False)
-        return f'<a class="wikilink" href="{url}">{label}</a>{tail}'
-    return f'<a href="{url}">{url}</a>{tail}'
+        return f'<a class="wikilink" href="{url}"{_OUT}>{label}</a>{tail}'
+    return f'<a href="{url}"{_OUT}>{url}</a>{tail}'
 
 
 def _inline(text, mentionable=()):
@@ -341,7 +347,7 @@ def _inline(text, mentionable=()):
     text = _WIKILINK.sub(lambda m: stash(_wikilink(m)), text)
     text = _AUDIO.sub(lambda m: stash(f'<span class="memo">{m.group(1)}</span>'
                                       f'<audio controls preload="none" src="{m.group(2)}" title="{m.group(1)}"></audio>'), text)
-    text = _MD_LINK.sub(lambda m: stash(f'<a href="{m.group(2)}">{m.group(1)}</a>'), text)
+    text = _MD_LINK.sub(lambda m: stash(f'<a href="{m.group(2)}"{_OUT}>{m.group(1)}</a>'), text)
     text = _URL.sub(lambda m: stash(_link_url(m)), text)
     if mentionable:
         text = _MENTION.sub(_mention(mentionable, stash), text)

@@ -94,7 +94,7 @@ class RenderImagesTest(TestCase):
                           render_html('![banjo](https://pickipedia.xyz/images/a/ab/Banjo.jpg)'))
             other = render_html('![pixel](https://tracker.example/p.gif)')
         self.assertNotIn('<img', other)
-        self.assertIn('<a href="https://tracker.example/p.gif">pixel</a>', other)
+        self.assertIn('<a href="https://tracker.example/p.gif" target="_blank" rel="noopener">pixel</a>', other)
 
     def test_an_image_cannot_carry_markup(self):
         from conversations.tests.test_mood_view import RenderHtmlTest
