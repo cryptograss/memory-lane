@@ -1071,6 +1071,25 @@
       prev = null;
       return;
     }
+    if (e.type === 'access') {  // someone signed in, or an admin acted (services/access.py)
+      el.className = 'event access';
+      const who = `<b>${esc(shown(e.who || 'someone'))}</b>`, by = `<b>${esc(shown(e.by || 'an admin'))}</b>`;
+      const label = e.label ? ` · “${esc(e.label)}”` : '';
+      // A PickiPedia device is labelled 'PickiPedia sign-in (<wiki name>, <device>)': the device is the news.
+      const wikiDevice = ((e.label || '').match(/, ([^,()]+)\)$/) || [])[1];
+      el.innerHTML = ({
+        'signed-in': e.tier === 'wiki' ? `📖 ${who} signed in with PickiPedia${wikiDevice ? ` · ${esc(wikiDevice)}` : ''}`
+                                       : `🔑 ${who} signed in with their SSH key${label}`,
+        'kicked': `⛔ ${by} signed ${who} out of ${e.device ? `“${esc(e.device)}”` : 'every device'}`,
+        'banned': `⛔ ${by} signed ${who} out of every device and barred their key`,
+        'unbanned': `${by} let ${who} sign in again`,
+        'az5': `☢ ${who} pressed AZ5: everyone signed out, Moods locked`,
+        'lifted': `${who} lifted AZ5: Moods open again`,
+      }[e.kind] || `${who} · ${esc(e.kind || '')}`) + ` · ${esc(stamp(e.created_at))}`;
+      container.appendChild(el);
+      prev = null;
+      return;
+    }
     if (e.type === 'interrupt' || e.type === 'created') {  // someone pressed stop; someone started this Mood
       el.className = 'event';
       el.innerHTML = e.type === 'created'

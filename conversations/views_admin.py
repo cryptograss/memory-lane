@@ -120,6 +120,18 @@ def api_admin(request):
         Setting.objects.create(key='scram', value=True, set_by=admin_entity, note=f'AZ5 by {admin}')
     elif action == 'lift':
         Setting.objects.create(key='scram', value=False, set_by=admin_entity, note=f'lifted by {admin}')
+    # Said in #general, so the room knows an admin acted (services/access.py).
+    from .services import access
+    if action == 'kick-device':
+        access.announce('kicked', target, by=admin, device=result.get('device'))
+    elif action in ('kick', 'ban'):
+        access.announce('banned' if action == 'ban' else 'kicked', target, by=admin, devices=result['devices_signed_out'])
+    elif action == 'unban':
+        access.announce('unbanned', target, by=admin)
+    elif action == 'az5':
+        access.announce('az5', admin, devices=result['devices_signed_out'])
+    elif action == 'lift':
+        access.announce('lifted', admin)
     result['scram'] = knobs.scram()
     return JsonResponse(result)
 

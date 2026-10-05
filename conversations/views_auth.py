@@ -106,6 +106,8 @@ def login_page(request, code):
         state, detail = mood_auth.code_state(code)
         return render(request, 'conversations/mood_login.html',
                       {'state': state, 'used': detail if state == 'used' else None}, status=410)
+    from .services import access
+    access.signed_in(device)  # said in #general: who, and with what
     response = HttpResponseRedirect('/moods/')
     response.set_cookie(mood_auth.COOKIE, token, max_age=mood_auth.COOKIE_AGE,
                         httponly=True, secure=not settings.DEBUG, samesite='Lax')
@@ -682,6 +684,8 @@ def wiki_signin_return(request):
     agent = request.META.get('HTTP_USER_AGENT', '')
     where = 'phone' if re.search(r'Mobi|Android|iPhone|iPad', agent, re.I) else 'browser'
     device, token = mood_auth.enrol_device(entity, f"PickiPedia sign-in ({profile['username']}, {where})", tier='wiki')
+    from .services import access
+    access.signed_in(device)  # said in #general: who, and with what
     response = HttpResponseRedirect('/moods/')
     response.set_cookie(mood_auth.COOKIE, token, max_age=mood_auth.COOKIE_AGE,
                         httponly=True, secure=not settings.DEBUG, samesite='Lax')

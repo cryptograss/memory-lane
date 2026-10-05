@@ -108,7 +108,8 @@ def api_mood_turns(request, slug):
         elif kind == 'event':
             events_out.append({'id': str(msg.id), 'created_at': msg.created_at.isoformat(),
                                **{k: text.get(k) for k in ('type', 'server', 'state', 'commit', 'by', 'note', 'took', 'agent',
-                                                   'kind', 'title', 'user', 'comment', 'delta', 'revid', 'at')}})
+                                                   'kind', 'title', 'user', 'comment', 'delta', 'revid', 'at',
+                                                   'who', 'tier', 'label', 'device', 'devices')}})
         elif kind == 'compaction':
             compactions_out.append({'id': str(msg.id), 'session_id': str(msg.session_id or ''),
                                     'created_at': msg.created_at.isoformat(), 'html': render_html(text)})
