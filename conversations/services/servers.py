@@ -21,10 +21,12 @@ SERVERS = [
      'about': 'the containers: people, Moods, the runners', 'page': 'Cryptograss:Hunter'},
     {'name': 'maybelle', 'check': ('self',), 'moods': '*',
      'about': 'the record (memory-lane), the memory server, the wiki builds', 'page': 'Cryptograss:Maybelle'},
+    # Every server's redeploys are told in every Mood (Justin, 2026-10-05): a
+    # list of slugs here would tell only those Moods, by any name they've had.
     {'name': 'delivery-kid', 'check': ('http', 'https://delivery-kid.cryptograss.live/health'),
-     'moods': ['delivery-kid'], 'about': 'pinning and delivery', 'page': 'Cryptograss:Delivery-kid'},
+     'moods': '*', 'about': 'pinning and delivery', 'page': 'Cryptograss:Delivery-kid'},
     {'name': 'pickipedia', 'check': ('http', 'https://pickipedia.xyz/api.php?action=query&meta=siteinfo&format=json'),
-     'moods': ['pickipedia-and-rabbithole'], 'about': 'the wiki', 'page': ''},  # it is the wiki: its front page
+     'moods': '*', 'about': 'the wiki', 'page': ''},  # it is the wiki: its front page
 ]
 CARD_FOR = 6 * 3600       # seconds a server's PickiPedia card (art, role) is kept
 _INFOBOX_ART = re.compile(r'\|\s*image\s*=\s*<pre[^>]*>\n?(.*?)</pre>', re.S)
