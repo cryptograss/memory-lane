@@ -6,6 +6,7 @@ rest by a device cookie plus Django's CSRF check.
 """
 
 import json
+import re
 import time
 import uuid
 from datetime import timedelta
@@ -187,9 +188,18 @@ def api_say(request, slug):
     text, _ = redact(text)
     message = Message.objects.create(
         id=uuid.uuid4(), sender=device.entity, content=text, motion=motion,
-        timestamp=int(time.time() * 1000), source_file=WEB_SOURCE,
+        timestamp=int(time.time() * 1000), source_file=WEB_SOURCE, client_version=web_client(request),
     )
     return JsonResponse({'id': str(message.id)}, status=201)
+
+
+_MOBILE_AGENT = re.compile(r'Mobi|Android|iPhone|iPad|iPod', re.I)
+
+
+def web_client(request):
+    """What a web post was written on, kept as its client_version: 'magenta-web/mobile'
+    from a phone or tablet (the thread marks those), else 'magenta-web'."""
+    return 'magenta-web/mobile' if _MOBILE_AGENT.search(request.META.get('HTTP_USER_AGENT', '')) else 'magenta-web'
 
 
 @require_POST

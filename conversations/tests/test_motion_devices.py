@@ -374,3 +374,20 @@ class WikiFeedTest(TestCase):
         self.assertTrue(wiki_feed.nudge(http, wait=True))
         self.assertFalse(wiki_feed.nudge(http, wait=True))
         self.assertEqual(http.get.call_count, 1)
+
+
+@skipUnless(HAS_SSH_KEYGEN, 'needs ssh-keygen')
+class FromPhoneTest(SignedInCase):
+    """A post written on a phone is marked as such; one from a computer isn't."""
+
+    def test_the_browser_says_where_it_was_written(self):
+        client = self.sign_in()
+        say = lambda agent: client.post('/api/motions/m26/say/', json.dumps({'text': 'on my way'}),
+                                        content_type='application/json', HTTP_USER_AGENT=agent,
+                                        HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value)
+        say('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148')
+        say('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36')
+        turns = self.client.get('/api/motions/m26/turns/').json()['turns']
+        self.assertEqual([t['mobile'] for t in turns], [True, False])
+        self.assertEqual(Message.objects.filter(client_version='magenta-web/mobile').count(), 1)
+
