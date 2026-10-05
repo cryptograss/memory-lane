@@ -180,6 +180,17 @@ def api_say(request, slug):
     if len(text) > MAX_CHARS:
         return JsonResponse({'error': f'longer than {MAX_CHARS} characters'}, status=400)
 
+    if device.tier == 'wiki':
+        # A PickiPedia sign-in can't address agents: refused, not quietly passed
+        # on as text, so nobody believes an agent was asked.
+        from .services.motion_view import known_names, mentions_in
+        agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
+        addressed = [n for n in mentions_in(text, known_names()) if n in agents]
+        if addressed:
+            return JsonResponse({'error': f"signed in with PickiPedia, you can't address agents "
+                                          f"(@{', @'.join(addressed)}): take the mention out, or sign in with "
+                                          f"your SSH key (magenta.sh login)", 'agents': addressed}, status=403)
+
     recent = Message.objects.filter(sender=device.entity, source_file=WEB_SOURCE,
                                     created_at__gt=timezone.now() - timedelta(minutes=1)).count()
     if recent >= PER_MINUTE:

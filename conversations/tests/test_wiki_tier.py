@@ -144,9 +144,20 @@ class TiersTest(TestCase):
         key = self.client_for('justin', 'key')
         self.assertEqual(self.post(key, '/api/motions/m26/pin/', {'pinned': True}).status_code, 200)
 
-    def test_a_wiki_posts_agent_mention_wakes_nobody_but_people_are_told(self):
+    def test_a_wiki_post_addressing_an_agent_is_refused(self):
         sky = self.client_for('skyler', 'wiki')
-        self.post(sky, '/api/motions/m26/say/', {'text': '@magent @JMyles soundcheck at five?'})
+        refused = self.post(sky, '/api/motions/m26/say/', {'text': '@magent @JMyles soundcheck at five?'})
+        self.assertEqual((refused.status_code, refused.json()['agents']), (403, ['magent']))
+        self.assertFalse(Message.objects.filter(motion_id='m26').exists())
+        # Agents named in code, or a person addressed: fine.
+        self.assertEqual(self.post(sky, '/api/motions/m26/say/', {'text': 'run `@magent /compact`, @JMyles'}).status_code, 201)
+
+    def test_a_wiki_posts_agent_mention_wakes_nobody_but_people_are_told(self):
+        # Refused at the door now; one that got in anyhow (posted before, say) still wakes nobody.
+        sky = ThinkingEntity.objects.get(name='skyler')
+        Message.objects.create(id=uuid.uuid4(), sender=sky, motion_id='m26', source_file='motion-web',
+                               client_version='magenta-web/wiki', content='@magent @JMyles soundcheck at five?',
+                               timestamp=int(time.time() * 1000))
         self.assertEqual(Client().get('/api/mentions/magent/').json()['mentions'], [])  # the poller sees nothing
         told = Client().get('/api/mentions/justin/').json()['mentions']  # Justin is notified
         self.assertEqual([m['turn']['tier'] for m in told], ['wiki'])
