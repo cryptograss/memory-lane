@@ -183,9 +183,9 @@ def api_say(request, slug):
     if device.tier == 'wiki':
         # A PickiPedia sign-in can't address agents: refused, not quietly passed
         # on as text, so nobody believes an agent was asked.
-        from .services.mood_view import known_names, mentions_in
+        from .services.mood_view import addressed_in, known_names
         agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
-        addressed = [n for n in mentions_in(text, known_names()) if n in agents]
+        addressed = [n for n in addressed_in(text, known_names(), by=device.entity_id) if n in agents]  # a reply to one, too
         if addressed:
             return JsonResponse({'error': f"signed in with PickiPedia, you can't address agents "
                                           f"(@{', @'.join(addressed)}): take the mention out, or sign in with "

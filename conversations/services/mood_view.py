@@ -269,6 +269,45 @@ def mentions_in(text, mentionable):
     return out
 
 
+# --- replies -----------------------------------------------------------------
+# A reply is a post that opens with '↩ #m-<id>' (the composer writes it). It
+# answers that message, and addresses its author as an @mention would:
+# notified, and an agent woken. It lives in the post itself, like any #m-
+# link, so a woken agent reads from the message replied to.
+_REPLY = re.compile(r'^↩ #m-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})[ \t]*\n?')
+
+
+def reply_to(text):
+    """(the id a reply answers, the rest of its text), or (None, text)."""
+    match = _REPLY.match(text or '')
+    return (match[1], text[match.end():]) if match else (None, text)
+
+
+def replied(message_id):
+    """What a reply answers, as {'id', 'sender', 'snippet'}; None if it's gone."""
+    from conversations.models import Message
+    target = Message.objects.filter(id=message_id).first()
+    if target is None:
+        return None
+    _, said = reply_to(prose(target.content) or '')
+    return {'id': str(target.id), 'sender': target.sender_id, 'snippet': re.sub(r'\s+', ' ', said).strip()[:140]}
+
+
+def addressed_in(text, mentionable, answered=None, by=None):
+    """Who a post addresses: whoever it @mentions and, for a reply, the author of
+    what it answers -- unless that's `by`, its own author: replying to yourself
+    addresses nobody. What notifications, wakes and the PickiPedia-tier check
+    all go by, so they can't disagree. `answered`: replied(), if already looked up."""
+    out = mentions_in(text, mentionable)
+    target, _ = reply_to(text)
+    if target:
+        answered = answered or replied(target)
+        sender = (answered or {}).get('sender')
+        if sender and sender != by and sender in {n.lower() for n in mentionable} and sender not in out:
+            out = [sender] + out
+    return out
+
+
 def _aliases(lowered):
     """{lowercased PickiPedia name: name here}, for the names that can be mentioned."""
     from .wiki_auth import aliases
@@ -647,6 +686,8 @@ def turn_payload(msg, text, mentionable=()):
     # A ```voice block is how its writer wants it read aloud: performed, not shown.
     from .voice import split_voices
     text, directions = split_voices(text)
+    target, said = reply_to(text)
+    answered = replied(target) if target else None
     return {
         'voiced': bool(directions),
         'mobile': 'mobile' in client_parts(msg),  # posted from a phone or tablet
@@ -665,8 +706,10 @@ def turn_payload(msg, text, mentionable=()):
         # live is listening for it, so the poller need not wait.
         'via': 'web' if msg.source_file in POSTED else 'session',
         'text': text,
-        'mentions': mentions_in(text, mentionable),
-        'html': render_html(text, mentionable),
+        # A reply: what it answers, shown above it; its author is addressed.
+        'reply': answered if target else None,
+        'mentions': addressed_in(text, mentionable, answered, by=msg.sender_id),
+        'html': render_html(said, mentionable),
     }
 
 
@@ -852,7 +895,7 @@ def _activity(mood, now=None):
 
     if newest.source_file in POSTED:
         # A wiki-tier post's @agent is just text: no agent is waking for it.
-        named = [] if from_wiki_tier(newest) else [n for n in mentions_in(prose(newest.content), agents)]
+        named = [] if from_wiki_tier(newest) else [n for n in addressed_in(prose(newest.content), agents, by=newest.sender_id)]
         if not named:
             return None
         # Held only if the runner said so after this post: a newer post is
