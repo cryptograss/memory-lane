@@ -44,12 +44,13 @@ class AdminTest(TestCase):
         LoginCode.objects.create(code_hash='c-skyler', entity=self.skyler,
                                  expires_at=timezone.now() + timedelta(minutes=10))
 
-    def admin(self, action, target='', key='justin', signed_as=None):
+    def admin(self, action, target='', key='justin', signed_as=None, device=''):
         challenge = self.client.get('/api/auth/challenge/').json()['challenge']
-        purpose = admin_purpose(*(signed_as or (action, target)))
+        purpose = admin_purpose(*(signed_as or (action, target, device)))
         signature = sign(self.keys[key], mood_auth.signed_message(challenge, 'http://testserver', purpose))
         return self.client.post('/api/auth/admin/', json.dumps({'challenge': challenge, 'signature': signature,
-                                                                'action': action, 'target': target or None}),
+                                                                'action': action, 'target': target or None,
+                                                                'device': device or None}),
                                 content_type='application/json')
 
     def enroll(self, key):
@@ -104,6 +105,32 @@ class AdminTest(TestCase):
         self.assertIsNone(self.client.get('/api/moods/pulse/').json()['scram'])
         self.assertEqual(self.enroll('justin').status_code, 200)
 
+    def test_one_device_can_be_signed_out_alone(self):
+        laptop = Device.objects.create(entity=self.skyler, label='laptop', token_hash=mood_auth.digest('sky-laptop'))
+        short = laptop.id.hex[:8]
+        result = self.admin('kick-device', 'skyler', device=short).json()
+        self.assertEqual((result['devices_signed_out'], result['device']), (1, 'laptop'))
+        self.assertEqual(self.live('skyler'), 1)  # the phone is still signed in
+        self.assertIsNotNone(Device.objects.get(pk=laptop.pk).revoked_at)
+        self.assertEqual(LoginCode.objects.get(code_hash='c-skyler').used_at, None)  # links untouched
+
+    def test_a_device_kick_reaches_only_that_persons_devices(self):
+        justins = self.devices['justin'].id.hex[:8]
+        self.assertEqual(self.admin('kick-device', 'skyler', device=justins).status_code, 404)
+        self.assertEqual(self.live('justin'), 1)
+        # A signature for one device isn't good for another.
+        other = Device.objects.create(entity=self.skyler, label='laptop', token_hash=mood_auth.digest('sky-laptop'))
+        forged = self.admin('kick-device', 'skyler', device=other.id.hex[:8],
+                            signed_as=('kick-device', 'skyler', self.devices['skyler'].id.hex[:8]))
+        self.assertEqual(forged.status_code, 403)
+        self.assertEqual(self.live('skyler'), 2)
+
+    def test_device_kicks_are_checked(self):
+        self.assertEqual(self.admin('kick-device', 'skyler').status_code, 400)  # needs a device
+        self.assertEqual(self.admin('kick', 'skyler', device='abcd1234').status_code, 400)  # kick takes none
+        self.assertEqual(self.admin('kick-device', 'skyler', device='zz').status_code, 400)
+        self.assertEqual(self.live('skyler'), 1)
+
     def test_requests_are_checked(self):
         self.assertEqual(self.admin('az5', 'skyler').status_code, 400)  # az5 takes no name
         self.assertEqual(self.admin('kick').status_code, 400)  # kick needs one
@@ -117,3 +144,12 @@ class AdminTest(TestCase):
         spec.loader.exec_module(client)
         self.assertEqual(client.signed_message('c', 'https://ML.example', 'admin kick skyler'),
                          mood_auth.signed_message('c', 'https://ml.example', admin_purpose('kick', 'skyler')))
+
+    def test_the_tool_makes_you_say_which(self):
+        import subprocess, sys
+        for args, said in ((['kick', 'skyler'], 'say which'), (['kick', 'skyler', '--device', 'ab12', '--ban'], '--ban'),
+                           (['kick', 'skyler', '--all', '--device', 'ab12'], 'say which'), (['unban', 'skyler', '--all'], 'no --all')):
+            run = subprocess.run([sys.executable, 'tools/mood_admin.py', *args, '--key', '/nonexistent'],
+                                 capture_output=True, text=True)
+            self.assertNotEqual(run.returncode, 0, args)
+            self.assertIn(said, run.stderr, args)

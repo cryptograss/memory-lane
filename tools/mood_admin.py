@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Moderate Moods with your SSH key: kick someone out, or stop everything.
 
-    python3 mood_admin.py kick skyler          # sign out every device of theirs
-    python3 mood_admin.py kick skyler --ban    # ...and bar their key from signing in
+    python3 mood_admin.py kick skyler --all              # sign out every device of theirs
+    python3 mood_admin.py kick skyler --device 1a2b3c4d  # ...or just one (its id, from the devices dialog)
+    python3 mood_admin.py kick skyler --all --ban        # every device, and bar their key from signing in
     python3 mood_admin.py unban skyler
     python3 mood_admin.py az5                  # the scram: everyone out, Moods locked, runners still
     python3 mood_admin.py lift                 # the scram off
 
 Your key must be an admin's (memory-lane's MOOD_ADMINS). The signature
-covers the action and its name, so it can't be replayed as anything else
-(conversations/views_admin.py). Standard library only, like mood_login.py.
+covers the action, its name and any device, so it can't be replayed as
+anything else (conversations/views_admin.py). A kick says which: --all, or
+--device; a ban bars the key, so it's always --all. Standard library only, like mood_login.py.
 """
 
 import argparse
@@ -71,7 +73,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('action', choices=['kick', 'unban', 'az5', 'lift'])
     parser.add_argument('name', nargs='?', help='Whose devices (kick, unban)')
-    parser.add_argument('--ban', action='store_true', help='With kick: bar their key from signing in again')
+    parser.add_argument('--all', action='store_true', help='With kick: every device of theirs')
+    parser.add_argument('--device', help="With kick: just this device -- the start of its id, from the devices dialog")
+    parser.add_argument('--ban', action='store_true', help='With kick --all: bar their key from signing in again')
     parser.add_argument('--key', default=default_key(), help='Your SSH private key (default: ~/.ssh/id_ed25519, …)')
     parser.add_argument('--base', default=os.environ.get('MEMORY_LANE_URL', DEFAULT_BASE))
     args = parser.parse_args()
@@ -79,24 +83,35 @@ def main():
         parser.error(f'{args.action} needs a name')
     if args.action in ('az5', 'lift') and args.name:
         parser.error(f'{args.action} takes no name')
+    if args.action == 'kick' and args.all == bool(args.device):
+        parser.error('kick: say which -- --all (every device of theirs) or --device <id> (one, from the devices dialog)')
+    if args.ban and not (args.action == 'kick' and args.all):
+        parser.error("--ban bars their key, so it's for every device: kick <name> --all --ban")
+    if args.action != 'kick' and (args.all or args.device):
+        parser.error(f'{args.action} takes no --all or --device')
     if not args.key:
         sys.exit('No SSH key found; pass --key.')
     if not shutil.which('ssh-keygen'):
         sys.exit('ssh-keygen not found; install OpenSSH.')
 
     action = 'ban' if args.action == 'kick' and args.ban else args.action
+    device = (args.device or '').lower().replace('-', '')
+    if args.action == 'kick' and device:
+        action = 'kick-device'
     target = (args.name or '').lower()
     base = args.base.rstrip('/')
     challenge = call(f'{base}/api/auth/challenge/')['challenge']
-    purpose = f'admin {action} {target}'.strip()
+    purpose = f'admin {action} {target} {device}'.strip()
     try:
         signature = sign(signed_message(challenge, base, purpose), args.key)
     except subprocess.CalledProcessError:
         sys.exit('ssh-keygen could not sign with that key.')
     result = call(f'{base}/api/auth/admin/', {'challenge': challenge, 'signature': signature,
-                                              'action': action, 'target': target or None})
+                                              'action': action, 'target': target or None, 'device': device or None})
 
-    if action in ('kick', 'ban'):
+    if action == 'kick-device':
+        print(f"{target}: signed out of {result.get('device', 'that device')}.")
+    elif action in ('kick', 'ban'):
         print(f"{target}: {result.get('devices_signed_out', 0)} device(s) signed out, "
               f"{result.get('links_spent', 0)} login link(s) spent" + ('; barred from signing in' if action == 'ban' else '') + '.')
     elif action == 'unban':
