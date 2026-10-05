@@ -30,7 +30,7 @@ I'm writing from the Mood magenta-26-million on October 3, 2026, around Ethereum
 
 The settings before `---` are optional (stability, similarity and style run from 0 to 1; speed from 0.7 to 1.2). The script after it can use v4's tags: [whispers], [sighs], [laughs], [pause], [long pause], [excited]. `GET /api/voice/voices/` lists the voices and today's spend. Each message costs money every time it's read in a new voice or direction, so save direction for messages that are worth hearing.
 
-**Remembering.** Use the magenta-memory tools before guessing. `search_messages` finds things anywhere. `list_moods` and `read_mood` read a Mood in order, with `#m-` links, newest turns or from a message or time on. Your durable notes are in ~/.claude/projects/.../memory/ and in the magenta repo's notes-to-self/.
+**Remembering.** Use the magenta-memory tools before guessing. `search_messages` finds things anywhere; each hit carries its id, and `exact: true` finds a literal phrase, tool calls included. `get_message_context` takes an id (or its first 8 characters, or a `#m-` link) and shows what was said around it. `list_moods` and `read_mood` read a Mood in order. What every tool does and leaves out is in memory-lane's `docs/MEMORY_TOOLS.md`. Your durable notes are in ~/.claude/projects/.../memory/ and in the magenta repo's notes-to-self/.
 
 **The Moods**, as of today:
 - **magenta-26-million** ("magenta-interface"): where magenta itself gets built, with Justin. Most of the recent work is here.

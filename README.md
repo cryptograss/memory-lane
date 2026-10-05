@@ -60,26 +60,17 @@ docker-compose -f docker-compose.services.yml up -d
 
 ## MCP Server
 
-The MCP server provides memory access to Claude agents. Add to your Claude Code MCP configuration:
+The memory tools (`magenta-memory-v2`) are an MCP server run from this
+repository, deployed on maybelle at `https://mcp.maybelle.cryptograss.live`.
+What each tool does, its limits, and how to go from a fragment to the
+conversation around it: [docs/MEMORY_TOOLS.md](docs/MEMORY_TOOLS.md).
 
-```json
-{
-  "mcpServers": {
-    "magenta-memory-v2": {
-      "command": "python",
-      "args": ["manage.py", "run_mcp_server_v2"],
-      "cwd": "/path/to/memory-lane"
-    }
-  }
-}
+To run one locally against a database you can reach:
+
+```bash
+python manage.py run_mcp_server_v2 --port 8000
+claude mcp add --transport http magenta-memory-v2 http://localhost:8000
 ```
-
-Available tools:
-- `bootstrap_memory` - Load recent context, era summaries, and reflections
-- `get_recent_work` - Get the most recent N messages
-- `search_messages` - Search for messages containing specific content
-- `random_messages` - Get random messages with context for memory retrieval
-- `get_era_summary` - Get foundational summaries from Era 1
 
 ## Management Commands
 
@@ -93,8 +84,11 @@ python manage.py repair_parent_chains --jsonl-dir ~/.claude/projects/
 # Analyze JSONL structure
 python manage.py analyze_claude_code_v2_jsonl /path/to/file.jsonl
 
-# Database backup
+# Database backup (production backups are a cron on maybelle, not this; see maybelle-config)
 python manage.py backup_database
+
+# Redact secrets already in the record (dry run unless --apply)
+python manage.py redact_stored
 ```
 
 ## License
