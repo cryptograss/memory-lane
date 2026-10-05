@@ -29,7 +29,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-DEFAULT_BASE = 'https://memory-lane.maybelle.cryptograss.live'
+DEFAULT_BASE = 'https://magenta.cryptograss.live'
 # Fixed here, never taken from the server: a server must not choose what
 # your key signs for (`git` would make it a commit signature).
 NAMESPACE = 'magenta-moods'
