@@ -1396,3 +1396,17 @@ class RunCostTest(TestCase):
         waker.wake('s-old', 'prompt')
         self.assertAlmostEqual(waker.last_result['run_cost_usd'], 0.1753, places=4)
         self.assertEqual(waker.last_result['total_cost_usd'], 35.1839)
+
+
+class StateCarriedOverTest(TestCase):
+    """The runner's place survives its rename: it reads motion_poller.json once, then keeps its own."""
+
+    def test_the_old_state_file_is_read_when_there_is_no_new_one(self):
+        folder = Path(tempfile.mkdtemp())
+        (folder / 'motion_poller.json').write_text(json.dumps({'since': '2026-10-05T01:00:00+00:00', 'handled': ['a'],
+                                                               'wakes': []}))
+        poller = MoodPoller(FakeAPI(), FakeWaker(), state_path=folder / 'mood_poller.json', now=lambda: T0)
+        self.assertEqual(poller.state['since'], '2026-10-05T01:00:00+00:00')
+        poller.save()
+        self.assertTrue((folder / 'mood_poller.json').exists())
+

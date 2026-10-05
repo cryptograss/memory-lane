@@ -791,9 +791,14 @@ class MoodPoller:
         return {'since': self.now().isoformat(), 'handled': [], 'wakes': []}
 
     def load(self):
-        if self.state_path and self.state_path.exists():
+        path = self.state_path
+        if path and not path.exists() and path.name == 'mood_poller.json':
+            # Before Moods were Moods (October 2026) the runner kept its place
+            # here: carry on from it, so what was said meanwhile is answered.
+            path = path.with_name('motion_poller.json')
+        if path and path.exists():
             try:
-                return json.loads(self.state_path.read_text())
+                return json.loads(path.read_text())
             except (json.JSONDecodeError, OSError) as e:
                 logger.error(f'state file unreadable ({e}); starting from now')
         return self.fresh_state()
