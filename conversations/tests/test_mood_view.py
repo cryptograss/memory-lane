@@ -63,7 +63,7 @@ class RenderHtmlTest(TestCase):
         allowed = {'p': set(), 'br': set(), 'strong': set(), 'em': set(), 'code': set(), 'pre': set(),
                    'ul': set(), 'ol': set(), 'li': set(), 'h4': set(), 'table': set(), 'thead': set(),
                    'tbody': set(), 'tr': set(), 'th': set(), 'td': set(),
-                   'a': {'href', 'class', 'target', 'rel'}, 'span': {'class', 'data-who'},
+                   'a': {'href', 'class', 'target', 'rel', 'data-yarn'}, 'span': {'class', 'data-who'},
                    'img': {'src', 'alt', 'loading'}}
         fixed = {'target': '_blank', 'rel': 'noopener'}  # the renderer's own, never a post's
         case = self
@@ -75,6 +75,8 @@ class RenderHtmlTest(TestCase):
                     case.assertIn(name, allowed[tag], (source, out))
                     if name in fixed:
                         case.assertEqual(value, fixed[name], (source, out))
+                    if name == 'data-yarn':  # the page builds a player from it
+                        case.assertRegex(value, r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', (source, out))
                     if name in ('href', 'src'):  # decoded: entities are fine
                         case.assertRegex(value, r'^(https?://|/moods/media/[0-9a-f]{64}\.(png|jpg|gif|webp)$)',
                                          (source, out))
@@ -327,3 +329,32 @@ class MoodApiTest(TestCase):
     def test_read_only(self):
         self.assertEqual(self.client.post('/api/moods/').status_code, 405)
         self.assertEqual(self.client.post('/api/moods/new-mood/turns/').status_code, 405)
+
+
+class YarnClipTest(TestCase):
+    """A pasted Yarn clip becomes a card the page plays in place; nothing else does."""
+    CLIP = 'ffb40a1a-a936-49ee-962a-ef53e0cb7237'
+
+    def test_a_clip_page_is_a_clip(self):
+        from conversations.services.mood_view import yarn_clip
+        for host in ('www.yarn.co', 'yarn.co', 'getyarn.io', 'www.getyarn.io'):
+            self.assertEqual(yarn_clip(f'https://{host}/yarn-clip/{self.CLIP}'), self.CLIP, host)
+        for url in (f'http://www.yarn.co/yarn-clip/{self.CLIP}', f'https://yarn.co.evil.example/yarn-clip/{self.CLIP}',
+                    f'https://www.yarn.co/yarn-clip/{self.CLIP}/embed', 'https://www.yarn.co/yarn-clip/not-a-uuid',
+                    f'https://www.yarn.co/movie/{self.CLIP}'):
+            self.assertIsNone(yarn_clip(url), url)
+
+    def test_shown_as_a_card_that_still_links_to_yarn(self):
+        out = render_html(f'Ha! https://www.yarn.co/yarn-clip/{self.CLIP}.')
+        self.assertIn(f'<a class="yarn" href="https://www.yarn.co/yarn-clip/{self.CLIP}" data-yarn="{self.CLIP}" '
+                      f'target="_blank" rel="noopener">▶ Yarn clip</a>.', out)
+        self.assertNotIn('<iframe', out)  # the page makes the player, and only when asked
+
+    def test_a_labelled_link_stays_a_link_and_code_stays_code(self):
+        self.assertNotIn('data-yarn', render_html(f'[that scene](https://www.yarn.co/yarn-clip/{self.CLIP})'))
+        self.assertNotIn('data-yarn', render_html(f'`https://www.yarn.co/yarn-clip/{self.CLIP}`'))
+
+    def test_nothing_can_ride_along_into_the_card(self):
+        for attack in (f'https://www.yarn.co/yarn-clip/{self.CLIP}"onmouseover="alert(1)',
+                       f'https://www.yarn.co/yarn-clip/{self.CLIP}?x=" data-yarn="javascript:alert(1)'):
+            RenderHtmlTest.assertSafe(self, render_html(attack), attack)

@@ -232,6 +232,17 @@
   .turn .body th { background: var(--code); font-weight: 600; }
   .turn .body a { color: var(--human); }
   .turn .body a.wikilink { color: var(--accent); text-decoration: underline dotted; }
+  /* A Yarn clip: a card until pressed, then Yarn's player in its place. */
+  .turn .body a.yarn { display: inline-block; margin: 4px 0; padding: 6px 12px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--panel); color: var(--ink); text-decoration: none; font-size: .95em; }
+  .turn .body a.yarn:hover { border-color: var(--accent); }
+  .turn .body .yarnbox { width: min(480px, 100%); aspect-ratio: 16 / 9; margin: 4px 0; }
+  .turn .body .yarnbox video { width: 100%; height: 100%; border-radius: 8px; background: #000; }
+  .turn .body a.yarn.thumb { position: relative; padding: 0; overflow: hidden; line-height: 0; max-width: min(480px, 100%); }
+  .turn .body a.yarn.thumb img { display: block; width: 100%; height: auto; }
+  .turn .body a.yarn .yarnplay { position: absolute; inset: 0; margin: auto; width: 56px; height: 56px; border-radius: 50%;
+    background: rgba(0,0,0,.55); color: #fff; font-size: 24px; line-height: 56px; text-align: center; padding-left: 4px; }
+  .turn .body a.yarn.thumb:hover .yarnplay { background: var(--accent); }
   .mention { background: var(--code); border-radius: 4px; padding: 0 4px; font-weight: 600; }
   .mention.me { background: var(--mention); }
   .turn.new { animation: arrive .6s ease-out; }
@@ -338,6 +349,7 @@
   #composer button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
   #composer button:disabled { opacity: .5; cursor: default; }
   #composer .err { color: var(--accent); font-size: 12px; }
+  #composer .note { color: var(--muted); font-size: 12px; align-self: center; }
   #activity { display: none; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--muted); }
   #activity.on { display: flex; }
   #activity .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--agent); animation: pulse 1.2s ease-in-out infinite; }
@@ -855,6 +867,54 @@
     } finally { b.classList.remove('busy'); }
   });
 
+  // --- Yarn clips ----------------------------------------------------------
+  // The server marks a pasted Yarn clip as a card (a.yarn, data-yarn = its id,
+  // checked as a UUID). The card shows Yarn's captioned GIF of the clip,
+  // which the browser fetches only as it nears the screen; if it won't load,
+  // the card is plain text again. Pressed, the card becomes the clip's video
+  // file, playing, in the browser's own player (Yarn's player refuses to be
+  // framed). Built from the id alone; a file that won't play becomes a link.
+  const YARN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  function decorateYarn(a) {
+    const id = a.dataset.yarn;
+    if (!YARN_ID.test(id || '') || a.querySelector('img')) return;
+    const label = a.textContent;
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = 'Yarn clip: press to play';
+    img.src = `https://y.yarn.co/${id}_text.gif`;
+    img.addEventListener('error', () => { a.classList.remove('thumb'); a.textContent = label; });
+    const play = document.createElement('span');
+    play.className = 'yarnplay'; play.textContent = '▶'; play.setAttribute('aria-hidden', 'true');
+    a.textContent = '';
+    a.classList.add('thumb');
+    a.title = 'Play the clip (ctrl-click: open it on Yarn)';
+    a.append(img, play);
+  }
+  document.addEventListener('click', e => {
+    const a = e.target.closest('a.yarn[data-yarn]');
+    if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+    const id = a.dataset.yarn;
+    if (!YARN_ID.test(id)) return;
+    e.preventDefault();
+    const box = document.createElement('div');
+    box.className = 'yarnbox';
+    const video = document.createElement('video');
+    video.src = `https://y.yarn.co/${id}.mp4`;
+    video.controls = true;
+    video.autoplay = true;  // pressed to play: a click lets it start with sound
+    video.playsInline = true;
+    video.addEventListener('error', () => {
+      const why = document.createElement('a');
+      why.className = 'yarn';
+      why.href = a.href; why.target = '_blank'; why.rel = 'noopener';
+      why.textContent = "Couldn't play it here: open the clip on Yarn";
+      box.replaceWith(why);
+    });
+    box.appendChild(video);
+    a.replaceWith(box);
+  });
+
   function turnEl(t, isNew) {
     const el = document.createElement('article');
     const at = new Date(t.created_at).getTime();
@@ -882,6 +942,7 @@
     }
     if (t.attested) el._proof = t.attested;
     markTurn(el, t.mentions || []);
+    el.querySelectorAll('a.yarn[data-yarn]').forEach(decorateYarn);
     return el;
   }
 
@@ -2040,8 +2101,20 @@
     return titles;
   }
 
+  // /yarn <name> and /yarn forget <name>: the team's saved clips, by name.
+  let yarnCache = null;
+  async function yarnClips() {
+    if (yarnCache && Date.now() - yarnCache.at < 60000) return yarnCache.clips;
+    try {
+      const clips = (await (await fetch('/api/yarn/')).json()).clips || [];
+      yarnCache = { at: Date.now(), clips };
+      return clips;
+    } catch (e) { return []; }
+  }
   function wordAtCaret() {
     const upto = sayBox.value.slice(0, sayBox.selectionStart);
+    const y = upto.match(/^\/yarn(?:\s+forget)?\s+([a-z0-9_-]*)$/i);
+    if (y) return { kind: 'yarn', start: upto.length - y[1].length, prefix: y[1].toLowerCase() };
     const w = upto.match(/\[\[([^\[\]|\n]{1,100})$/);
     if (w) return { kind: 'wiki', start: upto.length - w[1].length, prefix: w[1] };
     let m = upto.match(/(^|[^\w@\/.])@([A-Za-z][\w.-]*)?$/);
@@ -2068,6 +2141,20 @@
         suggest.innerHTML = choices.map((c, i) => `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">${c.html}</div>`).join('');
         suggest.classList.add('on');
       }, wikiCache.has(prefix) ? 0 : 150);
+      return;
+    }
+    if (at.kind === 'yarn') {
+      const prefix = at.prefix;
+      yarnClips().then(clips => {
+        const still = wordAtCaret();
+        if (!still || still.kind !== 'yarn' || still.prefix !== prefix) return;  // they've typed on
+        choices = clips.filter(c => c.name.startsWith(prefix)).slice(0, 8)
+          .map(c => ({ insert: c.name, html: `<span class="emo">🎬</span>${esc(c.name)}<small>${esc(shown(c.by))}</small>` }));
+        if (!choices.length) return closeSuggest();
+        chosen = Math.min(chosen, choices.length - 1);
+        suggest.innerHTML = choices.map((c, i) => `<div class="${i === chosen ? 'sel' : ''}" data-i="${i}">${c.html}</div>`).join('');
+        suggest.classList.add('on');
+      });
       return;
     }
     if (at.kind === 'emoji') {
@@ -2179,7 +2266,7 @@
   // Images into the composer: paste, drop, or the + button. Each is stored
   // first, then its markdown goes in at the caret.
   function showError(message) {
-    const old = composer.querySelector('.err'); if (old) old.remove();
+    composer.querySelectorAll('.err, .note').forEach(el => el.remove());
     composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(message)}</span>`);
   }
   const fileInput = document.getElementById('file');
@@ -2403,7 +2490,14 @@
         body: JSON.stringify({ text }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+      const done = await r.json().catch(() => ({}));
       sayBox.value = ''; fitSay(); typingSent = 0; sendTyping(false);
+      if (/^\/yarn\s+(save|forget)\b/i.test(text)) yarnCache = null;  // the library changed
+      if (done.note) {  // what a /yarn command did, for whoever sent it
+        composer.insertAdjacentHTML('beforeend', `<span class="note">${esc(done.note)}</span>`);
+        const note = composer.querySelector('.note:last-of-type');
+        setTimeout(() => note && note.remove(), 8000);
+      }
       await poll(false);
     } catch (e) {
       composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(e.message)}</span>`);

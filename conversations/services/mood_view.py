@@ -313,9 +313,26 @@ def _trim_url(url):
     return url, tail
 
 
+# A Yarn clip (a line from a film or show, as a short video): a card that
+# plays the clip in place when pressed. Nothing is fetched from Yarn until
+# someone presses it -- a reader's browser doesn't call on a site nobody
+# chose -- and the page builds the player from the id alone (moods.html).
+YARN_HOSTS = {'yarn.co', 'www.yarn.co', 'getyarn.io', 'www.getyarn.io'}
+_YARN_CLIP = re.compile(r'https://([a-z.]+)/yarn-clip/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/?$')
+
+
+def yarn_clip(url):
+    """The clip id when url is a Yarn clip's page, else None."""
+    match = _YARN_CLIP.match(url)
+    return match.group(2) if match and match.group(1) in YARN_HOSTS else None
+
+
 def _link_url(match):
     """Link a bare URL, leaving sentence punctuation outside the anchor."""
     url, tail = _trim_url(match.group(1))
+    clip = yarn_clip(url)
+    if clip:
+        return f'<a class="yarn" href="{url}" data-yarn="{clip}"{_OUT}>▶ Yarn clip</a>{tail}'
     page = pickipedia_page(url)
     if page:
         title, section = page
@@ -359,8 +376,24 @@ def _inline(text, mentionable=()):
     return text
 
 
+# The team's saved Yarn clips (services/yarn.py) are posts too: a save or a
+# forget shows as one line, without the clip; a use shows just the clip (its
+# name stays in the record). '🎬 name <link>' is how uses were first posted.
+_YARN_SAVED = re.compile(r'^/yarn save ([a-z0-9][a-z0-9_-]{0,34}) (https://\S+)$')
+_YARN_FORGOTTEN = re.compile(r'^/yarn forget ([a-z0-9][a-z0-9_-]{0,34})$')
+_YARN_USED = re.compile(r'^(?:/yarn|🎬) [a-z0-9][a-z0-9_-]{0,34} (https://www\.yarn\.co/yarn-clip/[0-9a-f-]{36})$')
+
+
 def render_html(text, mentionable=()):
     """Escape, then translate the markdown the agent writes into HTML."""
+    plain = text.strip()
+    saved, forgotten, used = _YARN_SAVED.match(plain), _YARN_FORGOTTEN.match(plain), _YARN_USED.match(plain)
+    if saved:
+        text = f'🎬 saved **{saved[1]}**'
+    elif forgotten:
+        text = f'🎬 forgot **{forgotten[1]}**'
+    elif used:
+        text = used[1]
     text = html.escape(_PLACEHOLDER_CHARS.sub('', text), quote=True)
 
     def inline(s):
