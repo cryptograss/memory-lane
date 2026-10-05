@@ -19,7 +19,7 @@ from .services import wiki_auth, wiki_feed
 from .services import mood_auth
 from .services.mood_view import (
     from_wiki_tier,
-    MACHINERY_SENDERS, how_payload, activity, background_tasks, is_wrapper, known_names, mentions_in, mood_payload,
+    MACHINERY_SENDERS, how_payload, activity, background_tasks, is_wrapper, known_names, mentions_in, addressed_in, mood_payload,
     prose, render_html, step_detail, step_images, step_payload, timeline, turn_payload, turns, wiki_title, wikilinks_in,
 )
 
@@ -555,7 +555,7 @@ def api_notices(request, name):
         text = prose(msg.content)
         if not text or is_wrapper(text):
             continue
-        if name in mentions_in(text, names):
+        if name in addressed_in(text, names, by=msg.sender_id):
             found.append({'kind': 'mention', 'mood': msg.mood_slug, 'turn': turn_payload(msg, text, names)})
         elif (msg.sender_id in agents and msg.stop_reason == 'end_turn' and quiet_reason(text) is None
               and answered_by(msg, humans) == name):
@@ -607,7 +607,7 @@ def api_mentions(request, name):
         text = prose(msg.content)
         if not text or is_wrapper(text):
             continue
-        if name in mentions_in(text, names):
+        if name in addressed_in(text, names, by=msg.sender_id):
             found.append({'mood': msg.mood_slug, 'turn': turn_payload(msg, text, names)})
             if len(found) >= limit:
                 break
