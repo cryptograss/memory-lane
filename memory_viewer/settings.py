@@ -223,6 +223,12 @@ MOOD_DEPLOY_KEY = os.getenv('MOOD_DEPLOY_KEY', '')
 # (speech to text) and reading messages aloud. Unset: no voice, and the
 # page offers none.
 ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY', '')
+# Notifications with magenta closed (conversations/services/push.py): the
+# VAPID private key that signs every push, base64url (`manage.py vapid_key`
+# makes one). Unset: no push, and the bell notifies only while a page is open.
+WEBPUSH_VAPID_PRIVATE_KEY = os.getenv('WEBPUSH_VAPID_PRIVATE_KEY', '')
+# Who push services may contact about our pushes: a mailto: or https: URL.
+WEBPUSH_CONTACT = os.getenv('WEBPUSH_CONTACT', 'https://magenta.cryptograss.live')
 # Signing in with PickiPedia (conversations/services/wiki_auth.py): the
 # client registered at the wiki's Special:OAuthConsumerRegistration. Unset:
 # no wiki sign-in, only SSH keys.

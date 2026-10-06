@@ -1376,6 +1376,28 @@ class ReadMark(models.Model):
         constraints = [models.UniqueConstraint(fields=['entity', 'mood'], name='one_read_mark_per_person_per_mood')]
 
 
+class PushSubscription(models.Model):
+    """
+    Where to send one device's notifications with magenta closed: the
+    browser's Web Push endpoint and the keys to encrypt for it
+    (services/push.py). Made when its person turns the bell on there; gone
+    when they turn it off, or the push service says it's gone.
+    """
+
+    device = models.ForeignKey(Device, models.CASCADE, related_name='push_subscriptions')
+    endpoint = models.TextField(unique=True)
+    p256dh = models.CharField(max_length=200)
+    auth = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'push_subscriptions'
+
+    def __str__(self):
+        return f"push to {self.device}"
+
+
 class LoginCode(models.Model):
     """A one-time link that turns a proven SSH signature into a Device."""
 

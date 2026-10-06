@@ -722,3 +722,43 @@ def api_seen(request):
     marks = ReadMark.objects.filter(entity=device.entity).values_list('mood__slug', 'seen_at')
     return JsonResponse({'seen': {slug: at.isoformat() for slug, at in marks}})
 
+
+
+# --- notifications with magenta closed (services/push.py) ---------------------------
+
+@require_POST
+def api_push_subscribe(request):
+    """This device's push subscription, from the browser's PushManager:
+    {"endpoint", "keys": {"p256dh", "auth"}}. Its bell, turned on."""
+    from .models import PushSubscription
+    from .services import push
+    device = mood_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to be notified'}, status=401)
+    if not push.enabled():
+        return JsonResponse({'error': "push isn't set up here"}, status=503)
+    try:
+        body = json.loads(request.body)
+        endpoint, keys = str(body['endpoint']), body['keys']
+        p256dh, auth = str(keys['p256dh']), str(keys['auth'])
+    except (ValueError, KeyError, TypeError):
+        return JsonResponse({'error': 'expected {"endpoint": ..., "keys": {"p256dh": ..., "auth": ...}}'}, status=400)
+    if not endpoint.startswith('https://') or len(endpoint) > 2000 or len(p256dh) > 200 or len(auth) > 100:
+        return JsonResponse({'error': 'not a push subscription'}, status=400)
+    PushSubscription.objects.update_or_create(endpoint=endpoint, defaults={'device': device, 'p256dh': p256dh, 'auth': auth})
+    return JsonResponse({'subscribed': True}, status=201)
+
+
+@require_POST
+def api_push_unsubscribe(request):
+    """{"endpoint"}: no more pushes there. Its bell, turned off."""
+    from .models import PushSubscription
+    device = mood_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in first'}, status=401)
+    try:
+        endpoint = str(json.loads(request.body)['endpoint'])
+    except (ValueError, KeyError, TypeError):
+        return JsonResponse({'error': 'expected {"endpoint": ...}'}, status=400)
+    PushSubscription.objects.filter(endpoint=endpoint, device__entity=device.entity).delete()
+    return JsonResponse({'subscribed': False})
