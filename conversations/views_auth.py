@@ -571,6 +571,10 @@ def api_memo(request, slug):
         heard = voice.transcribe(stored, mood, device.entity_id)
     except voice.VoiceError as e:
         return JsonResponse({'error': str(e), 'url': stored.url}, status=e.status)
+    # "Magent, ..." or "at Skyler" said aloud: an @mention, there to look over before sending.
+    from .services import wiki_auth
+    from .services.mood_view import known_names
+    heard['text'] = voice.spoken_mentions(heard['text'], known_names(), wiki_auth.aliases())
     return JsonResponse({'url': stored.url, **heard}, status=201)
 
 
@@ -580,6 +584,10 @@ def api_speak(request, slug, message_id):
 
     Made the first time anyone asks and kept, so a message is paid for once
     per voice and direction. See services/voice.py for how agents direct it.
+
+    ?intro=1 adds {"intro"}: the narrator saying who speaks ("Justin says:");
+    ?intro=where, and in which Mood. ?only=intro: that alone (a voice memo is
+    heard as recorded, so only its speaker needs saying).
     """
     from .services import voice
     from .views_admin import locked_response
@@ -597,8 +605,14 @@ def api_speak(request, slug, message_id):
         part = int(request.GET.get('part') or 0)
     except ValueError:
         part = 0
+    intro = request.GET.get('intro', '')
     try:
-        return JsonResponse({'url': voice.speak(message, device.entity_id, part=part)})
+        out = {}
+        if intro or request.GET.get('only') == 'intro':
+            out['intro'] = voice.intro(message, device.entity_id, where=intro == 'where')
+        if request.GET.get('only') != 'intro':
+            out['url'] = voice.speak(message, device.entity_id, part=part)
+        return JsonResponse(out)
     except voice.VoiceError as e:
         return JsonResponse({'error': str(e)}, status=e.status)
 
@@ -623,7 +637,48 @@ def api_voices(request):
     return JsonResponse({'enabled': True, 'model': voice.TTS_MODEL, 'house_voice': knobs.global_value('voice'),
                          'spent_today_usd': voice.spent_today(),
                          'usd_per_day': knobs.global_value('voice_usd_per_day'), 'voices': listed,
+                         # Who is read in which voice, where it's been chosen or given (voice.voice_of).
+                         'speakers': voice.chosen_voices(), 'narrator': voice.NARRATOR,
                          **({'note': note} if note else {})})
+
+
+@require_POST
+def api_speaker_voice(request):
+    """{"name", "voice"}: the voice `name`'s messages are read in (a voice's id
+    or name; empty to be given one again). Your own, from any device; anyone
+    else's -- an agent's included -- from a device signed in with an SSH key."""
+    from .services import settings as knobs
+    from .services import voice
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = mood_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to choose voices'}, status=401)
+    try:
+        body = json.loads(request.body)
+        name, chosen = str(body['name']).lower(), str(body.get('voice') or '').strip()
+    except (ValueError, KeyError, TypeError):
+        return JsonResponse({'error': 'expected {"name": ..., "voice": ...}'}, status=400)
+    entity = ThinkingEntity.objects.filter(name=name).first()
+    if entity is None:
+        return JsonResponse({'error': f'nobody called {name}'}, status=404)
+    if name != device.entity_id and (device.tier != 'key' or not device.entity.is_biological_human):
+        return JsonResponse({'error': "only your own voice, from a PickiPedia sign-in; others' take your SSH key"},
+                            status=403)
+    if chosen:
+        try:
+            listed = voice.voices()
+        except voice.VoiceError:
+            listed = []
+        known = {v['voice_id'] for v in listed} | {v['name'].lower() for v in listed}
+        if chosen.lower() not in known and not voice._VOICE_ID.match(chosen):
+            return JsonResponse({'error': f'no voice called {chosen}'}, status=400)
+    try:
+        row = knobs.change('speaker_voice', chosen, agent=entity, by=device.entity, note=body.get('note', ''))
+    except knobs.Invalid as e:
+        return JsonResponse({'error': str(e)}, status=400)
+    return JsonResponse(knobs.describe(row), status=201)
 
 
 def _uuid_or_none(value):

@@ -22,6 +22,12 @@ with Eleven v4's inline tags ([whispers], [sighs], [long pause], ...). With no
 `---`, the whole block is the script. A message without a block is read as
 it's written, its markdown taken out.
 
+**Each speaker has a voice**, so a Mood heard and not seen still makes
+sense: the one they chose, or else one given at their first reading --
+unlike the narrator's and everyone else's -- and kept. The narrator is
+magent, in the house voice unless it has chosen another; when messages are
+read one after another, it says who speaks next ("Justin says:").
+
 What's spoken is kept: the same words in the same voice and settings are
 never paid for twice. Every use is a system row in its Mood (who, what,
 roughly what it cost), and the day's total is capped (voice_usd_per_day).
@@ -204,7 +210,8 @@ def voices(http=requests):
     if response.status_code != 200:
         raise VoiceError(refused or f'ElevenLabs answered {response.status_code} for the voice list: {_why(response)}')
     found = [{'name': v.get('name', ''), 'voice_id': v.get('voice_id', ''),
-              'description': v.get('description') or '', 'labels': v.get('labels') or {}}
+              'description': v.get('description') or '', 'labels': v.get('labels') or {},
+              'preview_url': v.get('preview_url') or ''}  # a sample, free to play: choosing by ear
              for v in response.json().get('voices', [])]
     cache.set('voice:voices', found, VOICES_FOR)
     if not refused:
@@ -239,6 +246,66 @@ def voice_id_for(name, http=requests):
     return listed[0]['voice_id']
 
 
+# --- who speaks in which voice ------------------------------------------------------
+
+NARRATOR = 'magent'  # introduces each speaker, in its own voice: the house voice, unless it has chosen one
+
+
+def chosen_voices():
+    """{name: voice (an id, or a name)}: each speaker's voice, chosen or given (the 'speaker_voice' setting)."""
+    from conversations.models import Setting
+    from conversations.services import settings as knobs
+    rows = Setting.objects.filter(key='speaker_voice', mood=None, agent__isnull=False)
+    return {agent: row.value for (_, agent, _), row in knobs.latest(rows).items() if row.value}
+
+
+def voice_of(name, http=requests):
+    """The voice id `name`'s messages are read in.
+
+    Theirs, if chosen (or given before). The narrator's is the house voice.
+    Anyone else is given one the first time they're read -- one nobody else
+    has, if there's one left -- and it's kept as their setting, so they
+    sound the same tomorrow and can change it."""
+    from conversations.models import ThinkingEntity
+    from conversations.services import settings as knobs
+    chosen = chosen_voices()
+    if chosen.get(name):
+        return voice_id_for(chosen[name], http)
+    house = voice_id_for('', http)
+    if name == NARRATOR:
+        return house
+    try:
+        listed = [v['voice_id'] for v in voices(http) if v.get('voice_id')]
+    except VoiceError:
+        return house  # no list to choose from: the house voice, and nothing kept
+    taken = {house} | {voice_id_for(v, http) for v in chosen.values()}
+    free = sorted(set(listed) - taken) or sorted(set(listed) - {house})
+    if not free:
+        return house
+    pick = free[int(hashlib.sha256(name.encode()).hexdigest(), 16) % len(free)]
+    entity = ThinkingEntity.objects.filter(name=name).first()
+    if entity is not None:
+        knobs.change('speaker_voice', pick, agent=entity, note='given at their first reading aloud')
+    return pick
+
+
+def spoken_name(name):
+    return (name or 'someone')[:1].upper() + (name or 'someone')[1:]
+
+
+def intro(message, by, where=False, http=requests):
+    """The URL of the narrator saying who speaks next -- and, with `where`, in
+    which Mood ("In general, Justin says:"). Made once per wording, and kept."""
+    who = spoken_name(message.sender_id)
+    if where:
+        title = (message.mood.title or message.mood.slug).replace('-', ' ')
+        script = f'In {title}, {who} says:'
+    else:
+        script = f'{who} says:'
+    return _spoken(message.mood, by, voice_of(NARRATOR, http), {'text': script, 'model_id': TTS_MODEL}, script,
+                   http, intro=message.sender_id)
+
+
 # --- reading a message aloud --------------------------------------------------------
 
 def script_for(text, part=0):
@@ -255,16 +322,22 @@ def script_for(text, part=0):
 def speak(message, by, http=requests, part=0):
     """The URL of `message` (its `part`th voice block) read aloud: made once, kept.
     VoiceError if it can't be."""
-    from conversations.models import Media, Message
     from conversations.services.mood_view import prose
     script, voice_name, voice_settings = script_for(prose(message.content), part)
     if not script.strip():
         raise VoiceError('nothing in that message to read aloud', status=400)
-    voice_id = voice_id_for(voice_name, http)
+    # A voice its writer named; else the writer's own.
+    voice_id = voice_id_for(voice_name, http) if voice_name else voice_of(message.sender_id, http)
     body = {'text': script, 'model_id': TTS_MODEL}
     if voice_settings:
         names = {'similarity': 'similarity_boost'}
         body['voice_settings'] = {names.get(k, k): v for k, v in voice_settings.items()}
+    return _spoken(message.mood, by, voice_id, body, script, http, message=str(message.id))
+
+
+def _spoken(mood, by, voice_id, body, script, http, **details):
+    """The URL of `body` spoken in `voice_id`: the kept one if it's been made, else made now."""
+    from conversations.models import Media, Message
     key = hashlib.sha256(json.dumps([voice_id, body], sort_keys=True).encode()).hexdigest()
 
     def made():
@@ -287,12 +360,12 @@ def speak(message, by, http=requests, part=0):
                 break
         raise VoiceError('it is still being read aloud for someone else; try again in a moment', status=409)
     try:
-        return made() or _make(message, by, key, voice_id, body, script, http)
+        return made() or _make(mood, by, key, voice_id, body, script, http, details)
     finally:
         cache.delete(f'voice:making:{key}')
 
 
-def _make(message, by, key, voice_id, body, script, http):
+def _make(mood, by, key, voice_id, body, script, http, details):
     from conversations.services import media as media_store
     usd = round(len(script) / 1000 * TTS_USD_PER_KCHAR, 4)
     check_budget(usd)
@@ -303,8 +376,7 @@ def _make(message, by, key, voice_id, body, script, http):
     stored = media_store.store(response.content, audio=True)
     if stored is None:
         raise VoiceError('ElevenLabs sent back something that is not audio')
-    record(message.mood, 'spoken', by, message=str(message.id), key=key, media=stored.sha256,
-           voice=voice_id, chars=len(script), usd=usd)
+    record(mood, 'spoken', by, **details, key=key, media=stored.sha256, voice=voice_id, chars=len(script), usd=usd)
     return stored.url
 
 
@@ -342,6 +414,38 @@ def transcribe(media, mood, by, http=requests):
     record(mood, 'transcribed', by, media=media.sha256, seconds=seconds, usd=usd)
     return {'text': (result.get('text') or '').strip(), 'seconds': seconds,
             'language': result.get('language_code') or ''}
+
+
+# --- a mention, spoken ------------------------------------------------------------
+
+GREETINGS = r'(?:hey|hi|hello|ok|okay|yo)'
+# How a transcription may write a name it heard: only ever read as that name
+# where a name is plainly being said to someone.
+HEARD_AS = {'magnet': 'magent'}
+
+
+def spoken_mentions(text, mentionable, aliases=None):
+    """A memo's words with its spoken addresses made @mentions, for the person
+    to look over before sending: a name it opens with ("Magent, can you...",
+    "Hey Justin ..."), and "at <name>" anywhere ("at skyler what do you think").
+
+    `aliases`: {lowercased other name (a PickiPedia name): name here}."""
+    names = {n.lower(): n.lower() for n in mentionable}
+    names.update({k.lower(): v.lower() for k, v in (aliases or {}).items() if v.lower() in names})
+    names.update({k: v for k, v in HEARD_AS.items() if v in names and k not in names})
+    if not names or not text:
+        return text
+    alternatives = '|'.join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+    name = rf'(?P<name>{alternatives})(?![\w@-])'
+
+    def at(match):
+        return '@' + names[match.group('name').lower()]
+    # Opening: after a greeting, or followed by a comma, colon or the like.
+    opening = re.compile(rf'^(?P<lead>\s*(?:{GREETINGS}[,!]?\s+)?){name}', re.I)
+    found = opening.match(text)
+    if found and (found.group('lead').strip() or re.match(r'\s*[,:!—–-]', text[found.end():])):
+        text = text[:found.start('name')] + at(found) + text[found.end('name'):]
+    return re.sub(rf'(?<![\w@])at\s+{name}', at, text, flags=re.I)
 
 
 def _why(response):
