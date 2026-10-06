@@ -42,18 +42,62 @@ def _configured():
     return (getattr(settings, 'WEBPUSH_VAPID_PRIVATE_KEY', '') or '').strip().strip('"\'').strip()
 
 
-def problem():
-    """Why push is off though a key is set ('' if it's on, or no key is set):
-    the library missing, or a key it can't read. Never the key itself."""
+def _decoded(text):
+    return base64.urlsafe_b64decode(text + '=' * (-len(text) % 4))
+
+
+def _key():
+    """The configured key as the push library reads it best -- base64url of the
+    raw private number -- from whichever shape it was made in: that already;
+    DER (`openssl ... -outform DER`), with or without the EC parameters
+    openssl puts first unless told -noout; PEM; in base64 or base64url."""
+    from cryptography.hazmat.primitives import serialization
     key = _configured()
     if not key:
         return ''
     try:
+        if '-----BEGIN' in key:
+            loaded = serialization.load_pem_private_key(key.replace('\\n', '\n').encode(), password=None)
+        else:
+            key = key.replace('+', '-').replace('/', '_').rstrip('=')  # plain base64, as `base64` writes it
+            data = _decoded(key)
+            if len(data) == 32:
+                return key
+            loaded = None
+            for start in [0] + [i for i in range(1, len(data)) if data[i] == 0x30]:  # a key after the parameters
+                try:
+                    loaded = serialization.load_der_private_key(data[start:], password=None)
+                    break
+                except ValueError:
+                    continue
+            if loaded is None:
+                return key
+        return _b64url(loaded.private_numbers().private_value.to_bytes(32, 'big'))
+    except Exception:
+        return key  # as it is: problem() says what's wrong with it
+
+
+def problem():
+    """Why push is off though a key is set ('' if it's on, or no key is set):
+    the library missing, or a key it can't read. Never the key itself --
+    only what shape it seems to be."""
+    raw = _configured()
+    if not raw:
+        return ''
+    key = _key()
+    try:
         from py_vapid import Vapid
         Vapid.from_string(key)
     except Exception as e:
-        why = f'{type(e).__name__}: {e}'.replace(key, '<the key>')[:200]
-        return f"WEBPUSH_VAPID_PRIVATE_KEY is set but can't be used ({why})"
+        why = f'{type(e).__name__}: {e}'.replace(raw, '<the key>').replace(key, '<the key>')[:160]
+        try:
+            data = _decoded(key)
+            shape = f'{len(data)} bytes once decoded'
+            if len(data) == 65 and data[0] == 4:
+                shape += ": that's a public key -- the private one goes in the vault"
+        except Exception:
+            shape = 'not base64'
+        return f"WEBPUSH_VAPID_PRIVATE_KEY is set but can't be used: {shape} ({why})"
     return ''
 
 
@@ -90,7 +134,7 @@ def public_key():
         return ''
     from cryptography.hazmat.primitives import serialization
     from py_vapid import Vapid
-    point = Vapid.from_string(_configured()).public_key.public_bytes(
+    point = Vapid.from_string(_key()).public_key.public_bytes(
         serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
     return _b64url(point)
 
@@ -111,7 +155,7 @@ def send(subscription, payload, now=None):
     from pywebpush import WebPushException, webpush
     try:
         webpush({'endpoint': subscription.endpoint, 'keys': {'p256dh': subscription.p256dh, 'auth': subscription.auth}},
-                data=json.dumps(payload), vapid_private_key=_configured(),
+                data=json.dumps(payload), vapid_private_key=_key(),
                 vapid_claims={'sub': settings.WEBPUSH_CONTACT}, ttl=TTL, timeout=10)
     except WebPushException as e:
         status = getattr(e.response, 'status_code', None)
