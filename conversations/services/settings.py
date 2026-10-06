@@ -56,6 +56,13 @@ GLOBAL_KNOBS = {
                   "Empty: the first ElevenLabs offers."),
 }
 MODERATION_KEYS = ('scram', 'banned')
+# About one person or agent, wherever they are: set with `agent` naming them
+# (human or not) and no Mood. Changed from the voices list on the Moods page
+# (views_auth.api_speaker_voice), not the settings page.
+PERSON_KEYS = {
+    'speaker_voice': ('', "The voice their messages are read aloud in (services/voice.py): a voice's id or name. "
+                          "Empty until chosen, or given at their first reading."),
+}
 # A Mood's own state, not how an agent carries itself there: set for the
 # Mood alone (no agent), from the Mood's page, and kept apart from the knobs.
 MOOD_KEYS = {
@@ -69,7 +76,7 @@ class Invalid(ValueError):
 
 
 def default(key):
-    return (KNOBS.get(key) or GLOBAL_KNOBS.get(key) or MOOD_KEYS.get(key) or (None,))[0]
+    return (KNOBS.get(key) or GLOBAL_KNOBS.get(key) or MOOD_KEYS.get(key) or PERSON_KEYS.get(key) or (None,))[0]
 
 
 def clean(key, value):
@@ -130,10 +137,10 @@ def clean(key, value):
         if isinstance(value, bool):
             return value
         raise Invalid(f'{key}: true or false')
-    if key == 'voice':
+    if key in ('voice', 'speaker_voice'):
         value = str(value or '').strip()
         if len(value) > 100:
-            raise Invalid('voice: a name, at most 100 characters')
+            raise Invalid(f'{key}: a name, at most 100 characters')
         return value
     if key == 'voice_usd_per_day':
         try:
@@ -230,6 +237,8 @@ def change(key, value, mood=None, agent=None, by=None, note=''):
         raise Invalid(f'{key} applies everywhere at once')
     if key in MOOD_KEYS and (mood is None or agent is not None):
         raise Invalid(f'{key} is set for one Mood, not for an agent')
+    if key in PERSON_KEYS and (agent is None or mood is not None):
+        raise Invalid(f'{key} is set for one person or agent, everywhere')
     return Setting.objects.create(mood=mood, agent=agent, key=key, value=clean(key, value), set_by=by,
                                   note=str(note or '')[:200])
 

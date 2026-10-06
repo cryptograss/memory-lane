@@ -98,6 +98,26 @@
   #serverPop .role { font-style: italic; color: var(--muted); }
   #serverPop a { color: inherit; }
   #serverPop .note { color: var(--muted); font-size: 12px; }
+  /* Who is read aloud in which voice (services/voice.py), styled as the devices box. */
+  #voicesBox { position: fixed; z-index: 30; top: 44px; right: 12px; width: min(460px, 94vw); max-height: 75vh; overflow-y: auto;
+               background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.18);
+               padding: 10px 14px; font-size: 13px; }
+  #voicesBox[hidden] { display: none; }
+  #voicesBox .head { display: flex; justify-content: space-between; margin-bottom: 6px; }
+  #voicesBox .meta, #voicesBox .tier { color: var(--muted); font-size: 12px; }
+  #voicesBox .spk { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--line); padding: 6px 0; }
+  #voicesBox .spk .nm { flex: 1; }
+  #voicesBox select { font: inherit; font-size: 12px; max-width: 55%; }
+  #voicesBox button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel);
+                      color: var(--ink); cursor: pointer; }
+  /* Reading as they come: who's speaking, and the player's three buttons. */
+  #readBar { display: flex; align-items: center; gap: 8px; max-width: 760px; margin: 0 auto; padding: 6px 16px; font-size: 13px;
+             color: var(--muted); }
+  #readBar[hidden] { display: none; }
+  #readBar .what { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #readBar button { font: inherit; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--ink);
+                    padding: 2px 9px; cursor: pointer; }
+  #userMenu .readall select { font: inherit; }
   #devicesBox { position: fixed; z-index: 30; top: 44px; right: 12px; width: min(460px, 94vw); max-height: 75vh; overflow-y: auto;
                 background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.18);
                 padding: 10px 14px; font-size: 13px; }
@@ -568,12 +588,18 @@
       <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
       <span class="textsize">text size <button type="button" data-step="-1" aria-label="Smaller text">A−</button><span id="textSizeVal">100%</span><button type="button" data-step="1" aria-label="Larger text">A+</button></span>
       <button id="notify" type="button" hidden aria-label="Notifications"></button>
+      <label class="readall" id="readAllLabel" hidden title="Each new message read aloud as it arrives, in its speaker's voice, magent saying who speaks. Your own messages aren't read.">read aloud as they come <select id="readAll"><option value="off">off</option><option value="here">this Mood</option><option value="everywhere">every Mood</option></select></label>
+      <a href="#" id="voicesLink" hidden>voices</a>
       <a href="#" id="devicesLink" hidden>your devices</a>
       <a class="settings" href="/moods/settings/" title="How each agent carries itself in each Mood">settings</a>
       <a href="#" id="signout" hidden>sign out</a>
     </div>
   </span>
 </header>
+<div id="voicesBox" hidden role="dialog" aria-label="Voices">
+  <div class="head"><b>Who is read in which voice</b> <button type="button" id="voicesClose">close</button></div>
+  <div id="voicesList"></div>
+</div>
 <div id="devicesBox" hidden role="dialog" aria-label="Your devices">
   <div class="head"><b id="devicesTitle">Your devices</b> <button type="button" id="devicesClose">close</button></div>
   <div id="devicesList"></div>
@@ -616,6 +642,7 @@
     <button type="button" id="toBottom">↓ newest</button>
     <div id="typing"></div>
     <div id="tasks"></div>
+    <div id="readBar" hidden><span class="what"></span><button type="button" id="readPause" title="Pause or go on">⏸</button><button type="button" id="readSkip" title="Skip to the next message">⏭</button><button type="button" id="readStop" title="Stop reading as they come">■</button></div>
     <div id="activity"><span class="dot"></span><span id="activityText"></span><button type="button" id="stopBtn" title="Stop it, as Esc does in a terminal (Esc in the message box does the same). What was said stays; add to it and it reads both." hidden>■ stop</button></div>
     <div class="hush" id="hush"></div>
     <div id="replying" hidden><span class="what"></span><button type="button" id="replyCancel" title="Don't reply (Esc)" aria-label="Cancel the reply">✕</button></div>
@@ -860,6 +887,7 @@
     if (b.classList.contains('busy')) return;  // already on its way: a second press would play it twice
     if (speaking && speaking.button === b) { stopSpeaking(); return; }
     stopSpeaking();
+    if (readMode !== 'off') holdRead(true);  // one voice at a time: reading as they come waits (▶ on its bar goes on)
     const ask = ++speakAsk;
     // A voice memo is heard as it was spoken: ▶ plays the recording, never a voice reading its transcript.
     const memo = b.closest('.turn').querySelector('.body audio');
@@ -2426,6 +2454,219 @@
       if (s >= MEMO_MAX_S && recorder) recorder.stop();
     }, 500);
   });
+
+  // --- voices: who is read in which ---------------------------------------------
+  // Each speaker has a voice (services/voice.py, voice_of): chosen here, or
+  // given at their first reading. Yours from any sign-in; anyone's -- an
+  // agent's too -- with your SSH key. ▷ plays ElevenLabs' sample, free.
+  const voicesBox = document.getElementById('voicesBox');
+  const voicesList = document.getElementById('voicesList');
+  const voiceSample = new Audio();
+  let voiceData = null;
+  if (voiceOn && viewer) document.getElementById('voicesLink').hidden = false;
+  function voiceFor(data, name) {
+    const has = (data.speakers || {})[name];
+    if (!has) return null;
+    return (data.voices || []).find(v => v.voice_id === has || v.name.toLowerCase() === has.toLowerCase()) || { voice_id: has, name: has };
+  }
+  async function showVoices() {
+    voicesBox.hidden = false;
+    voicesList.textContent = 'Loading…';
+    try {
+      const r = await fetch('/api/voice/voices/');
+      voiceData = await r.json();
+    } catch (e) { voicesList.textContent = 'Could not ask for the voices.'; return; }
+    const data = voiceData;
+    const everyone = [...people].sort((a, b) => (b.name === viewer) - (a.name === viewer) || a.name.localeCompare(b.name));
+    voicesList.innerHTML = (data.note ? `<p class="meta">${esc(data.note)}</p>` : '')
+      + `<p class="meta">Reading as they come, ${esc(shown(data.narrator || 'magent'))} says who speaks next, in its own voice.</p>`
+      + everyone.map(p => {
+        const v = voiceFor(data, p.name);
+        const may = p.name === viewer || keyHolder;
+        const unset = p.name === data.narrator ? 'the house voice' : 'given at their first reading';
+        const options = (data.voices || []).map(o =>
+          `<option value="${esc(o.voice_id)}"${v && v.voice_id === o.voice_id ? ' selected' : ''}>${esc(o.name)}</option>`).join('');
+        const other = v && !(data.voices || []).some(o => o.voice_id === v.voice_id)
+          ? `<option value="${esc(v.voice_id)}" selected>${esc(v.name)}</option>` : '';
+        return `<div class="spk" data-name="${esc(p.name)}"><span class="nm">${esc(shown(p.name))}${p.is_human ? '' : ' <span class="tier">agent</span>'}</span>`
+          + `<select ${may ? '' : 'disabled title="Only your own, from a PickiPedia sign-in"'} aria-label="${esc(shown(p.name))}'s voice">`
+          + `<option value="">${unset}</option>${other}${options}</select>`
+          + `<button type="button" class="sample" title="Hear this voice">▷</button></div>`;
+      }).join('');
+  }
+  document.getElementById('voicesLink').addEventListener('click', e => { e.preventDefault(); userMenu.hidden = true; showVoices(); });
+  document.getElementById('voicesClose').addEventListener('click', () => { voicesBox.hidden = true; voiceSample.pause(); });
+  voicesBox.addEventListener('click', e => {
+    const b = e.target.closest('.sample');
+    if (!b || !voiceData) return;
+    const chosen = b.closest('.spk').querySelector('select').value;
+    const v = (voiceData.voices || []).find(o => o.voice_id === chosen) || voiceFor(voiceData, b.closest('.spk').dataset.name);
+    if (!v || !v.preview_url) { showError('no sample of that voice to play'); return; }
+    voiceSample.src = v.preview_url;
+    voiceSample.play().catch(err => showError('sample: ' + err.message));
+  });
+  voicesBox.addEventListener('change', async e => {
+    const sel = e.target.closest('.spk select');
+    if (!sel) return;
+    const name = sel.closest('.spk').dataset.name;
+    sel.disabled = true;
+    try {
+      const r = await fetch('/api/voice/speaker/', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+                                                    body: JSON.stringify({ name, voice: sel.value }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || r.status);
+    } catch (err) { showError('voice: ' + err.message); showVoices(); return; }
+    finally { sel.disabled = false; }
+  });
+
+  // --- reading aloud as they come ------------------------------------------------
+  // Each new message, in its speaker's voice; the narrator says who speaks
+  // when that changes (and where, reading every Mood). One player for all
+  // of it, so a phone that allowed it to play once keeps allowing it; the
+  // lock screen and a car's buttons pause, skip and stop it. Read from
+  // /api/moods/recent/: what people said and agents' finished answers.
+  const readSel = document.getElementById('readAll');
+  const readBar = document.getElementById('readBar');
+  const readWhat = readBar.querySelector('.what');
+  const readPause = document.getElementById('readPause');
+  const reader = new Audio();
+  const READ_EVERY_MS = 5000;
+  const MEMO_AUDIO = /^🎙 \[voice memo[^\]]*\]\((\/moods\/media\/[0-9a-f]{64}\.[a-z0-9]+)\)/;
+  const readQueue = [], readHeard = new Set();
+  let readMode = 'off', readSinceMs = 0, readLast = null, readNow = null, readHeld = false, readBlocked = false;
+  let clipDone = null;
+  if (voiceOn && viewer) document.getElementById('readAllLabel').hidden = false;
+
+  function setReadMode(mode) {
+    readMode = mode;
+    store.set('readAll', mode);
+    readSel.value = mode;
+    if (mode === 'off') { readQueue.length = 0; skipClip(); readNow = null; readHeld = readBlocked = false; readLast = null; }
+    else if (!readSinceMs) readSinceMs = Date.now() - 15000;  // from now: what was said before isn't news
+    renderReadBar();
+  }
+  readSel.addEventListener('change', () => { readBlocked = false; setReadMode(readSel.value); readPoll(); });
+
+  async function readPoll() {
+    if (readMode === 'off' || !readSinceMs) return;
+    let events;
+    try {
+      const r = await fetch('/api/moods/recent/?since=' + encodeURIComponent(new Date(readSinceMs).toISOString()));
+      if (!r.ok) return;
+      events = (await r.json()).events || [];
+    } catch (e) { return; }
+    const fresh = events.filter(e => (e.kind === 'said' || e.kind === 'answered') && e.id && !readHeard.has(e.id)
+                                     && e.who !== viewer && (readMode === 'everywhere' || e.mood === current))
+      .sort((a, b) => new Date(a.at) - new Date(b.at));
+    for (const e of fresh) { readHeard.add(e.id); readQueue.push(e); }
+    // Next time from a minute before the newest: a clock a little off misses nothing, and ids keep it once.
+    const newest = Math.max(0, ...events.map(e => new Date(e.at).getTime() || 0));
+    if (newest - 60000 > readSinceMs) readSinceMs = newest - 60000;
+    readNext();
+  }
+  setInterval(readPoll, READ_EVERY_MS);
+
+  function playClip(src) {
+    return new Promise(resolve => {
+      clipDone = resolve;
+      reader.src = src;
+      reader.play().catch(err => {
+        if (clipDone !== resolve) return;
+        clipDone = null;
+        resolve(err && err.name === 'NotAllowedError' ? 'blocked' : 'failed');
+      });
+    });
+  }
+  function endClip(how) { const done = clipDone; clipDone = null; if (done) done(how); }
+  reader.addEventListener('ended', () => endClip('ended'));
+  reader.addEventListener('error', () => endClip('failed'));
+  function skipClip() { reader.pause(); if (readNow) readNow.skipped = true; endClip('skipped'); }
+  function holdRead(hold) {
+    readHeld = hold;
+    if (hold) reader.pause();
+    else if (clipDone && reader.paused) reader.play().catch(() => {});
+    if (!hold) readNext();
+    renderReadBar();
+  }
+
+  async function readNext() {
+    if (readNow || readHeld || readBlocked || readMode === 'off' || !readQueue.length) { renderReadBar(); return; }
+    const item = readQueue.shift();
+    const now = readNow = { item, skipped: false };
+    renderReadBar();
+    const memo = (item.text || '').match(MEMO_AUDIO);  // heard as recorded: only who's speaking needs saying
+    const newMood = !readLast || readLast.mood !== item.mood;
+    const intro = newMood && readMode === 'everywhere' ? 'where' : newMood || readLast.who !== item.who ? '1' : '';
+    const clips = [];
+    try {
+      if (intro || !memo) {
+        const ask = new URLSearchParams(intro ? { intro } : {});
+        if (memo) ask.set('only', 'intro');
+        const r = await fetch(`/api/moods/${encodeURIComponent(item.mood)}/speak/${encodeURIComponent(item.id)}/?${ask}`,
+                              { method: 'POST', headers: { 'X-CSRFToken': csrf() } });
+        const body = await r.json().catch(() => ({}));
+        if (r.status === 429 && !/spent/.test(body.error || '')) {  // asked too fast: this one again in a moment
+          readQueue.unshift(item); readNow = null;
+          renderReadBar('🔊 a moment…');
+          setTimeout(readNext, 12000);
+          return;
+        }
+        if (!r.ok) {
+          if (r.status === 429 || r.status === 503) setReadMode('off');  // the day's voice budget spent, or no voice here
+          throw new Error(body.error || r.status);
+        }
+        clips.push(body.intro, body.url);
+      }
+      if (memo) clips.push(memo[1]);
+    } catch (err) {
+      showError('read aloud: ' + err.message);
+      if (readNow === now) { readNow = null; readNext(); }
+      return;
+    }
+    for (const src of clips.filter(Boolean)) {
+      if (now.skipped || readMode === 'off' || readNow !== now) break;
+      const how = await playClip(src);
+      if (how === 'blocked') {  // the phone wants a tap first (after a reload, say): ▶ on the bar
+        readQueue.unshift(item); readBlocked = true; readNow = null; renderReadBar(); return;
+      }
+    }
+    if (readNow !== now) return;  // stopped meanwhile
+    readLast = { who: item.who, mood: item.mood };
+    readNow = null;
+    readNext();
+  }
+
+  function renderReadBar(note) {
+    readBar.hidden = readMode === 'off';
+    const item = readNow && readNow.item;
+    const where = item ? ((moods.find(m => m.slug === item.mood) || {}).title || item.mood) : '';
+    const more = readQueue.length ? ` · ${readQueue.length} more` : '';
+    readWhat.textContent = note
+      || (readBlocked ? `🔊 ${readQueue.length} to read: press ▶`
+      : item ? `🔊 ${shown(item.who)}${readMode === 'everywhere' ? ' · ' + where : ''}${more}`
+      : `🔊 reading ${readMode === 'everywhere' ? 'every Mood' : 'this Mood'} as it comes`);
+    readPause.textContent = readHeld || readBlocked ? '▶' : '⏸';
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = item && readMode !== 'off' ? new MediaMetadata({
+        title: shown(item.who), artist: where, album: 'magenta',
+        artwork: [{ src: '/moods/icon-192.png', sizes: '192x192', type: 'image/png' }] }) : null;
+    }
+  }
+  readPause.addEventListener('click', () => {
+    if (readBlocked) { readBlocked = false; readNext(); return; }
+    holdRead(!readHeld);
+  });
+  document.getElementById('readSkip').addEventListener('click', skipClip);
+  document.getElementById('readStop').addEventListener('click', () => setReadMode('off'));
+  if ('mediaSession' in navigator) {
+    const handle = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (e) {} };
+    // A ▶ pressed on one message is what's playing, if anything: those buttons stop it.
+    handle('play', () => { if (speaking) return; readBlocked = false; holdRead(false); });
+    handle('pause', () => { if (speaking) { stopSpeaking(); return; } holdRead(true); });
+    handle('nexttrack', () => { if (speaking) { stopSpeaking(); return; } skipClip(); });
+    handle('stop', () => { if (speaking) { stopSpeaking(); return; } setReadMode('off'); });
+  }
+  if (voiceOn && viewer && ['here', 'everywhere'].includes(store.get('readAll', 'off'))) setReadMode(store.get('readAll'));
 
   function csrf() {
     const m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
