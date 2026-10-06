@@ -117,6 +117,15 @@ class MemoryToolsTest(Fixture, TransactionTestCase):
         self.assertIn('tool_use', text)
         self.assertIn('get_message_context', text)
 
+    def test_search_names_a_moods_hits_from_inside_the_event_loop(self):
+        # mood_slug refreshes its cache from the database: done on the async side,
+        # that was "You cannot call this from an async context" for every hit in a Mood.
+        from conversations import models
+        models._slugs['by_id'] = {}
+        text = call('search_messages', query='third', exact=True)
+        self.assertIn('Mood porch', text)
+        self.assertIn(str(self.said[2].id), text)
+
     def test_context_tool(self):
         text = call('get_message_context', message_id=str(self.said[2].id)[:8], before=1, after=1)
         self.assertIn('>>>', text)

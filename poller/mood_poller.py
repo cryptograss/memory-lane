@@ -562,6 +562,15 @@ def new_mood_opening(slug):
             letter, '</new-mood>', '']
 
 
+# Greeting someone (Justin, 2026-10-06: the greetings sounded generic). In every
+# wake: a newcomer's first words wake a consider, not only a sign-in.
+GREETING = ("Greeting anyone is never needed. If you do, make it theirs: the last thing you worked on or talked "
+            "about together, or a time you were together -- search your memory for their name -- and if it's "
+            "been a long while, say so. If you have no memory of them, look for them on PickiPedia (their "
+            "User: page, or pages that mention them) and start from that. No stock welcome, and don't introduce "
+            "yourself or explain the room unless they ask.")
+
+
 def wake_footer(full=False):
     """How a woken turn is to conduct itself; the end of every wake prompt."""
     if full:
@@ -579,6 +588,7 @@ def wake_footer(full=False):
             'Answer in the Mood by replying normally; your reply is recorded there, in public.',
             'If nothing is worth saying, reply with only <silent>a few words on why</silent>; '
             'the Mood shows it as a small dot, and the words when someone opens it.',
+            GREETING,
             tools,
             '</mood-wake>']
 
@@ -612,9 +622,10 @@ QUIET_ASK = ('You might pick up a loose end, offer something you have been turni
 
 # Someone has just signed in (memory-lane services/access.py): a look in the
 # Mood where it was announced, to greet them -- only with something specific.
-ARRIVAL_ASK = ('If you know them, greet them with something specific to them: something you worked on together, '
-               'something they care about, something they said. Look them up in your memory if you need to. Never '
-               'a generic welcome: if nothing specific comes to mind, stay silent.')
+ARRIVAL_ASK = ('Greet them only with something that is theirs: the last thing you worked on or talked about '
+               'together, a time you were together (search your memory for their name; if it was long ago, say '
+               'so), or, with no memory of them, what PickiPedia says of them. If none of that turns up anything, '
+               'stay silent: never a generic welcome.')
 GREET_GAP = timedelta(hours=12)  # someone around within this isn't arriving; nor is a second greeting due
 
 

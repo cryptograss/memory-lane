@@ -642,6 +642,34 @@ def api_voices(request):
                          **({'note': note} if note else {})})
 
 
+HEARD_OUTCOMES = ('ended', 'failed', 'blocked', 'skipped')
+
+
+@require_POST
+def api_voice_heard(request):
+    """What a page's reader (reading as they come) did with one clip: {"mood", "message",
+    "clip": intro|message|memo, "outcome": ended|failed|blocked|skipped, "error", "hidden"}.
+    Kept as a voice row in that Mood, so what a phone's player did can be read afterwards."""
+    from .services import voice
+    device = mood_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in first'}, status=401)
+    if not _under_limit(f'heard:{device.pk}', 60):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    try:
+        body = json.loads(request.body)
+        outcome, clip = str(body['outcome']), str(body.get('clip') or '')[:10]
+    except (ValueError, KeyError, TypeError):
+        return JsonResponse({'error': 'expected {"mood", "message", "clip", "outcome"}'}, status=400)
+    mood = Mood.by_slug(str(body.get('mood') or ''))
+    if mood is None or outcome not in HEARD_OUTCOMES:
+        return JsonResponse({'error': f'a Mood, and an outcome of {", ".join(HEARD_OUTCOMES)}'}, status=400)
+    voice.record(mood, 'heard', device.entity_id, message=str(body.get('message') or '')[:40], clip=clip,
+                 outcome=outcome, error=redact(str(body.get('error') or ''))[0][:200], hidden=bool(body.get('hidden')),
+                 device=device.label[:60])
+    return JsonResponse({'kept': True}, status=201)
+
+
 @require_POST
 def api_speaker_voice(request):
     """{"name", "voice"}: the voice `name`'s messages are read in (a voice's id
