@@ -59,7 +59,8 @@ class NamesTest(TestCase):
         from conversations.services.mood_view import mentions_in, render_html
         names = {'justin', 'skyler', 'magent'}
         self.assertEqual(mentions_in('@JMyles and @skyler, see this', names), ['justin', 'skyler'])
-        self.assertIn('<span class="mention" data-who="justin">@JMyles</span>', render_html('hi @JMyles', names))
+        self.assertIn('<a class="mention" data-who="justin" href="https://pickipedia.xyz/wiki/User:JMyles" '
+                      'target="_blank" rel="noopener">@JMyles</a>', render_html('hi @JMyles', names))  # the inventory's name
 
     def test_who_a_wiki_account_is_here(self):
         self.assertEqual(wiki_auth.entity_for('JMyles').name, 'justin')  # mapped: that person

@@ -319,6 +319,13 @@ def _aliases(lowered):
     return {wiki: here for wiki, here in aliases().items() if here in lowered}
 
 
+def mention_page(who):
+    """A name's PickiPedia user page: by the PickiPedia name hunter's inventory gives,
+    else by its own (a PickiPedia sign-in is named here as it is there)."""
+    from .wiki_auth import names, user_page
+    return user_page(names().get(who) or who[:1].upper() + who[1:])
+
+
 def _mention(mentionable, stash=lambda markup: markup):
     lowered = {n.lower() for n in mentionable}
     known_as = _aliases(lowered)
@@ -331,7 +338,8 @@ def _mention(mentionable, stash=lambda markup: markup):
         who = known_as.get(raw.lower(), raw.lower())
         if who not in lowered:
             return match.group(0)
-        return stash(f'<span class="mention" data-who="{who}">@{raw}</span>') + trailing
+        # A link to who it is, on PickiPedia; still a .mention, highlighted when it's you.
+        return stash(f'<a class="mention" data-who="{who}" href="{html.escape(mention_page(who))}"{_OUT}>@{raw}</a>') + trailing
     return repl
 
 
