@@ -114,7 +114,9 @@ class PushTest(TestCase):
         expected = None
         for shape, value in (('DER, base64url', b64url(der)), ('DER, base64', base64.b64encode(der).decode()),
                              ('parameters, then DER', base64.b64encode(params + der).decode()),
-                             ('PEM', pem), ('PEM, its newlines escaped', pem.replace('\n', '\\n'))):
+                             ('PEM', pem), ('PEM, its newlines escaped', pem.replace('\n', '\\n')),
+                             ('DER and a stray character after it', b64url(der) + 'n'),
+                             ('DER and a stray byte after it', b64url(der + b'\n'))):
             with self.subTest(shape=shape), override_settings(WEBPUSH_VAPID_PRIVATE_KEY=value):
                 cache.clear()
                 self.assertTrue(push.enabled())

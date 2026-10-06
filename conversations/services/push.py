@@ -46,6 +46,19 @@ def _decoded(text):
     return base64.urlsafe_b64decode(text + '=' * (-len(text) % 4))
 
 
+def _der_length(data, start):
+    """How many bytes the DER element at `start` says it takes, header included (0 if it can't say)."""
+    if start + 2 > len(data):
+        return 0
+    first = data[start + 1]
+    if first < 0x80:
+        return 2 + first
+    count = first & 0x7f
+    if not 1 <= count <= 4 or start + 2 + count > len(data):
+        return 0
+    return 2 + count + int.from_bytes(data[start + 2:start + 2 + count], 'big')
+
+
 def _key():
     """The configured key as the push library reads it best -- base64url of the
     raw private number -- from whichever shape it was made in: that already;
@@ -65,11 +78,16 @@ def _key():
                 return key
             loaded = None
             for start in [0] + [i for i in range(1, len(data)) if data[i] == 0x30]:  # a key after the parameters
-                try:
-                    loaded = serialization.load_der_private_key(data[start:], password=None)
+                # Exactly as long as it says it is: a stray character after the key (a copied
+                # prompt mark, a literal \\n) decodes to a byte or two DER won't take.
+                for piece in (data[start:start + _der_length(data, start)], data[start:]):
+                    try:
+                        loaded = serialization.load_der_private_key(piece, password=None)
+                        break
+                    except ValueError:
+                        continue
+                if loaded is not None:
                     break
-                except ValueError:
-                    continue
             if loaded is None:
                 return key
         return _b64url(loaded.private_numbers().private_value.to_bytes(32, 'big'))
