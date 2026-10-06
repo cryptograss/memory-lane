@@ -86,6 +86,22 @@ class PushTest(TestCase):
             self.assertEqual(push.public_key(), '')
             self.assertEqual(self.subscribe(self.justin, self.phone).status_code, 503)
 
+    def test_a_key_that_cant_be_read_turns_push_off_not_the_page(self):
+        for bad in ('not-a-key', 'AAAA' * 10):
+            with self.subTest(key=bad), override_settings(WEBPUSH_VAPID_PRIVATE_KEY=bad):
+                cache.clear()
+                page = self.client.get('/moods/general/')
+                self.assertEqual(page.status_code, 200)
+                self.assertIn('const PUSH_KEY = "";', page.content.decode())
+                told = self.client.get('/api/push/').json()
+                self.assertFalse(told['enabled'])
+                self.assertIn("is set but can't be used", told['problem'])
+                self.assertNotIn(bad, told['problem'])  # never the key
+                self.assertEqual(self.subscribe(self.justin, self.phone).status_code, 503)
+        with override_settings(WEBPUSH_VAPID_PRIVATE_KEY=f' "{KEY}"\n'):  # wrapped, as a vault or .env may
+            cache.clear()
+            self.assertEqual(self.client.get('/api/push/').json(), {'enabled': True, 'problem': ''})
+
     def test_a_mention_reaches_a_closed_phone_encrypted_for_it_and_only_once(self):
         self.assertEqual(self.subscribe(self.justin, self.phone).status_code, 201)
         self.said(self.skyler, '@justin the bus leaves at nine')

@@ -20,6 +20,7 @@ while a page is open, as before.
 
 import base64
 import json
+import logging
 import threading
 from datetime import timedelta
 
@@ -33,9 +34,42 @@ OVERLAP = 120       # each look reaches this far before the last: a slow write i
 TTL = 3600          # an undelivered push is dropped after this, and a look never reaches further back
 SENT_FOR = 2 * 86400  # how long a sent notice is remembered
 
+log = logging.getLogger(__name__)
+
+
+def _configured():
+    """The key as set, without what a vault or an .env may wrap it in: spaces, quotes."""
+    return (getattr(settings, 'WEBPUSH_VAPID_PRIVATE_KEY', '') or '').strip().strip('"\'').strip()
+
+
+def problem():
+    """Why push is off though a key is set ('' if it's on, or no key is set):
+    the library missing, or a key it can't read. Never the key itself."""
+    key = _configured()
+    if not key:
+        return ''
+    try:
+        from py_vapid import Vapid
+        Vapid.from_string(key)
+    except Exception as e:
+        why = f'{type(e).__name__}: {e}'.replace(key, '<the key>')[:200]
+        return f"WEBPUSH_VAPID_PRIVATE_KEY is set but can't be used ({why})"
+    return ''
+
 
 def enabled():
-    return bool(getattr(settings, 'WEBPUSH_VAPID_PRIVATE_KEY', ''))
+    """A key is set, and the push library can read it. A key it can't read
+    turns push off -- and says why (problem(), /api/push/) -- never the page."""
+    if not _configured():
+        return False
+    from django.core.cache import cache as shared
+    why = shared.get('push:problem')
+    if why is None:
+        why = problem()
+        shared.set('push:problem', why, 300)
+        if why:
+            log.error('push is off: %s', why)
+    return not why
 
 
 def _b64url(raw):
@@ -56,7 +90,7 @@ def public_key():
         return ''
     from cryptography.hazmat.primitives import serialization
     from py_vapid import Vapid
-    point = Vapid.from_string(settings.WEBPUSH_VAPID_PRIVATE_KEY).public_key.public_bytes(
+    point = Vapid.from_string(_configured()).public_key.public_bytes(
         serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
     return _b64url(point)
 
@@ -77,7 +111,7 @@ def send(subscription, payload, now=None):
     from pywebpush import WebPushException, webpush
     try:
         webpush({'endpoint': subscription.endpoint, 'keys': {'p256dh': subscription.p256dh, 'auth': subscription.auth}},
-                data=json.dumps(payload), vapid_private_key=settings.WEBPUSH_VAPID_PRIVATE_KEY,
+                data=json.dumps(payload), vapid_private_key=_configured(),
                 vapid_claims={'sub': settings.WEBPUSH_CONTACT}, ttl=TTL, timeout=10)
     except WebPushException as e:
         status = getattr(e.response, 'status_code', None)
