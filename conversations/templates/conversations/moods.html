@@ -720,7 +720,9 @@
   // PickiPedia names for the names here (hunter's inventory); shown wherever a person is named.
   const WIKI_NAMES = JSON.parse(document.getElementById('wiki-names').textContent || '{}');
   const shown = n => WIKI_NAMES[n] || n;
-  const userPage = n => WIKI_NAMES[n] ? `${"{{ pickipedia_url|escapejs }}" || 'https://pickipedia.xyz'}/wiki/User:${encodeURIComponent(WIKI_NAMES[n].replace(/ /g, '_'))}` : '';
+  // Their PickiPedia user page: by the PickiPedia name hunter's inventory gives, else their own -- a
+  // PickiPedia sign-in is named here as it is there (as mood_view.mention_page does for @mentions).
+  const userPage = n => n ? `${"{{ pickipedia_url|escapejs }}" || 'https://pickipedia.xyz'}/wiki/User:${encodeURIComponent((WIKI_NAMES[n] || n[0].toUpperCase() + n.slice(1)).replace(/ /g, '_'))}` : '';
   const auth = document.getElementById('auth');
   const composer = document.getElementById('composer');
   const sayBox = document.getElementById('say');
