@@ -358,6 +358,11 @@
                     color: var(--ink); font-size: 13.5px; }
   .aturn.folded .ahead .preview { display: block; }
   .aturn.folded .abody { display: none; }
+  /* An answer folded away still plays: its ▶ beside the fold (drawBlockHead). */
+  .aturn > .speak.block { display: none; }
+  .aturn.folded:has(> .speak.block) { display: flex; align-items: center; gap: 6px; }
+  .aturn.folded > .ahead { flex: 1; min-width: 0; }
+  .aturn.folded > .speak.block { display: inline-block; flex: none; }
   .abody { padding-left: 10px; }
   /* A statement signed with someone's SSH key. */
   .signed { font-size: 11.5px; color: #2e9e5b; border: 1px solid currentColor; border-radius: 10px; padding: 0 7px;
@@ -488,9 +493,9 @@
   #composer #memoBtn[hidden] { display: none; }
   #composer #memoBtn.recording { color: #fff; background: var(--err, #c0392b); border-color: transparent; font-size: 13px; }
   #composer #memoBtn.busy { opacity: .6; cursor: progress; font-size: 13px; }
-  .turn .speak { font: inherit; font-size: 11px; line-height: 1; border: 1px solid var(--line); border-radius: 9px; background: none;
+  .turn .speak, .aturn > .speak { font: inherit; font-size: 11px; line-height: 1; border: 1px solid var(--line); border-radius: 9px; background: none;
                  color: var(--muted); cursor: pointer; padding: 2px 7px; }
-  .turn .speak:hover, .turn .speak.playing { color: var(--accent); border-color: var(--accent); }
+  .turn .speak:hover, .turn .speak.playing, .aturn > .speak:hover, .aturn > .speak.playing { color: var(--accent); border-color: var(--accent); }
   .turn .speak.directed::after { content: ' ✦'; }
   .turn .voices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .turn .voices .speak { font-size: 12px; padding: 3px 9px; }
@@ -499,6 +504,17 @@
   .turn.cont .speak.mini { display: inline-block; position: absolute; right: -19px; top: 20px; opacity: 0; padding: 1px 4px; border: 0; }
   .turn.cont:hover .speak.mini, .turn.cont .speak.mini.playing, .turn.cont .speak.mini.busy { opacity: .9; }
   @media (hover: none) { .turn.cont .speak.mini { opacity: .45; } }
+  /* On a touch screen ▶ is found without looking: big, in the accent, at the end of the
+     line -- and on a message that follows on, at its right, the words around it. */
+  @media (pointer: coarse) {
+    .turn .speak, .aturn > .speak { font-size: 16px; padding: 6px 15px; border-radius: 18px; color: var(--accent);
+                                    border-color: var(--accent); }
+    .turn .who .speak { margin-left: auto; }
+    .turn.cont .speak.mini { position: static; float: right; opacity: 1; margin: 2px 0 4px 10px; padding: 6px 15px;
+                             border: 1px solid var(--accent); }
+    .turn.cont { display: flow-root; }
+    .turn .voices .speak { font-size: 15px; padding: 6px 12px; }
+  }
   .turn .body audio { display: block; width: 100%; max-width: 420px; height: 36px; margin: 4px 0; }
   .turn .body .memo { font-size: 12.5px; color: var(--muted); }
   #composer.dropping textarea { outline: 2px dashed var(--accent); }
@@ -533,7 +549,9 @@
   #suggest .emo { display: inline-block; width: 1.6em; font-size: 16px; }
   #menu { display: none; font: inherit; font-size: 20px; line-height: 1; background: none; border: 0;
           color: var(--muted); cursor: pointer; padding: 0 2px; }
-  @media (max-width: 720px) {
+  /* A phone, either way up: narrow, or a touch screen this short (a phone on its side
+     is as wide as a small laptop, and gets the laptop's layout otherwise). PHONE in the script. */
+  @media (max-width: 720px), (pointer: coarse) and (max-height: 520px) {
     header { flex-wrap: nowrap; gap: 8px; padding: 6px 12px; }
     header .brand small { display: none; }
     header .preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
@@ -690,6 +708,7 @@
 
   // Who is looking. Lives in the browser: the view has no accounts, and a
   // filter is not a permission. Everything here stays readable to anyone.
+  const PHONE = '(max-width: 720px), (pointer: coarse) and (max-height: 520px)';  // as the stylesheet's phone layout
   const store = {
     get(k, d) { try { const v = localStorage.getItem('moods.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem('moods.' + k, JSON.stringify(v)); } catch (e) {} },
@@ -884,7 +903,7 @@
   }
   let speakAsk = 0;  // the newest ▶ pressed: only it may play, when its audio arrives
   document.addEventListener('click', async e => {
-    const b = e.target.closest('.turn .speak');
+    const b = e.target.closest('.turn .speak, .aturn > .speak.block');
     if (!b) return;
     if (b.classList.contains('busy')) return;  // already on its way: a second press would play it twice
     if (speaking && speaking.button === b) { stopSpeaking(); return; }
@@ -892,7 +911,7 @@
     if (readMode !== 'off') holdRead(true);  // one voice at a time: reading as they come waits (▶ on its bar goes on)
     const ask = ++speakAsk;
     // A voice memo is heard as it was spoken: ▶ plays the recording, never a voice reading its transcript.
-    const memo = b.closest('.turn').querySelector('.body audio');
+    const memo = b.closest('.turn')?.querySelector('.body audio');
     if (memo) {
       speaking = { audio: memo, button: b };
       memo.addEventListener('ended', stopSpeaking, { once: true });
@@ -1462,6 +1481,11 @@
       + [took ? elapsed(Date.now() / 1000 - took) : '', how, tokens].filter(Boolean).map(x => ' · ' + esc(x)).join('')
       + (!b._ended && isWorking(b) ? ' · working…' : '')
       + `<span class="preview">${esc(b._final)}</span>`;
+    // Its answer, read aloud without unfolding it (shown only while folded).
+    if (voiceOn && viewer && b._ended && b._finalId && !b.querySelector(':scope > .speak.block')) {
+      b.querySelector('.ahead').insertAdjacentHTML('afterend',
+        `<button type="button" class="speak block" data-id="${esc(b._finalId)}" title="Read its answer aloud" aria-label="Read its answer aloud">▶</button>`);
+    }
   }
   // Working only if it's the newest thing here and the agent is at work now.
   function isWorking(b) {
@@ -1494,7 +1518,7 @@
         const body = b.querySelector('.abody');
         if (it.kind === 'turn') {
           body.appendChild(turnEl(it.v, isNew));
-          if (it.v.stop === 'end_turn') { b._ended = true; b._final = (it.v.text || '').split('\n')[0].slice(0, 200); }
+          if (it.v.stop === 'end_turn') { b._ended = true; b._final = (it.v.text || '').split('\n')[0].slice(0, 200); b._finalId = it.v.id; }
         } else if (it.kind === 'thought') addThought(it.v, body);
         else addStep(it.v, body);
         tally(b, it.v);
@@ -1693,7 +1717,7 @@
     const a = e.target.closest('a.hit');
     if (!a) return;
     e.preventDefault();
-    if (matchMedia('(max-width: 720px)').matches) closeSearch();
+    if (matchMedia(PHONE).matches) closeSearch();
     if (a.dataset.slug !== current) await open(a.dataset.slug, true);
     if (!(await reveal(a.dataset.id))) showError('That message is further back than this page reaches.');
   });
@@ -2373,7 +2397,7 @@
   });
   nav.addEventListener('click', e => { if (e.target.closest('a.mood')) document.body.classList.remove('menu-open'); });
   // On a phone: one line until there's more to say, growing with the text (to 40% of the screen).
-  const phone = matchMedia('(max-width: 720px)').matches;
+  const phone = matchMedia(PHONE).matches;
   function fitSay() {
     if (!phone) return;
     // Empty, it's one line again: an empty textarea's scrollHeight counts its
