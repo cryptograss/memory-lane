@@ -102,6 +102,29 @@ class PushTest(TestCase):
             cache.clear()
             self.assertEqual(self.client.get('/api/push/').json(), {'enabled': True, 'problem': ''})
 
+    def test_a_key_is_read_in_whichever_shape_it_was_made(self):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        made = ec.generate_private_key(ec.SECP256R1())
+        der = made.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.TraditionalOpenSSL,
+                                 serialization.NoEncryption())
+        pem = made.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL,
+                                 serialization.NoEncryption()).decode()
+        params = bytes.fromhex('06082a8648ce3d030107')  # what openssl ecparam writes first, without -noout
+        expected = None
+        for shape, value in (('DER, base64url', b64url(der)), ('DER, base64', base64.b64encode(der).decode()),
+                             ('parameters, then DER', base64.b64encode(params + der).decode()),
+                             ('PEM', pem), ('PEM, its newlines escaped', pem.replace('\n', '\\n'))):
+            with self.subTest(shape=shape), override_settings(WEBPUSH_VAPID_PRIVATE_KEY=value):
+                cache.clear()
+                self.assertTrue(push.enabled())
+                expected = expected or push.public_key()
+                self.assertEqual(push.public_key(), expected)  # the same key, whatever its shape
+        public = made.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+        with override_settings(WEBPUSH_VAPID_PRIVATE_KEY=b64url(public)):
+            cache.clear()
+            self.assertIn("that's a public key", push.problem())
+
     def test_a_mention_reaches_a_closed_phone_encrypted_for_it_and_only_once(self):
         self.assertEqual(self.subscribe(self.justin, self.phone).status_code, 201)
         self.said(self.skyler, '@justin the bus leaves at nine')
