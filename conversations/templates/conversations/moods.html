@@ -342,6 +342,18 @@
   .turn a.replyto { display: block; margin: 2px 0 4px; padding-left: 8px; border-left: 2px solid var(--line); color: var(--muted);
     font-size: 12.5px; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .turn a.replyto:hover { border-left-color: var(--accent); color: var(--ink); }
+  /* '#': a Mood, or a message as a card (mood_view._hash_link); "linked from" under what's linked to. */
+  a.moodlink { color: var(--accent); text-decoration: none; font-weight: 600; }
+  a.moodlink:hover { text-decoration: underline; }
+  .turn .body a.msglink { display: block; margin: 4px 0; padding: 3px 8px; border-left: 2px solid var(--accent); border-radius: 0 6px 6px 0;
+                          background: var(--code); color: var(--muted); text-decoration: none; font-size: .92em;
+                          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .turn .body a.msglink strong { color: var(--ink); }
+  .turn .body a.msglink:hover { color: var(--ink); }
+  .turn .linkedfrom { margin-top: 6px; font-size: 12.5px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+  .turn .linkedfrom .lead { font-style: italic; }
+  .turn .linkedfrom a { color: var(--muted); text-decoration: none; border-bottom: 1px dotted var(--line); }
+  .turn .linkedfrom a:hover { color: var(--accent); }
   #replying { max-width: 760px; margin: 0 auto; padding: 6px 16px 0; font-size: 12.5px; color: var(--muted);
     display: flex; gap: 8px; align-items: center; }
   #replying[hidden] { display: none; }
@@ -1046,6 +1058,13 @@
       el.insertAdjacentHTML('beforeend', '<div class="voices">' + t.voices.map((v, i) =>
         `<button type="button" class="speak part" data-id="${esc(t.id)}" data-part="${i}" data-label="▶ ${esc(v)}" title="Read aloud: part ${i + 1}">▶ ${esc(v)}</button>`).join('') + '</div>');
     }
+    // Who linked here, or replied (services/links.py); and, as this one links or
+    // replies to something on the page, that one says so at once.
+    for (const from of t.linked_from || []) noteLink(el, from);
+    for (const a of el.querySelectorAll('.body a.msglink[data-reveal]')) {
+      noteLink(document.getElementById('m-' + a.dataset.reveal), { id: t.id, sender: t.sender, mood: current, reply: false });
+    }
+    if (t.reply) noteLink(document.getElementById('m-' + t.reply.id), { id: t.id, sender: t.sender, mood: current, reply: true });
     if (t.attested) el._proof = t.attested;
     markTurn(el, t.mentions || []);
     el.querySelectorAll('a.yarn[data-yarn]').forEach(decorateYarn);
@@ -1456,6 +1475,31 @@
             ...(data.events || []).map(e => ({ kind: 'event', v: e }))]
       .sort((a, b) => a.v.created_at < b.v.created_at ? -1 : a.v.created_at > b.v.created_at ? 1 : 0);
   }
+  // "Linked from": under a message, each that linked to it (↗) or replied (↩),
+  // as a link there. Once each, whether the server said so or the page saw it.
+  function noteLink(el, from) {
+    if (!el || !from || !from.id || el.querySelector(`.linkedfrom a[data-reveal="${CSS.escape(from.id)}"]`)) return;
+    let line = el.querySelector(':scope > .linkedfrom');
+    if (!line) {
+      line = document.createElement('div');
+      line.className = 'linkedfrom';
+      line.innerHTML = '<span class="lead">linked from</span>';
+      el.appendChild(line);
+    }
+    const where = from.mood && from.mood !== current ? ` in #${esc(from.mood)}` : '';
+    line.insertAdjacentHTML('beforeend', `<a class="msglink" href="/moods/${esc(from.mood || current)}/#m-${esc(from.id)}" `
+      + `data-mood="${esc(from.mood || current)}" data-reveal="${esc(from.id)}" title="${from.reply ? 'A reply to this' : 'Links here'}">`
+      + `${from.reply ? '↩' : '↗'} ${esc(shown(from.sender))}${where}</a>`);
+  }
+  // A Mood or a message, by '#' (mood_view._hash_link): there, without leaving the page.
+  document.addEventListener('click', e => {
+    const a = e.target.closest('a.msglink[data-reveal], a.moodlink[data-mood]');
+    if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button) return;
+    e.preventDefault();
+    if (a.classList.contains('moodlink')) { if (a.dataset.mood !== current) open(a.dataset.mood, true); return; }
+    openAndReveal(a.dataset.mood || current, a.dataset.reveal);
+  });
+
   // A message's link: /moods/<slug>/#m-<id>. Clicking its time copies it.
   document.addEventListener('click', async e => {
     const a = e.target.closest('a.permalink');
