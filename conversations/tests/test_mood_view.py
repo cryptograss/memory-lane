@@ -63,7 +63,7 @@ class RenderHtmlTest(TestCase):
         allowed = {'p': set(), 'br': set(), 'strong': set(), 'em': set(), 'code': set(), 'pre': set(),
                    'ul': set(), 'ol': set(), 'li': set(), 'h4': set(), 'table': set(), 'thead': set(),
                    'tbody': set(), 'tr': set(), 'th': set(), 'td': set(),
-                   'a': {'href', 'class', 'target', 'rel', 'data-yarn'}, 'span': {'class', 'data-who'},
+                   'a': {'href', 'class', 'target', 'rel', 'data-yarn', 'data-who'}, 'span': {'class', 'data-who'},
                    'img': {'src', 'alt', 'loading'}}
         fixed = {'target': '_blank', 'rel': 'noopener'}  # the renderer's own, never a post's
         case = self
@@ -119,8 +119,10 @@ class RenderHtmlTest(TestCase):
     def test_mentions_render_only_known_names(self):
         out = render_html('hey @Justin and @nobody, mail a@b.com, see https://x.y/@z. cc @magent.',
                           mentionable={'justin', 'magent'})
-        self.assertIn('<span class="mention" data-who="justin">@Justin</span>', out)
-        self.assertIn('<span class="mention" data-who="magent">@magent</span>.', out)
+        self.assertIn('<a class="mention" data-who="justin" href="https://pickipedia.xyz/wiki/User:Justin" '
+                      'target="_blank" rel="noopener">@Justin</a>', out)  # no inventory here: by its own name
+        self.assertIn('<a class="mention" data-who="magent" href="https://pickipedia.xyz/wiki/User:Magent" '
+                      'target="_blank" rel="noopener">@magent</a>.', out)
         self.assertIn('@nobody', out)
         self.assertNotIn('data-who="nobody"', out)
         self.assertIn('a@b.com', out)

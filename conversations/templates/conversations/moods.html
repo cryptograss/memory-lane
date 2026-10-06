@@ -271,6 +271,8 @@
     background: rgba(0,0,0,.55); color: #fff; font-size: 24px; line-height: 56px; text-align: center; padding-left: 4px; }
   .turn .body a.yarn.thumb:hover .yarnplay { background: var(--accent); }
   .mention { background: var(--code); border-radius: 4px; padding: 0 4px; font-weight: 600; }
+  a.mention { color: inherit; text-decoration: none; }  /* to their PickiPedia page (mood_view.mention_page) */
+  a.mention:hover { text-decoration: underline; }
   .mention.me { background: var(--mention); }
   .turn.new { animation: arrive .6s ease-out; }
   @keyframes arrive { from { background: var(--accent-soft); } to { background: transparent; } }
@@ -510,8 +512,10 @@
     .turn .speak, .aturn > .speak { font-size: 16px; padding: 6px 15px; border-radius: 18px; color: var(--accent);
                                     border-color: var(--accent); }
     .turn .who .speak { margin-left: auto; }
-    .turn.cont .speak.mini { position: static; float: right; opacity: 1; margin: 2px 0 4px 10px; padding: 6px 15px;
-                             border: 1px solid var(--accent); }
+    /* Kept in sight while any of its message is: it sticks at the top as a long one scrolls by. */
+    .turn > .speak.dock, .turn.cont .speak.mini { position: sticky; top: 8px; z-index: 3; float: right; opacity: 1;
+                                                   margin: 2px 0 4px 10px; padding: 6px 15px; border: 1px solid var(--accent);
+                                                   background: var(--bg); box-shadow: 0 1px 6px rgba(0,0,0,.12); }
     .turn.cont { display: flow-root; }
     .turn .voices .speak { font-size: 15px; padding: 6px 12px; }
   }
@@ -527,6 +531,10 @@
                  background: var(--panel); color: var(--ink); }
   .hush .off { color: var(--accent); }
   .hush .ultra { white-space: nowrap; cursor: pointer; }
+  /* Each agent's settings on one line: sideways, if a narrow screen can't hold them. */
+  .hush .agent { display: inline-flex; align-items: center; gap: 4px; flex-wrap: nowrap; white-space: nowrap;
+                 max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .hush .agent select, .hush .agent label { flex: none; }
   .hush .ultra input { vertical-align: -2px; margin: 0 2px 0 0; }
   /* How full an agent's context is: a little pie, its details on hover. */
   /* Its colour says how close to compacting: green to 70%, yellow to 80, orange to 90, red above. */
@@ -709,6 +717,7 @@
   // Who is looking. Lives in the browser: the view has no accounts, and a
   // filter is not a permission. Everything here stays readable to anyone.
   const PHONE = '(max-width: 720px), (pointer: coarse) and (max-height: 520px)';  // as the stylesheet's phone layout
+  const COARSE = matchMedia('(pointer: coarse)').matches;  // a finger, not a mouse
   const store = {
     get(k, d) { try { const v = localStorage.getItem('moods.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem('moods.' + k, JSON.stringify(v)); } catch (e) {} },
@@ -1029,7 +1038,10 @@
       + answers
       + `<a class="permalink mini" href="#m-${esc(t.id)}" title="${esc(stamp(t.created_at))} · this message's link: click to copy">#</a>`
       + (voiceOn && viewer ? speakButton(t, true) : '') + `<div class="body">${t.html}</div>`;
-    if (voiceOn && viewer) el.querySelector('.who').insertAdjacentHTML('beforeend', speakButton(t, false));
+    // On a touch screen ▶ floats at the message's right, kept in sight while any of it is (.dock).
+    // (A follow-on message has its own, the mini, kept in sight the same way.)
+    if (voiceOn && viewer && !COARSE) el.querySelector('.who').insertAdjacentHTML('beforeend', speakButton(t, false));
+    else if (voiceOn && viewer && !cont) el.insertAdjacentHTML('afterbegin', speakButton(t, false).replace('class="speak', 'class="speak dock'));
     if (voiceOn && viewer && (t.voices || []).length) {  // several voice blocks: a ▶ for each, by its voice
       el.insertAdjacentHTML('beforeend', '<div class="voices">' + t.voices.map((v, i) =>
         `<button type="button" class="speak part" data-id="${esc(t.id)}" data-part="${i}" data-label="▶ ${esc(v)}" title="Read aloud: part ${i + 1}">▶ ${esc(v)}</button>`).join('') + '</div>');
@@ -1897,11 +1909,13 @@
   }
 
   async function open(slug, push) {
-    if (replyTo) cancelReply();  // a reply belongs to the Mood it started in
     if (slug === current && document.getElementById('turns')) return;
+    saveDraft();  // what's typed here waits here, with the reply it's answering
+    replyTo = null; replying.hidden = true;
     stash();
     gen++;
     current = slug;
+    restoreDraft();
     if (push) history.pushState({ slug }, '', '/moods/' + encodeURIComponent(slug) + '/');
     newBelow = 0;
     touch(slug);
@@ -2056,21 +2070,22 @@
     return Math.floor(s / 3600) + 'h ' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + 'm';
   }
   // --- listening: hush an agent here, for a while or until changed ----------
-  const HUSH = [['on', 0, 'listening'], ['mentions', 60, 'mentions only · 1 hour'],
-                ['mentions', 0, 'mentions only · until changed'], ['off', 60, 'hushed · 1 hour'],
-                ['off', 120, 'hushed · 2 hours'], ['off', 0, 'hushed · until changed']];
+  // Short, so an agent's settings stay on one line: no time means until changed.
+  const HUSH = [['on', 0, 'listen'], ['mentions', 60, 'mention · 1hr'], ['mentions', 0, 'mention'],
+                ['off', 60, 'hush · 1hr'], ['off', 120, 'hush · 2hr'], ['off', 0, 'hush']];
   // Model and effort for this agent's mention wakes here (settings: model,
   // mention_effort), so changing them needs no trip to the settings page.
-  const MODELS = [['', 'default model'], ['opus', 'opus'], ['sonnet', 'sonnet'], ['fable', 'fable'], ['haiku', 'haiku']];
+  const MODELS = [['', 'default'], ['opus', 'opus'], ['sonnet', 'sonnet'], ['fable', 'fable'], ['haiku', 'haiku']];
   const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
   const EFFORT_LABELS = { xhigh: 'extra' };  // as the terminal names them
   const DISCRETIONS = ['reserved', 'normal', 'chatty'];
   const VERBOSITIES = ['brief', 'normal', 'thorough'];
+  const REPLY_LENGTHS = { brief: 'short replies', normal: 'mid replies', thorough: 'long replies' };  // beside discretion's "normal"
   const READS = [2500, 5000, 10000, 20000];  // tokens a wake reads word for word (catch_up_tokens)
   let agentsNow = {}, agentsShown = '';
   function describeListening(l) {
-    const until = l.until ? ' until ' + new Date(l.until).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
-    return l.mode === 'on' ? 'listening' : (l.mode === 'mentions' ? 'mentions only' : 'hushed') + until;
+    const until = l.until ? ' till ' + new Date(l.until).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+    return l.mode === 'on' ? 'listen' : (l.mode === 'mentions' ? 'mention' : 'hush') + until;
   }
   function shortModel(m) { return (m || '').replace(/^claude-/, '').replace(/-(\d+)-(\d+)$/, ' $1.$2'); }
   // A pie for how full `name`'s context is here, or nothing if unknown.
@@ -2119,29 +2134,29 @@
       const row = `<span class="agent${l.mode === 'on' ? '' : ' off'}" data-who="${esc(agent)}">${icon(agent, false)}${esc(agent)}: `;
       if (!keyHolder) {
         return row
-          + `${esc(describeListening(l))} · ${esc(a.model || 'default model')} · effort ${esc(EFFORT_LABELS[a.effort] || a.effort)} · reads ${esc(kTokens(a.reads || 10000))}`
-          + ` · ${esc(a.discretion || 'normal')} · ${esc(a.verbosity || 'normal')} replies`
+          + `${esc(describeListening(l))} · ${esc(a.discretion || 'normal')} · ${esc(REPLY_LENGTHS[a.verbosity || 'normal'])}`
+          + ` · ${esc(a.model || 'default')} · ⚡${esc(EFFORT_LABELS[a.effort] || a.effort)} · 📖${esc(kTokens(a.reads || 10000))}`
           + (a.ultracode ? ' · ultracode' : '') + '</span>';
       }
-      const listen = `<select data-agent="${esc(agent)}" data-knob="listening"><option selected disabled>${esc(describeListening(l))}</option>`
+      const listen = `<select data-agent="${esc(agent)}" data-knob="listening" title="listen: answers mentions and may speak up unasked · mention: answers mentions only · hush: wakes for nothing (mentions wait); with a time, back to listening then"><option selected disabled>${esc(describeListening(l))}</option>`
         + HUSH.map(([mode, minutes, label], i) => `<option value="${i}">${esc(label)}</option>`).join('') + '</select>';
       const models = MODELS.some(([v]) => v === a.model) ? MODELS : [...MODELS, [a.model, a.model]];
       const model = `<select data-agent="${esc(agent)}" data-knob="model" title="model for its wakes here">`
         + models.map(([v, label]) => `<option value="${esc(v)}"${v === a.model ? ' selected' : ''}>`
           + `${esc(v ? label : (ctx.model ? `default (${shortModel(ctx.model)})` : label))}</option>`).join('') + '</select>';
       const effort = `<select data-agent="${esc(agent)}" data-knob="mention_effort" title="how hard it thinks when @mentioned here">`
-        + EFFORTS.map(v => `<option value="${v}"${v === a.effort ? ' selected' : ''}>effort ${EFFORT_LABELS[v] || v}</option>`).join('') + '</select>';
+        + EFFORTS.map(v => `<option value="${v}"${v === a.effort ? ' selected' : ''}>⚡${EFFORT_LABELS[v] || v}</option>`).join('') + '</select>';
       // How much of what was said since its last word a wake reads word for word.
       const reads = `<select data-agent="${esc(agent)}" data-knob="catch_up_tokens" title="How much of what was said here since it last spoke a wake reads word for word; older is summarized">`
-        + READS.map(n => `<option value="${n}"${n === a.reads ? ' selected' : ''}>reads ${kTokens(n)}</option>`).join('')
-        + (READS.includes(a.reads) ? '' : `<option value="${a.reads}" selected>reads ${kTokens(a.reads)}</option>`) + '</select>';
+        + READS.map(n => `<option value="${n}"${n === a.reads ? ' selected' : ''}>📖${kTokens(n)}</option>`).join('')
+        + (READS.includes(a.reads) ? '' : `<option value="${a.reads}" selected>📖${kTokens(a.reads)}</option>`) + '</select>';
       // How readily it speaks up unasked here, and how long its replies run.
       const discretion = `<select data-agent="${esc(agent)}" data-knob="discretion" title="How readily it speaks up unasked here: reserved, normal, or chatty (joins in, small talk included)">`
         + DISCRETIONS.map(v => `<option value="${v}"${v === (a.discretion || 'normal') ? ' selected' : ''}>${v}</option>`).join('') + '</select>';
       const verbosity = `<select data-agent="${esc(agent)}" data-knob="verbosity" title="How long its replies run here">`
-        + VERBOSITIES.map(v => `<option value="${v}"${v === (a.verbosity || 'normal') ? ' selected' : ''}>${v} replies</option>`).join('') + '</select>';
+        + VERBOSITIES.map(v => `<option value="${v}"${v === (a.verbosity || 'normal') ? ' selected' : ''}>${REPLY_LENGTHS[v]}</option>`).join('') + '</select>';
       const ultra = `<label class="ultra" title="Claude Code's standing multi-agent workflows, on wakes with full tools: thorough, and costly">`
-        + `<input type="checkbox" data-agent="${esc(agent)}" data-knob="ultracode"${a.ultracode ? ' checked' : ''}> ultracode</label>`;
+        + `<input type="checkbox" data-agent="${esc(agent)}" data-knob="ultracode"${a.ultracode ? ' checked' : ''}> ultra</label>`;
       return `${row}${listen} ${discretion} ${verbosity} ${model} ${effort} ${reads} ${ultra}</span>`;
     }).join('');
   }
@@ -2936,14 +2951,36 @@
   function setReply(id) {
     const el = document.getElementById('m-' + id);
     if (!el) return;
-    const sender = (el.querySelector('.who .name') || {}).textContent || '';
+    const sender = ((el.querySelector('.who .name') || {}).textContent || '').trim();
     const snippet = ((el.querySelector('.body') || {}).innerText || '').replace(/\s+/g, ' ').trim().slice(0, 140);
-    replyTo = { id };
-    replying.querySelector('.what').innerHTML = `↩ Replying to <b>${esc(sender.trim())}</b>: ${esc(snippet)}`;
-    replying.hidden = false;
+    showReply({ id, sender, snippet });
+    saveDraft();
     sayBox.focus();
   }
-  function cancelReply() { replyTo = null; replying.hidden = true; }
+  function showReply(r) {
+    replyTo = r;
+    replying.querySelector('.what').innerHTML = `↩ Replying to <b>${esc(r.sender || '')}</b>: ${esc(r.snippet || '')}`;
+    replying.hidden = false;
+  }
+  function cancelReply() { replyTo = null; replying.hidden = true; saveDraft(); }
+
+  // --- drafts: what's typed and not yet sent, kept per Mood in this browser ------
+  // Off to the settings page, another Mood, or a closed tab: back here, it's
+  // waiting, reply and all. Sending clears it; a week-old one is let go.
+  const DRAFT_DAYS = 7;
+  function saveDraft() {
+    if (!current) return;
+    const text = sayBox.value;
+    store.set('draft:' + current, text.trim() || replyTo ? { text, reply: replyTo, at: Date.now() } : null);
+  }
+  function restoreDraft() {
+    const d = current && store.get('draft:' + current, null);
+    const fresh = d && Date.now() - (d.at || 0) < DRAFT_DAYS * 86400e3;
+    sayBox.value = fresh ? d.text || '' : '';
+    fitSay();
+    if (fresh && d.reply && d.reply.id) showReply(d.reply);
+  }
+  sayBox.addEventListener('input', saveDraft);
   document.addEventListener('click', e => {
     const b = e.target.closest('.replybtn[data-reply]');
     if (b) { e.preventDefault(); setReply(b.dataset.reply); return; }
