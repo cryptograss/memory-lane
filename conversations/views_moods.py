@@ -52,9 +52,19 @@ def moods_page(request, slug=None):
         # PickiPedia names, shown for the names here (from hunter's inventory).
         'wiki_names': wiki_auth.names(),
         # Notifications with magenta closed (services/push.py): what browsers subscribe with. '' if off.
-        'push_key': push.public_key(),
+        'push_key': push_key(),
         'page_version': page_version(),
     })
+
+
+def push_key():
+    """push.public_key(), or '' if anything about push is amiss: the page loads regardless."""
+    try:
+        return push.public_key()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('push key unusable; push off for this page')
+        return ''
 
 
 @functools.cache

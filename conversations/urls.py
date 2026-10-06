@@ -58,6 +58,7 @@ urlpatterns = [
     path('api/notices/<slug:name>/', views_moods.api_notices, name='api_notices'),
     path('api/moods/new/', views_auth.api_new_mood, name='api_moods_new'),
     path('api/seen/', views_auth.api_seen, name='api_seen'),
+    path('api/push/', views_auth.api_push, name='api_push'),
     path('api/push/subscribe/', views_auth.api_push_subscribe, name='api_push_subscribe'),
     path('api/push/unsubscribe/', views_auth.api_push_unsubscribe, name='api_push_unsubscribe'),
     path('api/moods/recent/', views_moods.api_recent, name='api_moods_recent'),

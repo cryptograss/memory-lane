@@ -781,6 +781,14 @@ def api_seen(request):
 
 # --- notifications with magenta closed (services/push.py) ---------------------------
 
+@require_GET
+def api_push(request):
+    """Whether push is on here, and if a key is set but push is off, why
+    (the library missing, a key it can't read) -- never the key."""
+    from .services import push
+    return JsonResponse({'enabled': push.enabled(), 'problem': push.problem()})
+
+
 @require_POST
 def api_push_subscribe(request):
     """This device's push subscription, from the browser's PushManager:
