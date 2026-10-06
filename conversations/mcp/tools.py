@@ -137,15 +137,18 @@ async def handle_get_context_heap(arguments):
 
 async def handle_search_messages(arguments):
     """Search for messages: each hit with its id, kind, Mood and the text around the match"""
-    from conversations.services.memory import search
     arguments = arguments or {}
-    query = arguments.get("query", "")
-    exact = bool(arguments.get("exact", False))
-    sender = arguments.get("sender") or None
-    limit = arguments.get("limit", 20)
+    text = await sync_to_async(with_fresh_connection(lambda: search_text(
+        arguments.get("query", ""), limit=arguments.get("limit", 20), exact=bool(arguments.get("exact", False)),
+        sender=arguments.get("sender") or None)))()
+    return [types.TextContent(type="text", text=text)]
 
-    hits = await sync_to_async(with_fresh_connection(lambda: search(query, limit=limit, exact=exact, sender=sender)))()
 
+def search_text(query, limit=20, exact=False, sender=None):
+    """The hits, as text. All here, in the worker thread: naming a hit's Mood can
+    touch the database (mood_slug), which the async side may not."""
+    from conversations.services.memory import search
+    hits = search(query, limit=limit, exact=exact, sender=sender)
     how = 'exact phrase' if exact else 'words'
     lines = [f"{len(hits)} messages matching '{query}' ({how}"
              + (f", from {sender}" if sender else '') + ("; newest first" if exact else "; best first") + "):\n"]
@@ -158,7 +161,7 @@ async def handle_search_messages(arguments):
         lines.append("get_message_context with an id (or its first 8 characters) shows what was said around it.")
     elif not exact:
         lines.append("Nothing found. For a literal string (a command, a code fragment), try exact: true.")
-    return [types.TextContent(type="text", text='\n'.join(lines))]
+    return '\n'.join(lines)
 
 
 async def handle_get_message_context(arguments):

@@ -167,3 +167,28 @@ class SpokenMentionsTest(TestCase):
         for text in ('Justin went to the store.', 'The magnet fell off.', 'That was what magent said.',
                      'Look at magenta-interface', 'cat skyler', 'Already @magent, hi'):
             self.assertEqual(self.heard(text), text)
+
+
+class ReaderReportsTest(TestCase):
+
+    def setUp(self):
+        cache.clear()
+        self.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        Mood.objects.create(slug='general', title='general')
+
+    def test_what_the_reader_did_is_kept_and_nothing_secret_with_it(self):
+        _, token = mood_auth.enrol_device(self.justin, 'Pixel', tier='wiki')
+        client = Client()
+        client.cookies[mood_auth.COOKIE] = token
+        said = client.post('/api/voice/heard/', json.dumps({
+            'mood': 'general', 'message': 'a947485f', 'clip': 'memo', 'outcome': 'failed', 'hidden': True,
+            'error': 'NotAllowedError: play() failed; token=ghp_0123456789abcdefghijklmnopqrstuvwxyz'}),
+            content_type='application/json')
+        self.assertEqual(said.status_code, 201)
+        row = Message.objects.get(source_file='voice').content
+        self.assertEqual((row['type'], row['by'], row['clip'], row['outcome'], row['hidden'], row['device']),
+                         ('heard', 'justin', 'memo', 'failed', True, 'Pixel'))
+        self.assertNotIn('ghp_', row['error'])
+        self.assertEqual(client.post('/api/voice/heard/', json.dumps({'mood': 'general', 'outcome': 'exploded'}),
+                                     content_type='application/json').status_code, 400)
+        self.assertEqual(Client().post('/api/voice/heard/', '{}', content_type='application/json').status_code, 401)

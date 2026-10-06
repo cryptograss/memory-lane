@@ -1481,7 +1481,9 @@ class GreetingTest(TestCase):
         self.assertIn('<mood-wake mood="m26" reason="arrival">', prompt)
         self.assertIn('skyler just signed in with PickiPedia ("PickiPedia sign-in (SkymanJenkins, Android)")', prompt)
         self.assertIn('3 day(s) ago', prompt)
-        self.assertIn('Never a generic welcome', prompt)
+        self.assertIn('never a generic welcome', prompt)
+        self.assertIn('search your memory for their name', prompt)  # memory first, PickiPedia if none
+        self.assertIn("don't introduce yourself", prompt)  # and in every wake: wake_footer's GREETING
         self.at(2)
         poller.cycle()
         self.assertEqual(len(self.waker.woken), 1)  # once per sign-in

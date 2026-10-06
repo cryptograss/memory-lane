@@ -937,6 +937,25 @@
     } finally { b.classList.remove('busy'); }
   });
 
+  // A memo recorded in a browser doesn't say how long it is (MediaRecorder writes no
+  // duration), so its player can't place its bar: it races ahead, then crawls.
+  // Asked to seek far past the end, the browser reads to the end and finds out;
+  // then back to where it was.
+  document.addEventListener('loadedmetadata', e => {
+    const a = e.target;
+    if (!(a instanceof HTMLAudioElement) || !a.closest('.turn') || a.duration !== Infinity || a._measured) return;
+    a._measured = true;
+    const at = a.currentTime, playing = !a.paused;
+    const back = () => {
+      if (a.duration === Infinity) return;
+      a.removeEventListener('durationchange', back);
+      a.currentTime = at;
+      if (playing) a.play().catch(() => {});
+    };
+    a.addEventListener('durationchange', back);
+    a.currentTime = 1e101;
+  }, true);
+
   // --- Yarn clips ----------------------------------------------------------
   // The server marks a pasted Yarn clip as a card (a.yarn, data-yarn = its id,
   // checked as a UUID). The card shows Yarn's captioned GIF of the clip,
@@ -2604,7 +2623,7 @@
   const READ_EVERY_MS = 5000;
   const MEMO_AUDIO = /^🎙 \[voice memo[^\]]*\]\((\/moods\/media\/[0-9a-f]{64}\.[a-z0-9]+)\)/;
   const readQueue = [], readHeard = new Set();
-  let readMode = 'off', readSinceMs = 0, readLast = null, readNow = null, readHeld = false, readBlocked = false;
+  let readMode = 'off', readSinceMs = 0, readLast = null, readNow = null, readHeld = false, readBlocked = false, readWhy = '';
   let clipDone = null;
   if (voiceOn && viewer) document.getElementById('readAllLabel').hidden = false;
 
@@ -2612,8 +2631,9 @@
     readMode = mode;
     store.set('readAll', mode);
     readSel.value = mode;
-    if (mode === 'off') { readQueue.length = 0; skipClip(); readNow = null; readHeld = readBlocked = false; readLast = null; }
+    if (mode === 'off') { readQueue.length = 0; readBlocked = false; skipClip(); readNow = null; readHeld = false; readLast = null; }
     else if (!readSinceMs) readSinceMs = Date.now() - 15000;  // from now: what was said before isn't news
+    keepAwake(mode !== 'off' && !readHeld);
     renderReadBar();
   }
   readSel.addEventListener('change', () => { readBlocked = false; setReadMode(readSel.value); readPoll(); });
@@ -2636,28 +2656,71 @@
     readNext();
   }
   setInterval(readPoll, READ_EVERY_MS);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) readPoll(); });  // looked at: anything new, now
 
+  let clipError = '';  // why the last clip didn't play, for the bar and the report
   function playClip(src) {
+    clipError = '';
     return new Promise(resolve => {
       clipDone = resolve;
       reader.src = src;
       reader.play().catch(err => {
         if (clipDone !== resolve) return;
         clipDone = null;
+        clipError = `${err && err.name}: ${err && err.message}`.slice(0, 200);
         resolve(err && err.name === 'NotAllowedError' ? 'blocked' : 'failed');
       });
     });
   }
   function endClip(how) { const done = clipDone; clipDone = null; if (done) done(how); }
   reader.addEventListener('ended', () => endClip('ended'));
-  reader.addEventListener('error', () => endClip('failed'));
-  function skipClip() { reader.pause(); if (readNow) readNow.skipped = true; endClip('skipped'); }
+  reader.addEventListener('error', () => {
+    clipError = `media error ${reader.error && reader.error.code}: ${(reader.error && reader.error.message) || ''}`.slice(0, 200);
+    endClip('failed');
+  });
+  function skipClip() {
+    if (readBlocked) {  // stuck on one: leave it, go on to the next
+      readQueue.shift(); readBlocked = false; readWhy = ''; keepAwake(true); readNext(); return;
+    }
+    reader.pause(); if (readNow) readNow.skipped = true; endClip('skipped');
+  }
   function holdRead(hold) {
     readHeld = hold;
+    keepAwake(!hold);
     if (hold) reader.pause();
     else if (clipDone && reader.paused) reader.play().catch(() => {});
     if (!hold) readNext();
     renderReadBar();
+  }
+
+  // Awake: a phone freezes a page in the background within minutes -- unless it's
+  // playing something. While reading as they come, a silent track plays under it
+  // all, as a podcast app's would: Android keeps magenta awake (and shows it, with
+  // pause and skip, where media goes), and every message is news when it lands.
+  // Like any player, it pauses other audio apps; navigation still speaks over it.
+  function silence(seconds) {
+    const rate = 8000, n = rate * seconds, buf = new ArrayBuffer(44 + n), v = new DataView(buf);
+    const text = (at, t) => [...t].forEach((c, i) => v.setUint8(at + i, c.charCodeAt(0)));
+    text(0, 'RIFF'); v.setUint32(4, 36 + n, true); text(8, 'WAVEfmt '); v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate, true);
+    v.setUint16(32, 1, true); v.setUint16(34, 8, true); text(36, 'data'); v.setUint32(40, n, true);
+    new Uint8Array(buf, 44).fill(128);  // 8-bit: 128 is silence
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+  const awake = new Audio();
+  awake.loop = true;
+  function keepAwake(on) {
+    if (!on) { awake.pause(); return; }
+    if (!awake.src) awake.src = silence(20);  // long enough to count as media, not a beep
+    awake.play().catch(() => {});
+  }
+
+  // What the reader did with each clip, told to the server (a voice row in the
+  // record): a phone's player can't be watched from here otherwise.
+  function readReport(item, clip, outcome) {
+    fetch('/api/voice/heard/', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify({ mood: item.mood, message: item.id, clip, outcome, error: clipError,
+                             hidden: document.hidden }) }).catch(() => {});
   }
 
   async function readNext() {
@@ -2686,19 +2749,28 @@
           if (r.status === 429 || r.status === 503) setReadMode('off');  // the day's voice budget spent, or no voice here
           throw new Error(body.error || r.status);
         }
-        clips.push(body.intro, body.url);
+        clips.push(['intro', body.intro], ['message', body.url]);
       }
-      if (memo) clips.push(memo[1]);
+      if (memo) clips.push(['memo', memo[1]]);
     } catch (err) {
       showError('read aloud: ' + err.message);
       if (readNow === now) { readNow = null; readNext(); }
       return;
     }
-    for (const src of clips.filter(Boolean)) {
+    for (const [clip, src] of clips.filter(([, src]) => src)) {
       if (now.skipped || readMode === 'off' || readNow !== now) break;
-      const how = await playClip(src);
-      if (how === 'blocked') {  // the phone wants a tap first (after a reload, say): ▶ on the bar
-        readQueue.unshift(item); readBlocked = true; readNow = null; renderReadBar(); return;
+      let how = await playClip(src);
+      if (how === 'failed' && !now.skipped && readNow === now) {  // once more, after a breath
+        readReport(item, clip, 'failed');
+        await new Promise(r => setTimeout(r, 1500));
+        how = await playClip(src);
+      }
+      readReport(item, clip, how);
+      if (how === 'blocked' || how === 'failed') {
+        // Not on to the next as if this were heard: wait, and say why. ▶ (or the car's play)
+        // tries it again -- a press is what a phone wants -- and ⏭ leaves it.
+        readQueue.unshift(item); readBlocked = true; readWhy = clipError; readNow = null;
+        keepAwake(false); renderReadBar(); return;
       }
     }
     if (readNow !== now) return;  // stopped meanwhile
@@ -2713,7 +2785,7 @@
     const where = item ? ((moods.find(m => m.slug === item.mood) || {}).title || item.mood) : '';
     const more = readQueue.length ? ` · ${readQueue.length} more` : '';
     readWhat.textContent = note
-      || (readBlocked ? `🔊 ${readQueue.length} to read: press ▶`
+      || (readBlocked ? `🔊 ${readQueue.length} to read: press ▶${readWhy ? ` (it said ${readWhy})` : ''}`
       : item ? `🔊 ${shown(item.who)}${readMode === 'everywhere' ? ' · ' + where : ''}${more}`
       : `🔊 reading ${readMode === 'everywhere' ? 'every Mood' : 'this Mood'} as it comes`);
     readPause.textContent = readHeld || readBlocked ? '▶' : '⏸';
@@ -2724,7 +2796,7 @@
     }
   }
   readPause.addEventListener('click', () => {
-    if (readBlocked) { readBlocked = false; readNext(); return; }
+    if (readBlocked) { readBlocked = false; readWhy = ''; keepAwake(true); readNext(); return; }
     holdRead(!readHeld);
   });
   document.getElementById('readSkip').addEventListener('click', skipClip);
@@ -2732,7 +2804,7 @@
   if ('mediaSession' in navigator) {
     const handle = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (e) {} };
     // A ▶ pressed on one message is what's playing, if anything: those buttons stop it.
-    handle('play', () => { if (speaking) return; readBlocked = false; holdRead(false); });
+    handle('play', () => { if (speaking) return; readBlocked = false; readWhy = ''; holdRead(false); });
     handle('pause', () => { if (speaking) { stopSpeaking(); return; } holdRead(true); });
     handle('nexttrack', () => { if (speaking) { stopSpeaking(); return; } skipClip(); });
     handle('stop', () => { if (speaking) { stopSpeaking(); return; } setReadMode('off'); });
