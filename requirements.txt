@@ -14,3 +14,5 @@ python-dotenv==1.0.0
 mcp>=1.29.0,<2.0.0
 debugpy>=1.8.0
 requests>=2.31.0
+# Web Push: notifications with magenta closed (conversations/services/push.py).
+pywebpush==2.5.0

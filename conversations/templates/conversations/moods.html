@@ -650,6 +650,8 @@
   const viewerTier = "{{ viewer_tier|escapejs }}" || null;
   const keyHolder = !!viewer && viewerTier === 'key';
   const wikiSignin = {{ wiki_signin|yesno:"true,false" }};
+  // Our VAPID key's public half, for pushes with magenta closed (services/push.py); '' if push is off.
+  const PUSH_KEY = "{{ push_key|escapejs }}";
   // PickiPedia names for the names here (hunter's inventory); shown wherever a person is named.
   const WIKI_NAMES = JSON.parse(document.getElementById('wiki-names').textContent || '{}');
   const shown = n => WIKI_NAMES[n] || n;
@@ -1551,14 +1553,51 @@
   function renderBell() {
     bell.hidden = !me || !('Notification' in window);
     bell.textContent = notifying() ? '🔔' : '🔕';
-    bell.title = notifying() ? 'Notifying you of mentions and answers (click to stop)'
-      : 'Notify me of mentions, and when an agent answers me';
+    const closed = pushable() ? ', even with magenta closed' : '';
+    bell.title = notifying() ? `Notifying you of mentions and answers${closed} (click to stop)`
+      : `Notify me of mentions, and when an agent answers me${closed}`;
   }
   bell.addEventListener('click', async () => {
-    if (notifying()) store.set('notify', false);
-    else if ((await Notification.requestPermission()) === 'granted') { granted = true; store.set('notify', true); }
+    if (notifying()) { store.set('notify', false); pushOff(); }
+    else if ((await Notification.requestPermission()) === 'granted') { granted = true; store.set('notify', true); pushOn(); }
     renderBell();
   });
+
+  // With magenta closed, only a push can tell them (services/push.py): the bell
+  // on subscribes this browser at its push service, and gives the server
+  // where to send; off, it stops. Each load says it again, so a subscription
+  // follows this device, and one made under a key since changed is made anew.
+  function pushable() { return !!PUSH_KEY && !!viewer && 'serviceWorker' in navigator && 'PushManager' in window; }
+  const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const fromB64url = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((text.length + 3) % 4)),
+                                             c => c.charCodeAt(0));
+  async function pushRegistration() {
+    return (await navigator.serviceWorker.getRegistration('/moods/')) || navigator.serviceWorker.ready;
+  }
+  async function pushOn() {
+    if (!pushable()) return;
+    try {
+      const reg = await pushRegistration();
+      let sub = await reg.pushManager.getSubscription();
+      const key = sub && sub.options && sub.options.applicationServerKey;
+      if (sub && key && b64url(key) !== PUSH_KEY) { await sub.unsubscribe(); sub = null; }
+      sub = sub || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64url(PUSH_KEY) });
+      const r = await fetch('/api/push/subscribe/', { method: 'POST', body: JSON.stringify(sub.toJSON()),
+                                                     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() } });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+    } catch (e) { showError('notifications with magenta closed: ' + e.message); }
+  }
+  async function pushOff() {
+    if (!pushable()) return;
+    try {
+      const sub = await (await pushRegistration()).pushManager.getSubscription();
+      if (!sub) return;
+      await fetch('/api/push/unsubscribe/', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }),
+                                              headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() } });
+      await sub.unsubscribe();
+    } catch (e) {}
+  }
+  if (notifying() && pushable()) pushOn();
   async function notify(n) {
     if (!notifying()) return;
     const mood = moods.find(m => m.slug === n.mood);

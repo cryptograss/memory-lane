@@ -18,7 +18,7 @@ from django.core.exceptions import ValidationError
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import Message, Mood, ThinkingEntity, mood_slug
-from .services import wiki_auth, wiki_feed
+from .services import push, wiki_auth, wiki_feed
 from .services import mood_auth
 from .services.mood_view import (
     from_wiki_tier,
@@ -51,6 +51,8 @@ def moods_page(request, slug=None):
         'wiki_signin': wiki_auth.enabled(),
         # PickiPedia names, shown for the names here (from hunter's inventory).
         'wiki_names': wiki_auth.names(),
+        # Notifications with magenta closed (services/push.py): what browsers subscribe with. '' if off.
+        'push_key': push.public_key(),
         'page_version': page_version(),
     })
 
@@ -232,6 +234,7 @@ def api_pulse(request):
     rows = list(Setting.objects.exclude(key__in=knobs.MODERATION_KEYS))
     archived = knobs.archived_slugs()
     wiki_feed.nudge()  # asked every second by the runner: the wiki feed's clock (at most once a minute)
+    push.nudge()       # and the push clock: notices to send to closed pages (at most every 10 s)
     moods = []
     for mood in Mood.objects.all():
         said = mood.messages.filter(is_sidechain=False).exclude(sender_id__in=MACHINERY_SENDERS)
@@ -552,12 +555,18 @@ def api_notices(request, name):
     """
     from datetime import timedelta
     from django.utils import timezone
-    from .services.mood_view import quiet_reason
 
     name = name.lower()
     if not ThinkingEntity.objects.filter(name=name).exists():
         raise Http404
     since = parse_datetime(request.GET.get('since') or '') or timezone.now() - timedelta(hours=1)
+    return JsonResponse({'name': name, 'notices': notices_for(name, since)})
+
+
+def notices_for(name, since, limit=NOTICES_MAX):
+    """api_notices' notices for `name` since a moment, newest first: what the
+    bell tells them, in the page and by push (services/push.py)."""
+    from .services.mood_view import quiet_reason
     names = known_names()
     agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
     humans = set(ThinkingEntity.objects.filter(is_biological_human=True).values_list('name', flat=True))
@@ -575,9 +584,9 @@ def api_notices(request, name):
         elif (msg.sender_id in agents and msg.stop_reason == 'end_turn' and quiet_reason(text) is None
               and answered_by(msg, humans) == name):
             found.append({'kind': 'answer', 'mood': msg.mood_slug, 'turn': turn_payload(msg, text, names)})
-        if len(found) >= NOTICES_MAX:
+        if len(found) >= limit:
             break
-    return JsonResponse({'name': name, 'notices': found})
+    return found
 
 
 @require_GET
@@ -670,6 +679,18 @@ self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', e => {
   if (e.request.mode === 'navigate') e.respondWith(fetch(e.request));
 });
+// A push (services/push.py): a mention or an answer, while magenta is closed.
+// A magenta page in front of its person tells them itself, so then: nothing.
+self.addEventListener('push', e => {
+  let n = null;
+  try { n = e.data ? e.data.json() : null; } catch (err) {}
+  if (!n || !n.title) return;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    if (list.some(c => c.visibilityState === 'visible' && new URL(c.url).pathname.startsWith('/moods/'))) return;
+    return self.registration.showNotification(n.title, { body: n.body || '', tag: n.tag, icon: '/moods/icon-192.png',
+                                                         data: n.data || {} });
+  }));
+});
 // A notification (a mention, an answer) opens its Mood at that message: in a
 // window already open on magenta if there is one, else a new one.
 self.addEventListener('notificationclick', e => {
@@ -725,6 +746,7 @@ def api_moods_live(request):
     from django.core.cache import cache
     from django.utils import timezone
 
+    push.nudge()  # every open page asks this: the push clock runs while the runner's away, too
     cached = cache.get('moods-live')
     if cached is not None:
         return JsonResponse(cached)
