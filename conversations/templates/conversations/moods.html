@@ -1095,6 +1095,12 @@
     prev = { sender: t.sender, at: new Date(t.created_at).getTime() };
   }
 
+  // A deploy's log, posted to PickiPedia by DrivingThatTrain (maybelle-config
+  // post-deploy-log.py) and sent as the report's note: a link, if it's one of those.
+  function deployLog(note) {
+    return /^https:\/\/pickipedia\.xyz\/wiki\/Cryptograss:[\w%.-]+\/deploy_logs\/\d+(-\d+)?$/.test(note || '')
+      ? ` · <a href="${esc(note)}" target="_blank" rel="noopener">log</a>` : '';
+  }
   function took(seconds) {
     if (seconds == null) return '';
     return seconds < 90 ? ` in ${seconds}s` : ` in ${Math.round(seconds / 60)}m`;
@@ -1162,9 +1168,10 @@
     el.className = 'event ' + (e.state || '');
     const commit = e.commit ? ` · <code>${esc(e.commit.slice(0, 8))}</code>` : '';
     const by = e.by ? ` · by ${esc(e.by)}` : '';
+    const log = deployLog(e.note);
     el.innerHTML = e.state === 'started' ? `⚙ <b>${esc(e.server)}</b> redeploying…${by}${commit} · ${esc(stamp(e.created_at))}`
-      : e.state === 'failed' ? `✗ <b>${esc(e.server)}</b> redeploy failed${took(e.took)}${by} · ${esc(stamp(e.created_at))}`
-      : `✓ <b>${esc(e.server)}</b> redeployed${took(e.took)}${commit}${by} · ${esc(stamp(e.created_at))}`;
+      : e.state === 'failed' ? `✗ <b>${esc(e.server)}</b> redeploy failed${took(e.took)}${by}${log} · ${esc(stamp(e.created_at))}`
+      : `✓ <b>${esc(e.server)}</b> redeployed${took(e.took)}${commit}${by}${log} · ${esc(stamp(e.created_at))}`;
     container.appendChild(el);
     prev = null;
     refreshServers(true);  // the dots, now
@@ -1232,10 +1239,11 @@
       const d = sv.deploy;
       const last = d ? (d.state === 'started' && sv.deploying ? `redeploying since ${ago(d.at)}`
         : `${d.state === 'failed' ? 'redeploy failed' : 'redeployed'} ${ago(d.at)}${d.commit ? ' · ' + d.commit.slice(0, 8) : ''}`) : 'no redeploy told yet';
+      const logLink = d && d.state !== 'started' ? deployLog(d.note) : '';
       const name = sv.url ? `<a href="${esc(sv.url)}" target="_blank" rel="noopener" title="${esc(sv.name)} on PickiPedia"><b>${esc(sv.name)}</b></a>` : `<b>${esc(sv.name)}</b>`;
       return `<div>${sv.art ? `<pre class="art" aria-hidden="true">${esc(sv.art)}</pre>` : ''}<span>${name}`
         + `${sv.role ? ` <span class="role">${esc(sv.role)}</span>` : ''} · ${sv.deploying ? 'redeploying' : sv.up ? 'up' : '<b>not answering</b>'}`
-        + `<br><span class="note">${esc(sv.about)} · ${esc(last)}</span></span></div>`;
+        + `<br><span class="note">${esc(sv.about)} · ${esc(last)}${logLink}</span></span></div>`;
     }).join('');
   }
   serversEl.addEventListener('click', e => {
