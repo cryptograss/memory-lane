@@ -63,7 +63,8 @@ class RenderHtmlTest(TestCase):
         allowed = {'p': set(), 'br': set(), 'strong': set(), 'em': set(), 'code': set(), 'pre': set(),
                    'ul': set(), 'ol': set(), 'li': set(), 'h4': set(), 'table': set(), 'thead': set(),
                    'tbody': set(), 'tr': set(), 'th': set(), 'td': set(),
-                   'a': {'href', 'class', 'target', 'rel', 'data-yarn', 'data-who'}, 'span': {'class', 'data-who'},
+                   'a': {'href', 'class', 'target', 'rel', 'data-yarn', 'data-who', 'data-mood', 'data-reveal'},
+                   'span': {'class', 'data-who'},
                    'img': {'src', 'alt', 'loading'}}
         fixed = {'target': '_blank', 'rel': 'noopener'}  # the renderer's own, never a post's
         case = self
@@ -78,8 +79,12 @@ class RenderHtmlTest(TestCase):
                     if name == 'data-yarn':  # the page builds a player from it
                         case.assertRegex(value, r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', (source, out))
                     if name in ('href', 'src'):  # decoded: entities are fine
-                        case.assertRegex(value, r'^(https?://|/moods/media/[0-9a-f]{64}\.(png|jpg|gif|webp)$)',
-                                         (source, out))
+                        case.assertRegex(value, r'^(https?://|/moods/media/[0-9a-f]{64}\.(png|jpg|gif|webp)$'
+                                                r'|/moods/[a-z0-9-]+/(#m-[0-9a-f-]{36})?$)', (source, out))
+                    if name == 'data-mood':  # the page opens it
+                        case.assertRegex(value, r'^[a-z0-9-]+$', (source, out))
+                    if name == 'data-reveal':
+                        case.assertRegex(value, r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', (source, out))
         Check().feed(out)
 
     def test_a_url_at_the_start_of_a_line_links(self):

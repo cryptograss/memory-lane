@@ -285,6 +285,18 @@ def reply_to(text):
     return (match[1], text[match.end():]) if match else (None, text)
 
 
+def snippet_of(text):
+    """A message's first words as a line of plain text: links as their words, an image as 🖼,
+    code and voice blocks left out -- for a reply's quote and a linked message's card."""
+    from .voice import split_voices
+    text, _ = split_voices(text or '')
+    text = re.sub(r'```.*?(```|$)', ' ', text, flags=re.S)
+    text = re.sub(r'!\[[^\]]*\]\([^)]*\)', '🖼', text)
+    text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)
+    text = re.sub(r'[*_`]+', '', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
 def replied(message_id):
     """What a reply answers, as {'id', 'sender', 'snippet'}; None if it's gone."""
     from conversations.models import Message
@@ -293,7 +305,7 @@ def replied(message_id):
         return None
     from conversations.models import ThinkingEntity
     _, said = reply_to(prose(target.content) or '')
-    return {'id': str(target.id), 'sender': target.sender_id, 'snippet': re.sub(r'\s+', ' ', said).strip()[:140],
+    return {'id': str(target.id), 'sender': target.sender_id, 'snippet': snippet_of(said)[:140],
             'is_human': ThinkingEntity.objects.filter(name=target.sender_id, is_biological_human=True).exists()}
 
 
@@ -379,9 +391,44 @@ def yarn_clip(url):
     return match.group(2) if match and match.group(1) in YARN_HOSTS else None
 
 
+# A message's own link (its time copies it): a card, not a URL (services/links.py).
+_PERMALINK = re.compile(r'^https?://[^/\s]+/moods/[\w-]+/#m-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$')
+# '#general' (a Mood) or '#m-<id>' (a message, or the id's first 8). Not '&#x27;'
+# (an escaped quote), not 'C#', not a URL's fragment (those are linked already).
+_HASH = re.compile(r'(?<![\w&#/;=])#(m-(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{8})'
+                   r'|[a-z0-9][a-z0-9-]{0,79})(?![\w-])', re.I)
+
+
+def _message_link(ref):
+    """A card for a linked message -- who, where, its first words -- or None if it's not in a Mood."""
+    from .links import card
+    from .wiki_auth import names
+    found = card(ref)
+    if not found:
+        return None
+    who = names().get(found['sender'], found['sender'])
+    return (f'<a class="msglink" href="/moods/{found["mood"]}/#m-{found["id"]}" data-mood="{found["mood"]}" '
+            f'data-reveal="{found["id"]}">↗ <strong>{html.escape(who)}</strong> in #{found["mood"]}: '
+            f'“{html.escape(found["snippet"])}”</a>')
+
+
+def _hash_link(match):
+    ref = match.group(1)
+    if ref[:2].lower() == 'm-' and re.fullmatch(r'm-[0-9a-f-]{8,36}', ref, re.I):
+        return _message_link(ref[2:]) or match.group(0)
+    from .links import mood_names
+    slug = mood_names().get(ref.lower())
+    if not slug:
+        return match.group(0)  # '#96', '#fff', a Mood nobody has: as written
+    return f'<a class="moodlink" href="/moods/{slug}/" data-mood="{slug}">#{ref}</a>'
+
+
 def _link_url(match):
     """Link a bare URL, leaving sentence punctuation outside the anchor."""
     url, tail = _trim_url(match.group(1))
+    own = _PERMALINK.match(url)
+    if own and (card := _message_link(own.group(1))):
+        return card + tail
     clip = yarn_clip(url)
     if clip:
         return f'<a class="yarn" href="{url}" data-yarn="{clip}"{_OUT}>▶ Yarn clip</a>{tail}'
@@ -418,6 +465,7 @@ def _inline(text, mentionable=()):
                                       f'<audio controls preload="none" src="{m.group(2)}" title="{m.group(1)}"></audio>'), text)
     text = _MD_LINK.sub(lambda m: stash(f'<a href="{m.group(2)}"{_OUT}>{m.group(1)}</a>'), text)
     text = _URL.sub(lambda m: stash(_link_url(m)), text)
+    text = _HASH.sub(lambda m: stash(_hash_link(m)), text)
     if mentionable:
         text = _MENTION.sub(_mention(mentionable, stash), text)
     text = _BOLD.sub(r'<strong>\1</strong>', text)
@@ -696,6 +744,7 @@ def attestation_of(msg):
 
 
 def turn_payload(msg, text, mentionable=()):
+    from .links import linked_from
     # A ```voice block is how its writer wants it read aloud: performed, not shown.
     from .voice import split_voices
     text, directions = split_voices(text)
@@ -723,6 +772,8 @@ def turn_payload(msg, text, mentionable=()):
         'reply': answered if target else None,
         'mentions': addressed_in(text, mentionable, answered, by=msg.sender_id),
         'html': render_html(said, mentionable),
+        # Who linked here, or replied (services/links.py): shown under it.
+        'linked_from': linked_from(msg.id),
     }
 
 
