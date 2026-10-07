@@ -133,7 +133,10 @@ def api_mood_turns(request, slug):
             events_out.append({'id': str(msg.id), 'created_at': msg.created_at.isoformat(),
                                **{k: text.get(k) for k in ('type', 'server', 'state', 'commit', 'by', 'note', 'took', 'agent',
                                                    'kind', 'title', 'user', 'comment', 'delta', 'revid', 'at',
-                                                   'who', 'tier', 'label', 'device', 'devices')}})
+                                                   'who', 'tier', 'label', 'device', 'devices', 'for', 'from_mood',
+                                                   'to_mood', 'about', 'context', 'message')},
+                               # A handoff's context, as a message is shown (services/handoff.py).
+                               **({'html': render_html(text.get('context') or '')} if text.get('type') == 'handoff' else {})})
         elif kind == 'compaction':
             compactions_out.append({'id': str(msg.id), 'session_id': str(msg.session_id or ''),
                                     'created_at': msg.created_at.isoformat(), 'html': render_html(text)})

@@ -28,7 +28,7 @@ COMPACTION_PREFIX = 'This session is being continued from a previous conversatio
 INTERRUPT_SOURCE = 'interrupt'
 # System rows shown as a line in the thread.
 NEW_MOOD_SOURCE = 'mood-new'
-EVENT_SOURCES = ('deploy', INTERRUPT_SOURCE, NEW_MOOD_SOURCE, 'wiki', 'access')  # wiki: services/wiki_feed.py; access: services/access.py
+EVENT_SOURCES = ('deploy', INTERRUPT_SOURCE, NEW_MOOD_SOURCE, 'wiki', 'access', 'handoff')  # wiki: services/wiki_feed.py; access: services/access.py; handoff: services/handoff.py
 # Words posted into a Mood directly, not typed into a session: from the
 # composer, or attested with a key (magenta.sh attest).
 POSTED = ('mood-web', 'mood-attest')
@@ -288,8 +288,10 @@ def reply_to(text):
 def snippet_of(text):
     """A message's first words as a line of plain text: links as their words, an image as 🖼,
     code and voice blocks left out -- for a reply's quote and a linked message's card."""
+    from .handoff import split as split_handoffs
     from .voice import split_voices
     text, _ = split_voices(text or '')
+    text, _ = split_handoffs(text)
     text = re.sub(r'```.*?(```|$)', ' ', text, flags=re.S)
     text = re.sub(r'!\[[^\]]*\]\([^)]*\)', '🖼', text)
     text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)
@@ -746,8 +748,11 @@ def attestation_of(msg):
 def turn_payload(msg, text, mentionable=()):
     from .links import linked_from
     # A ```voice block is how its writer wants it read aloud: performed, not shown.
+    # A ```handoff block went to another Mood (services/handoff.py): a line says so, not the block.
+    from .handoff import split as split_handoffs
     from .voice import split_voices
     text, directions = split_voices(text)
+    text, _ = split_handoffs(text)
     target, said = reply_to(text)
     answered = replied(target) if target else None
     return {
