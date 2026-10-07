@@ -50,6 +50,10 @@
   <h1>That PickiPedia sign-in didn't go through</h1>
   <p class="ok">{{ why }}</p>
   <p><a href="/moods/auth/wiki/">Try again</a> · <a href="/moods/">Read magenta</a></p>
+{% elif state == 'upload-refused' %}
+  <h1>That picture didn't go onto PickiPedia</h1>
+  <p class="ok">{{ why }}</p>
+  <p><a href="{{ back }}">Back to the picture</a></p>
 {% elif state == 'no-wiki' %}
   <h1>Signing in with PickiPedia isn't set up here yet</h1>
   <p>For now, sign in with your SSH key: run <code>magenta.sh login</code>.</p>

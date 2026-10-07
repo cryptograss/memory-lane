@@ -223,10 +223,6 @@ MOOD_DEPLOY_KEY = os.getenv('MOOD_DEPLOY_KEY', '')
 # (speech to text) and reading messages aloud. Unset: no voice, and the
 # page offers none.
 ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY', '')
-# Putting a Mood's picture on PickiPedia, by choice (conversations/services/wiki_upload.py):
-# a BotPassword ('Name@grant') that may upload files and create pages. Unset: no button.
-WIKI_UPLOAD_USERNAME = os.getenv('WIKI_UPLOAD_USERNAME', '')
-WIKI_UPLOAD_PASSWORD = os.getenv('WIKI_UPLOAD_PASSWORD', '')
 # Notifications with magenta closed (conversations/services/push.py): the
 # VAPID private key that signs every push, base64url (`manage.py vapid_key`
 # makes one). Unset: no push, and the bell notifies only while a page is open.
@@ -238,6 +234,11 @@ WEBPUSH_CONTACT = os.getenv('WEBPUSH_CONTACT', 'https://magenta.cryptograss.live
 # no wiki sign-in, only SSH keys.
 PICKIPEDIA_OAUTH_CLIENT_ID = os.getenv('PICKIPEDIA_OAUTH_CLIENT_ID', '')
 PICKIPEDIA_OAUTH_CLIENT_SECRET = os.getenv('PICKIPEDIA_OAUTH_CLIENT_SECRET', '')
+# "→ PickiPedia" under a picture (conversations/services/wiki_upload.py): a second
+# OAuth 2 consumer, asking to upload and edit as the picture's sharer, once per
+# upload. Kept apart so signing in stays identity-only. Unset: no button.
+PICKIPEDIA_UPLOAD_CLIENT_ID = os.getenv('PICKIPEDIA_UPLOAD_CLIENT_ID', '')
+PICKIPEDIA_UPLOAD_CLIENT_SECRET = os.getenv('PICKIPEDIA_UPLOAD_CLIENT_SECRET', '')
 # Each person's PickiPedia name, from hunter's inventory: "<name> <WikiName>" lines.
 MOOD_WIKI_NAMES = os.getenv('MOOD_WIKI_NAMES', '')
 

@@ -16,6 +16,7 @@ urlpatterns = [
     path('moods/<slug:slug>/', views_moods.moods_page, name='mood'),
     path('moods/auth/wiki/', views_auth.wiki_signin, name='mood_wiki_signin'),
     path('moods/auth/wiki/callback', views_auth.wiki_signin_return, name='mood_wiki_return'),
+    path('moods/auth/wiki/upload', views_auth.wiki_upload_return, name='mood_wiki_upload_return'),
     path('moods/login/<str:code>/', views_auth.login_page, name='mood_login'),
     path('api/auth/challenge/', views_auth.api_challenge, name='auth_challenge'),
     path('api/auth/enroll/', views_auth.api_enroll, name='auth_enroll'),
@@ -53,6 +54,7 @@ urlpatterns = [
     path('api/servers/', views_runner.api_servers, name='api_servers'),
     path('moods/media/<str:sha256>.<str:ext>', views_moods.media_file, name='mood_media'),
     path('api/media/<str:sha256>/pickipedia/', views_auth.api_media_to_pickipedia, name='api_media_to_pickipedia'),
+    path('api/media/<str:sha256>/license/', views_auth.api_media_license, name='api_media_license'),
     # Where media lived before Moods were Moods: the record's text still links here.
     path('motions/media/<str:sha256>.<str:ext>', views_moods.media_file, name='mood_media_before'),
     path('api/wikilinks/', views_moods.api_wikilinks, name='api_wikilinks'),

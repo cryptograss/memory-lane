@@ -1,33 +1,42 @@
-"""A picture from a Mood, onto PickiPedia: by choice, never by default.
+"""A picture from a Mood, onto PickiPedia: by whoever shared it, as themselves.
 
-Pictures sent into Moods stay in memory-lane (services/media.py); most are
-screenshots, useful in the conversation and stale soon after. One worth
-keeping -- a photo from a jam, a flyer -- goes up from the Mood's "→ PickiPedia"
-button (views_auth.api_media_to_pickipedia), as a File: with a name, a
-description and a license, credited to whoever sent it there and linking back
-to the message it came from.
+Pictures sent into Moods stay in memory-lane (services/media.py), under the
+license their sharer gave them there: CC BY-SA 4.0 unless they made it CC0.
+One worth keeping -- a photo from a jam, a flyer -- its sharer can put on
+PickiPedia from the "→ PickiPedia" button under it, as a File: with a name
+and a description, under that license, linking back to the message.
 
-It goes up as a BotPassword (settings.WIKI_UPLOAD_USERNAME / _PASSWORD, from
-the vault): unset, there is no button. PickiPedia is asked first whether the
-name is free and whether it already has the very same picture -- a duplicate
-is linked to, never uploaded twice; a taken name is refused, never
-overwritten. What happened is kept in the Mood (a 'wiki-upload' event), so
-the picture shows where it went, and a second press finds it there.
+It goes up from their own PickiPedia account. A license is a promise only
+whoever made the picture can give, and the file's history should say who
+did. So pressing the button sends them to PickiPedia to let magenta upload
+for them (OAuth 2, the "magenta uploads" consumer: settings.
+PICKIPEDIA_UPLOAD_CLIENT_ID / _SECRET; unset, there is no button). Back here
+(views_auth.wiki_upload_return), the upload is made with that permission and
+the permission dropped: nothing kept here can act as anyone on the wiki. The
+sign-in consumer (wiki_auth) stays identity-only.
+
+Before anyone is sent anywhere, PickiPedia is asked, as anyone may ask,
+whether it has the very same picture already -- then that File: is linked
+to, never uploaded twice -- and whether the name is taken: then they choose
+another, never overwriting. What happened is kept in the Mood (a
+'wiki-upload' event), so the picture shows where it went, and a second press
+finds it there.
 """
 
+import hashlib
 import re
-from urllib.parse import quote
 
 from django.conf import settings
+from django.core.cache import cache
 
 SOURCE = 'wiki-upload'
 EXTENSIONS = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp'}
-RIGHTS = {
-    'cc-by-sa-4.0': 'Own work, released under [https://creativecommons.org/licenses/by-sa/4.0/ CC BY-SA 4.0].',
-    'cc-by-4.0': 'Own work, released under [https://creativecommons.org/licenses/by/4.0/ CC BY 4.0].',
-    'cc0': 'Own work, dedicated to the public domain ([https://creativecommons.org/publicdomain/zero/1.0/ CC0]).',
-    'ask': 'Not sure of the rights: ask before reusing it.',
+LICENSE_TEXT = {
+    'cc-by-sa-4.0': 'Released by its uploader under [https://creativecommons.org/licenses/by-sa/4.0/ CC BY-SA 4.0].',
+    'cc0': 'Dedicated by its uploader to the public domain ([https://creativecommons.org/publicdomain/zero/1.0/ CC0]).',
 }
+STATE_COOKIE = 'wiki_upload'
+PENDING_FOR = 900  # seconds to say yes on PickiPedia (signing in there first, perhaps)
 _UNSAFE = re.compile(r'[#<>\[\]|{}/:\\\x00-\x1f]+')
 
 
@@ -38,7 +47,8 @@ class UploadError(Exception):
 
 
 def enabled():
-    return bool(getattr(settings, 'WIKI_UPLOAD_USERNAME', '') and getattr(settings, 'WIKI_UPLOAD_PASSWORD', ''))
+    return bool(getattr(settings, 'PICKIPEDIA_UPLOAD_CLIENT_ID', '')
+                and getattr(settings, 'PICKIPEDIA_UPLOAD_CLIENT_SECRET', ''))
 
 
 def file_name(wanted, mime):
@@ -61,41 +71,52 @@ def already(sha):
     return {'file': row['file'], 'page': row['page']} if row else None
 
 
-def page_text(description, rights, by, link):
-    from .wiki_auth import names
-    wiki = names().get(by)
-    who = f'[[User:{wiki}|{wiki}]]' if wiki else by
+def page_text(description, license, link):
     return (f'== Summary ==\n{description.strip() or "(no description)"}\n\n'
-            f'Shared by {who} in magenta: {link}\n\n'
-            f'== Licensing ==\n{RIGHTS.get(rights, RIGHTS["ask"])}\n\n'
+            f'Shared in magenta: {link}\n\n'
+            f'== Licensing ==\n{LICENSE_TEXT.get(license, LICENSE_TEXT["cc-by-sa-4.0"])}\n\n'
             '[[Category:From magenta]]\n')
 
 
-class Wiki:
-    """PickiPedia's action API, signed in with the upload BotPassword."""
+def file_page(name):
+    from urllib.parse import quote
+    from .mood_view import pickipedia_url
+    return f"{pickipedia_url()}/wiki/File:{quote(name.replace(' ', '_'))}"
 
-    def __init__(self, http=None):
+
+class Wiki:
+    """PickiPedia's action API: as anyone, or with someone's OAuth token."""
+
+    def __init__(self, http=None, token=None):
         import requests
         from .mood_view import pickipedia_url
         self.api = f'{pickipedia_url()}/api.php'
         self.http = http or requests.Session()
         self.http.headers['User-Agent'] = 'memory-lane (magenta; uploads)'
+        if token:
+            self.http.headers['Authorization'] = f'Bearer {token}'
 
     def call(self, post=False, files=None, **params):
         params['format'] = 'json'
         answer = (self.http.post(self.api, data=params, files=files, timeout=60) if post
                   else self.http.get(self.api, params=params, timeout=20))
-        body = answer.json()
+        try:
+            body = answer.json()
+        except ValueError:
+            raise UploadError(f'PickiPedia answered {getattr(answer, "status_code", "?")}', status=502)
         if 'error' in body:
             raise UploadError(f"PickiPedia: {body['error'].get('info') or body['error'].get('code')}", status=502)
         return body
 
-    def sign_in(self):
-        token = self.call(action='query', meta='tokens', type='login')['query']['tokens']['logintoken']
-        result = self.call(post=True, action='login', lgname=settings.WIKI_UPLOAD_USERNAME,
-                           lgpassword=settings.WIKI_UPLOAD_PASSWORD, lgtoken=token)['login']
-        if result.get('result') != 'Success':
-            raise UploadError("PickiPedia didn't take the upload bot's sign-in", status=502)
+    def holding(self, sha1):
+        """The File: name PickiPedia keeps these very bytes under, or None."""
+        found = self.call(action='query', list='allimages', aisha1=sha1, ailimit=1)
+        images = found.get('query', {}).get('allimages') or []
+        return images[0]['name'].replace('_', ' ') if images else None
+
+    def taken(self, name):
+        pages = self.call(action='query', titles=f'File:{name}').get('query', {}).get('pages', {})
+        return any('missing' not in page and 'invalid' not in page for page in pages.values())
 
     def upload(self, name, data, mime, text, comment):
         token = self.call(action='query', meta='tokens')['query']['tokens']['csrftoken']
@@ -103,23 +124,94 @@ class Wiki:
                          text=text, comment=comment, token=token)['upload']
 
 
-def to_pickipedia(media, wanted, description, rights, by, mood, message_id, http=None):
-    """Put a stored picture on PickiPedia. {'file', 'page', 'new'}; UploadError if it can't be."""
-    from .mood_view import pickipedia_url
+def begin(media, wanted, description, license, entity, mood, message_id, redirect_uri, http=None):
+    """The first half, before PickiPedia's yes.
+
+    {'file', 'page', 'new': False} if the picture is there already; else
+    {'go': where to ask, 'state': to know them by when they're back}.
+    UploadError if it can't go at all.
+    """
+    from . import media as media_service
+    from .wiki_auth import new_state
     if not enabled():
-        raise UploadError("uploading to PickiPedia isn't set up here", status=503)
+        raise UploadError("putting pictures on PickiPedia isn't set up here", status=503)
+    name_here = getattr(entity, 'pk', entity)
+    if media.added_by_id != name_here:
+        raise UploadError('only whoever shared a picture can put it on PickiPedia: it goes up as theirs', status=403)
+    if license not in media_service.LICENSES:
+        raise UploadError('CC BY-SA 4.0 or CC0')
     gone = already(media.sha256)
     if gone:
         return {**gone, 'new': False}
     name = file_name(wanted, media.mime)
-    link = f'https://magenta.cryptograss.live/moods/{mood.slug}/#m-{message_id}' if message_id else f'#{mood.slug}'
     wiki = Wiki(http)
-    wiki.sign_in()
-    said = wiki.upload(name, bytes(media.data), media.mime, page_text(description, rights, by, link),
-                       f'From magenta, shared by {by}')
+    there = wiki.holding(hashlib.sha1(bytes(media.data)).hexdigest())
+    if there:
+        _record(mood, name_here, file=there, page=file_page(there), sha=media.sha256,
+                message=str(message_id or ''), already=True)
+        return {'file': there, 'page': file_page(there), 'new': False}
+    if wiki.taken(name):
+        raise UploadError(f'PickiPedia already has a File:{name}: choose another name', status=409)
+    media_service.relicense(media, license, name_here)
+    state = new_state()
+    cache.set(f'wiki-upload:{state}', {'sha': media.sha256, 'name': name, 'description': description,
+                                       'license': license, 'by': name_here, 'mood': mood.slug,
+                                       'message': str(message_id or '')}, PENDING_FOR)
+    from urllib.parse import urlencode
+    from .mood_view import pickipedia_url
+    query = urlencode({'response_type': 'code', 'client_id': settings.PICKIPEDIA_UPLOAD_CLIENT_ID,
+                       'redirect_uri': redirect_uri, 'state': state})
+    return {'go': f'{pickipedia_url()}/rest.php/oauth2/authorize?{query}', 'state': state}
+
+
+def place(state):
+    """Where the picture an upload is for was shown: the way back to it."""
+    pending = cache.get(f'wiki-upload:{state}') if state else None
+    return place_of(pending['mood'], pending['message']) if pending else '/moods/'
+
+
+def place_of(slug, message):
+    return f'/moods/{slug}/' + (f'#m-{message}' if message else '')
+
+
+def finish(state, code, entity, redirect_uri, http=None):
+    """The second half, with PickiPedia's yes: upload as them, then forget the permission.
+
+    {'file', 'page', 'new', 'mood', 'message'}; UploadError if it can't be.
+    """
+    from conversations.models import Media, Mood
+    from . import wiki_auth
+    if not enabled():
+        raise UploadError("putting pictures on PickiPedia isn't set up here", status=503)
+    pending = cache.get(f'wiki-upload:{state}') if state else None
+    cache.delete(f'wiki-upload:{state}')  # once only
+    name_here = getattr(entity, 'pk', entity)
+    if not pending or pending['by'] != name_here:
+        raise UploadError('that went stale; press → PickiPedia again')
+    try:
+        token = wiki_auth.exchange(code, redirect_uri, settings.PICKIPEDIA_UPLOAD_CLIENT_ID,
+                                   settings.PICKIPEDIA_UPLOAD_CLIENT_SECRET, http=http or _requests())
+        profile = wiki_auth.profile_with(token, http=http or _requests())
+    except wiki_auth.SignInRefused as e:
+        raise UploadError(str(e), status=502)
+    if profile.get('blocked'):
+        raise UploadError('that PickiPedia account is blocked', status=403)
+    if wiki_auth.local_name_for(profile['username']) != name_here:
+        raise UploadError(f"you're signed in to PickiPedia as {profile['username']}, which isn't {name_here}'s account "
+                          "here: sign in there as yourself (or ask an admin to map your account), then try again",
+                          status=403)
+    media = Media.objects.filter(sha256=pending['sha']).first()
+    mood = Mood.by_slug(pending['mood'])
+    if media is None or mood is None:
+        raise UploadError('that picture or its Mood is gone', status=404)
+    link = 'https://magenta.cryptograss.live' + place_of(mood.slug, pending['message'])
+    wiki = Wiki(http, token=token)
+    said = wiki.upload(pending['name'], bytes(media.data), media.mime,
+                       page_text(pending['description'], media.license, link), 'From magenta')
     warnings = said.get('warnings') or {}
+    name, new = pending['name'], True
     if said.get('result') == 'Warning' and warnings.get('duplicate'):
-        name = warnings['duplicate'][0]  # the very same picture is there already: that one
+        name, new = warnings['duplicate'][0], False  # the very same picture is there already: that one
     elif said.get('result') == 'Warning' and ('exists' in warnings or 'page-exists' in warnings):
         raise UploadError(f'PickiPedia already has a File:{name}: choose another name', status=409)
     elif said.get('result') != 'Success':
@@ -127,9 +219,14 @@ def to_pickipedia(media, wanted, description, rights, by, mood, message_id, http
     else:
         name = said.get('filename') or name
     name = name.replace('_', ' ')  # as the wiki titles it; the API answers with underscores
-    page = f"{pickipedia_url()}/wiki/File:{quote(name.replace(' ', '_'))}"
-    _record(mood, by, file=name, page=page, sha=media.sha256, message=str(message_id or ''))
-    return {'file': name, 'page': page, 'new': True}
+    details = {'file': name, 'page': file_page(name), 'sha': media.sha256, 'message': pending['message']}
+    _record(mood, name_here, **details, **({} if new else {'already': True}))
+    return {**details, 'new': new, 'back': place_of(mood.slug, pending['message'])}
+
+
+def _requests():
+    import requests
+    return requests
 
 
 def _record(mood, by, **details):

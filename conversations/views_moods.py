@@ -49,7 +49,7 @@ def moods_page(request, slug=None):
         # 'key' or 'wiki' (services/wiki_auth.py): a wiki sign-in chats and mentions people only.
         'viewer_tier': device.tier if device else '',
         'wiki_signin': wiki_auth.enabled(),
-        # "→ PickiPedia" on a picture sent here, if the upload bot is set up (services/wiki_upload.py).
+        # "→ PickiPedia" on a picture sent here, if uploading as its sharer is set up (services/wiki_upload.py).
         'wiki_upload': wiki_upload.enabled(),
         # PickiPedia names, shown for the names here (from hunter's inventory).
         'wiki_names': wiki_auth.names(),
@@ -136,7 +136,7 @@ def api_mood_turns(request, slug):
                                **{k: text.get(k) for k in ('type', 'server', 'state', 'commit', 'by', 'note', 'took', 'agent',
                                                    'kind', 'title', 'user', 'comment', 'delta', 'revid', 'at',
                                                    'who', 'tier', 'label', 'device', 'devices', 'file', 'page', 'sha',
-                                                   'message')}})
+                                                   'message', 'already')}})
         elif kind == 'compaction':
             compactions_out.append({'id': str(msg.id), 'session_id': str(msg.session_id or ''),
                                     'created_at': msg.created_at.isoformat(), 'html': render_html(text)})
