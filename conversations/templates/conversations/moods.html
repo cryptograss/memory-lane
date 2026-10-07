@@ -98,6 +98,7 @@
   #serverPop .role { font-style: italic; color: var(--muted); }
   #serverPop a { color: inherit; }
   #serverPop .note { color: var(--muted); font-size: 12px; }
+  .deploynote { font-style: italic; }  /* a deploy's note that isn't its log: why there isn't one */
   /* Who is read aloud in which voice (services/voice.py), styled as the devices box. */
   #voicesBox { position: fixed; z-index: 30; top: 44px; right: 12px; width: min(460px, 94vw); max-height: 75vh; overflow-y: auto;
                background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.18);
@@ -1168,9 +1169,11 @@
 
   // A deploy's log, posted to PickiPedia by DrivingThatTrain (maybelle-config
   // post-deploy-log.py) and sent as the report's note: a link, if it's one of those.
+  // Any other note (why the log wasn't posted, say) is shown as it is, as text.
   function deployLog(note) {
-    return /^https:\/\/pickipedia\.xyz\/wiki\/Cryptograss:[\w%.-]+\/deploy_logs\/\d+(-\d+)?$/.test(note || '')
-      ? ` · <a href="${esc(note)}" target="_blank" rel="noopener">log</a>` : '';
+    if (!note) return '';
+    return /^https:\/\/pickipedia\.xyz\/wiki\/Cryptograss:[\w%.-]+\/deploy_logs\/\d+(-\d+)?$/.test(note)
+      ? ` · <a href="${esc(note)}" target="_blank" rel="noopener">log</a>` : ` · <span class="deploynote">${esc(note)}</span>`;
   }
   function took(seconds) {
     if (seconds == null) return '';
