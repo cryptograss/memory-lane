@@ -208,11 +208,23 @@ def api_say(request, slug):
     if recent >= PER_MINUTE:
         return JsonResponse({'error': 'slow down'}, status=429)
 
-    text, _ = redact(text)
-    message = Message.objects.create(
-        id=uuid.uuid4(), sender=device.entity, content=text, mood=mood,
-        timestamp=int(time.time() * 1000), source_file=WEB_SOURCE, client_version=web_client(request, device),
-    )
+    def post(text, client_version=web_client(request, device)):
+        text, _ = redact(text)
+        return Message.objects.create(
+            id=uuid.uuid4(), sender=device.entity, content=text[:MAX_CHARS], mood=mood,
+            timestamp=int(time.time() * 1000), source_file=WEB_SOURCE, client_version=client_version,
+        )
+
+    # A memo still being heard (voice.hear_later) goes when its words are in:
+    # now if they are, else in the background -- the page says it's on its way.
+    from .services import voice
+    memo = voice.memo_in(text)
+    if memo and voice.heard(memo) is None:
+        voice.post_when_heard(memo, text, post)
+        return JsonResponse({'pending': memo}, status=202)
+    if memo:
+        text = voice.with_transcript(text, voice.heard(memo))
+    message = post(text)
     if text.startswith('/clips '):
         clips.forget_cached()  # the library has a new save, or one fewer
     return JsonResponse({'id': str(message.id), **({'note': note} if note else {})}, status=201)
@@ -546,9 +558,9 @@ VOICE_PER_MINUTE = 6
 def api_memo(request, slug):
     """A voice memo, as the device's person: the body is the recording.
 
-    Stored like an image (by its bytes' hash), then transcribed. Answers
-    with the audio's URL and the transcript, for the person to look over
-    and send -- nothing is posted until they do.
+    Stored like an image (by its bytes' hash), and answered at once with its
+    URL, to go in the box ready to send. Scribe starts on it now, in the
+    background (voice.hear_later): sent, it's posted when its words are in.
     """
     from .services import media, voice
     from .views_admin import locked_response
@@ -568,14 +580,18 @@ def api_memo(request, slug):
     if stored is None:
         return JsonResponse({'error': 'not a recording this understands (WebM, Ogg, MP4, MP3 or WAV)'}, status=400)
     try:
-        heard = voice.transcribe(stored, mood, device.entity_id)
+        voice.check_budget(voice.STT_USD_PER_HOUR * 10 / 60)  # refused now, not after it's sent
     except voice.VoiceError as e:
         return JsonResponse({'error': str(e), 'url': stored.url}, status=e.status)
-    # "Magent, ..." or "at Skyler" said aloud: an @mention, there to look over before sending.
+    # "Magent, ..." or "at Skyler" said aloud becomes an @mention -- of an agent
+    # only from an SSH-key sign-in, as typing one would be (api_say).
     from .services import wiki_auth
     from .services.mood_view import known_names
-    heard['text'] = voice.spoken_mentions(heard['text'], known_names(), wiki_auth.aliases())
-    return JsonResponse({'url': stored.url, **heard}, status=201)
+    mentionable = set(known_names())
+    if device.tier == 'wiki':
+        mentionable -= set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
+    voice.hear_later(stored, mood, device.entity_id, mentionable, wiki_auth.aliases())
+    return JsonResponse({'url': stored.url}, status=201)
 
 
 @require_POST
