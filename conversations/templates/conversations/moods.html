@@ -1239,17 +1239,28 @@
       prev = null;
       return;
     }
-    el.className = 'event ' + (e.state || '');
+    // One line a deploy: "redeploying…" while it's under way, then, in that same
+    // line, how it ended -- with its log. A start nothing ever finished says so.
     const commit = e.commit ? ` · <code>${esc(e.commit.slice(0, 8))}</code>` : '';
     const by = e.by ? ` · by ${esc(e.by)}` : '';
     const log = deployLog(e.note);
-    el.innerHTML = e.state === 'started' ? `⚙ <b>${esc(e.server)}</b> redeploying…${by}${commit} · ${esc(stamp(e.created_at))}`
+    const started = e.state === 'started' ? null
+      : [...container.querySelectorAll(':scope > .event.started')].filter(x => x.dataset.server === (e.server || '')).pop();
+    const line = started || el;
+    line.className = 'event ' + (e.state || '');
+    line.dataset.server = e.server || '';
+    const unheard = e.state === 'started' && Date.now() - new Date(e.created_at).getTime() > DEPLOY_PATIENCE_MS;
+    line.innerHTML = e.state === 'started'
+      ? (unheard ? `⚙ <b>${esc(e.server)}</b> began redeploying${by}${commit}; no word of how it ended · ${esc(stamp(e.created_at))}`
+                 : `⚙ <b>${esc(e.server)}</b> redeploying…${by}${commit} · ${esc(stamp(e.created_at))}`)
       : e.state === 'failed' ? `✗ <b>${esc(e.server)}</b> redeploy failed${took(e.took)}${by}${log} · ${esc(stamp(e.created_at))}`
       : `✓ <b>${esc(e.server)}</b> redeployed${took(e.took)}${commit}${by}${log} · ${esc(stamp(e.created_at))}`;
-    container.appendChild(el);
+    if (unheard) line.classList.remove('started');  // over, presumed: a finish that comes late gets a line of its own
+    if (!started) container.appendChild(line);
     prev = null;
     refreshServers(true);  // the dots, now
   }
+  const DEPLOY_PATIENCE_MS = 90 * 60 * 1000;  // as services/servers.py: unheard of this long, presumed over
 
   // An attestation's proof: what was signed, the signature, the key, and how to check it anywhere.
   document.addEventListener('click', e => {
