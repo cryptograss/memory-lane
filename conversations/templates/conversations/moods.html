@@ -627,7 +627,7 @@
       <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
       <span class="textsize">text size <button type="button" data-step="-1" aria-label="Smaller text">A−</button><span id="textSizeVal">100%</span><button type="button" data-step="1" aria-label="Larger text">A+</button></span>
       <button id="notify" type="button" hidden aria-label="Notifications"></button>
-      <label class="readall" id="readAllLabel" hidden title="Each new message read aloud as it arrives, in its speaker's voice, magent saying who speaks. Your own messages aren't read.">read aloud as they come <select id="readAll"><option value="off">off</option><option value="here">this Mood</option><option value="everywhere">every Mood</option></select></label>
+      <label class="readall" id="readAllLabel" hidden title="Each new message read aloud as it arrives, in its speaker's voice, the narrator saying who speaks and when an agent starts thinking. Your own messages aren't read.">read aloud as they come <select id="readAll"><option value="off">off</option><option value="here">this Mood</option><option value="everywhere">every Mood</option></select></label>
       <a href="#" id="voicesLink" hidden>voices</a>
       <a href="#" id="devicesLink" hidden>your devices</a>
       <a class="settings" href="/moods/settings/" title="How each agent carries itself in each Mood">settings</a>
@@ -831,8 +831,24 @@
   async function refreshLive() {
     try {
       const r = await fetch('/api/moods/live/');
-      if (r.ok) { liveData = (await r.json()).moods || {}; markLive(); }
+      if (r.ok) {
+        const before = liveData;
+        liveData = (await r.json()).moods || {};
+        markLive();
+        noticeThinking(before);
+      }
     } catch (e) {}
+  }
+  // An agent starting work where Moods are being read as they come: the narrator
+  // says so ("Magent is thinking"), in its own voice, in turn with what's said.
+  function noticeThinking(before) {
+    if (readMode === 'off') return;  // (after an await: the reader's state is set up by then)
+    for (const [slug, d] of Object.entries(liveData)) {
+      if (!d.busy || (before[slug] || {}).busy === d.busy) continue;  // not working, or working already
+      if (readMode !== 'everywhere' && slug !== current) continue;
+      readQueue.push({ kind: 'thinking', mood: slug, who: d.busy, agent: d.busy });
+    }
+    readNext();
   }
   setInterval(refreshLive, 5000);
   refreshLive();
@@ -2631,18 +2647,20 @@
       voiceData = await r.json();
     } catch (e) { voicesList.textContent = 'Could not ask for the voices.'; return; }
     const data = voiceData;
-    const everyone = [...people].sort((a, b) => (b.name === viewer) - (a.name === viewer) || a.name.localeCompare(b.name));
+    const narrator = data.narrator || 'narrator';
+    const everyone = [{ name: narrator, narrator: true },
+                      ...[...people].sort((a, b) => (b.name === viewer) - (a.name === viewer) || a.name.localeCompare(b.name))];
     voicesList.innerHTML = (data.note ? `<p class="meta">${esc(data.note)}</p>` : '')
-      + `<p class="meta">Reading as they come, ${esc(shown(data.narrator || 'magent'))} says who speaks next, in its own voice.</p>`
+      + `<p class="meta">Reading as they come, the narrator says who speaks next, and when an agent starts thinking.</p>`
       + everyone.map(p => {
         const v = voiceFor(data, p.name);
         const may = p.name === viewer || keyHolder;
-        const unset = p.name === data.narrator ? 'the house voice' : 'given at their first reading';
+        const unset = p.narrator ? 'given at its first word' : p.name === 'magent' ? 'the house voice' : 'given at their first reading';
         const options = (data.voices || []).map(o =>
           `<option value="${esc(o.voice_id)}"${v && v.voice_id === o.voice_id ? ' selected' : ''}>${esc(o.name)}</option>`).join('');
         const other = v && !(data.voices || []).some(o => o.voice_id === v.voice_id)
           ? `<option value="${esc(v.voice_id)}" selected>${esc(v.name)}</option>` : '';
-        return `<div class="spk" data-name="${esc(p.name)}"><span class="nm">${esc(shown(p.name))}${p.is_human ? '' : ' <span class="tier">agent</span>'}</span>`
+        return `<div class="spk" data-name="${esc(p.name)}"><span class="nm">${p.narrator ? 'Narrator' : esc(shown(p.name))}${p.is_human || p.narrator ? '' : ' <span class="tier">agent</span>'}</span>`
           + `<select ${may ? '' : 'disabled title="Only your own, from a PickiPedia sign-in"'} aria-label="${esc(shown(p.name))}'s voice">`
           + `<option value="">${unset}</option>${other}${options}</select>`
           + `<button type="button" class="sample" title="Hear this voice">▷</button></div>`;
@@ -2790,6 +2808,7 @@
   async function readNext() {
     if (readNow || readHeld || readBlocked || readMode === 'off' || !readQueue.length) { renderReadBar(); return; }
     const item = readQueue.shift();
+    if (item.kind === 'thinking' && (liveData[item.mood] || {}).busy !== item.agent) { readNext(); return; }  // done before its turn came
     const now = readNow = { item, skipped: false };
     renderReadBar();
     const memo = (item.text || '').match(MEMO_AUDIO);  // heard as recorded: only who's speaking needs saying
@@ -2797,7 +2816,14 @@
     const intro = newMood && readMode === 'everywhere' ? 'where' : newMood || readLast.who !== item.who ? '1' : '';
     const clips = [];
     try {
-      if (intro || !memo) {
+      if (item.kind === 'thinking') {
+        const r = await fetch('/api/voice/narrate/', { method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+          body: JSON.stringify({ mood: item.mood, agent: item.agent, where: readMode === 'everywhere' }) });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.error || r.status);
+        clips.push(['thinking', body.url]);
+      } else if (intro || !memo) {
         const ask = new URLSearchParams(intro ? { intro } : {});
         if (memo) ask.set('only', 'intro');
         const r = await fetch(`/api/moods/${encodeURIComponent(item.mood)}/speak/${encodeURIComponent(item.id)}/?${ask}`,
@@ -2829,7 +2855,7 @@
         await new Promise(r => setTimeout(r, 1500));
         how = await playClip(src);
       }
-      readReport(item, clip, how);
+      if (item.kind !== 'thinking') readReport(item, clip, how);
       if (how === 'blocked' || how === 'failed') {
         // Not on to the next as if this were heard: wait, and say why. ▶ (or the car's play)
         // tries it again -- a press is what a phone wants -- and ⏭ leaves it.
@@ -2838,7 +2864,7 @@
       }
     }
     if (readNow !== now) return;  // stopped meanwhile
-    readLast = { who: item.who, mood: item.mood };
+    if (item.kind !== 'thinking') readLast = { who: item.who, mood: item.mood };  // its answer still says who speaks
     readNow = null;
     readNext();
   }

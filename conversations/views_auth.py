@@ -689,7 +689,7 @@ def api_speaker_voice(request):
     except (ValueError, KeyError, TypeError):
         return JsonResponse({'error': 'expected {"name": ..., "voice": ...}'}, status=400)
     entity = ThinkingEntity.objects.filter(name=name).first()
-    if entity is None:
+    if entity is None and name != voice.NARRATOR:
         return JsonResponse({'error': f'nobody called {name}'}, status=404)
     if name != device.entity_id and (device.tier != 'key' or not device.entity.is_biological_human):
         return JsonResponse({'error': "only your own voice, from a PickiPedia sign-in; others' take your SSH key"},
@@ -703,10 +703,40 @@ def api_speaker_voice(request):
         if chosen.lower() not in known and not voice._VOICE_ID.match(chosen):
             return JsonResponse({'error': f'no voice called {chosen}'}, status=400)
     try:
-        row = knobs.change('speaker_voice', chosen, agent=entity, by=device.entity, note=body.get('note', ''))
+        if entity is None:  # the narrator: everyone's, so an SSH key's to change
+            row = knobs.change('narrator_voice', chosen, by=device.entity, note=body.get('note', ''))
+        else:
+            row = knobs.change('speaker_voice', chosen, agent=entity, by=device.entity, note=body.get('note', ''))
     except knobs.Invalid as e:
         return JsonResponse({'error': str(e)}, status=400)
     return JsonResponse(knobs.describe(row), status=201)
+
+
+@require_POST
+def api_narrate(request):
+    """{"mood", "agent", "where"}: the narrator saying an agent has started work there
+    ("Magent is thinking, in magenta interface"), for reading Moods as they come: {"url"}."""
+    from .services import voice
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = mood_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to hear Moods read aloud'}, status=401)
+    try:
+        body = json.loads(request.body)
+    except ValueError:
+        return JsonResponse({'error': 'expected JSON'}, status=400)
+    mood = Mood.by_slug(str(body.get('mood') or ''))
+    agent = ThinkingEntity.objects.filter(name=str(body.get('agent') or ''), is_biological_human=False).first()
+    if mood is None or agent is None:
+        return JsonResponse({'error': 'no such Mood, or no such agent'}, status=404)
+    if not _under_limit(f'voice:{device.pk}', VOICE_PER_MINUTE):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    try:
+        return JsonResponse({'url': voice.narrate_thinking(mood, agent.name, device.entity_id, where=bool(body.get('where')))})
+    except voice.VoiceError as e:
+        return JsonResponse({'error': str(e)}, status=e.status)
 
 
 def _uuid_or_none(value):
