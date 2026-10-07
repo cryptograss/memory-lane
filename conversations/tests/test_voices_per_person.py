@@ -136,7 +136,7 @@ class SpeakerEndpointsTest(TestCase):
             both = client.post(f'/api/moods/general/speak/{message.id}/?intro=where').json()
             texts = [kw['json']['text'] for method, _, kw in fake.asked if method == 'POST']
             only = client.post(f'/api/moods/general/speak/{message.id}/?only=intro').json()
-        self.assertEqual(set(both), {'intro', 'url'})
+        self.assertEqual(set(both), {'intro', 'url', 'pieces'})
         self.assertEqual(texts, ['In general, Skyler says:', 'Bus at nine.'])
         self.assertEqual(set(only), {'intro'})
 
