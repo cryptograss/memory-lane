@@ -489,6 +489,13 @@
   /* Images: in turns, as thumbnails on a run of work, inside a step. */
   .turn .body a.img { display: inline-block; margin: 4px 0; }
   .turn .body img { display: block; max-width: 100%; max-height: 420px; border-radius: 6px; border: 1px solid var(--line); }
+  /* A file or a release, shown where it was linked (mood_view._file_embed, _release_embed). */
+  .turn .body .embed { display: block; margin: 6px 0; max-width: 560px; }
+  .turn .body .embed video { display: block; width: 100%; max-height: 60vh; border-radius: 6px; background: #000; }
+  .turn .body .embed audio { display: block; width: 100%; }
+  .turn .body .caption { display: block; font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  .turn .body a.caption { text-decoration: none; }
+  .turn .body a.caption:hover { color: var(--accent); }
   .work .thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 4px; }
   .work .thumbs img, .step-detail .shots img { height: 84px; max-width: 160px; object-fit: cover; border-radius: 4px;
                                                 border: 1px solid var(--line); cursor: zoom-in; }
@@ -960,6 +967,16 @@
       b.textContent = b.dataset.label || '▶';
     } finally { b.classList.remove('busy'); }
   });
+
+  // A release this browser can't play (a .mov outside Safari, say): its caption is the link to it.
+  document.addEventListener('error', e => {
+    const v = e.target;
+    if (!(v instanceof HTMLMediaElement) || !v.closest('.turn .embed') || v._gave_up) return;
+    v._gave_up = true;
+    const cap = v.closest('.embed').querySelector('.caption');
+    v.replaceWith(Object.assign(document.createElement('span'), {
+      className: 'caption', textContent: 'This browser can\'t play it here' + (cap ? ':' : '.') }));
+  }, true);
 
   // A memo recorded in a browser doesn't say how long it is (MediaRecorder writes no
   // duration), so its player can't place its bar: it races ahead, then crawls.
@@ -2184,7 +2201,7 @@
       if (!keyHolder) {
         return row
           + `${esc(describeListening(l))} · ${esc(a.discretion || 'normal')} · ${esc(REPLY_LENGTHS[a.verbosity || 'normal'])}`
-          + ` · ${esc(a.model || 'default')} · ⚡${esc(EFFORT_LABELS[a.effort] || a.effort)} · 📖${esc(kTokens(a.reads || 10000))}`
+          + ` · ${esc(a.model || 'default')} · effort ${esc(EFFORT_LABELS[a.effort] || a.effort)} · 📖${esc(kTokens(a.reads || 10000))}`
           + (a.ultracode ? ' · ultracode' : '') + '</span>';
       }
       const listen = `<select data-agent="${esc(agent)}" data-knob="listening" title="listen: answers mentions and may speak up unasked · mention: answers mentions only · hush: wakes for nothing (mentions wait); with a time, back to listening then"><option selected disabled>${esc(describeListening(l))}</option>`
@@ -2194,7 +2211,7 @@
         + models.map(([v, label]) => `<option value="${esc(v)}"${v === a.model ? ' selected' : ''}>`
           + `${esc(v ? label : (ctx.model ? `default (${shortModel(ctx.model)})` : label))}</option>`).join('') + '</select>';
       const effort = `<select data-agent="${esc(agent)}" data-knob="mention_effort" title="how hard it thinks when @mentioned here">`
-        + EFFORTS.map(v => `<option value="${v}"${v === a.effort ? ' selected' : ''}>⚡${EFFORT_LABELS[v] || v}</option>`).join('') + '</select>';
+        + EFFORTS.map(v => `<option value="${v}"${v === a.effort ? ' selected' : ''}>${EFFORT_LABELS[v] || v}</option>`).join('') + '</select>';
       // How much of what was said since its last word a wake reads word for word.
       const reads = `<select data-agent="${esc(agent)}" data-knob="catch_up_tokens" title="How much of what was said here since it last spoke a wake reads word for word; older is summarized">`
         + READS.map(n => `<option value="${n}"${n === a.reads ? ' selected' : ''}>📖${kTokens(n)}</option>`).join('')

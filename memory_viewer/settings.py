@@ -242,7 +242,7 @@ MOOD_WIKI_NAMES = os.getenv('MOOD_WIKI_NAMES', '')
 MOOD_ADMINS = tuple(n.strip().lower() for n in os.getenv('MOOD_ADMINS', '').split(',') if n.strip())
 
 # Hosts a Mood may embed images from by URL, besides its own stored media.
-MOOD_IMAGE_HOSTS = {'pickipedia.xyz', 'www.pickipedia.xyz', 'raw.githubusercontent.com',
+MOOD_IMAGE_HOSTS = {'pickipedia.xyz', 'www.pickipedia.xyz', 'upload.wikimedia.org', 'raw.githubusercontent.com',
                       'user-images.githubusercontent.com', 'private-user-images.githubusercontent.com'}
 
 # Writing into Moods (conversations/services/mood_auth.py): an OpenSSH

@@ -65,7 +65,9 @@ class RenderHtmlTest(TestCase):
                    'tbody': set(), 'tr': set(), 'th': set(), 'td': set(),
                    'a': {'href', 'class', 'target', 'rel', 'data-yarn', 'data-who', 'data-mood', 'data-reveal'},
                    'span': {'class', 'data-who'},
-                   'img': {'src', 'alt', 'loading'}}
+                   'img': {'src', 'alt', 'loading'},
+                   'video': {'controls', 'preload', 'playsinline', 'src', 'poster'},
+                   'audio': {'controls', 'preload', 'src', 'title'}}
         fixed = {'target': '_blank', 'rel': 'noopener'}  # the renderer's own, never a post's
         case = self
 
@@ -78,7 +80,7 @@ class RenderHtmlTest(TestCase):
                         case.assertEqual(value, fixed[name], (source, out))
                     if name == 'data-yarn':  # the page builds a player from it
                         case.assertRegex(value, r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', (source, out))
-                    if name in ('href', 'src'):  # decoded: entities are fine
+                    if name in ('href', 'src', 'poster'):  # decoded: entities are fine
                         case.assertRegex(value, r'^(https?://|/moods/media/[0-9a-f]{64}\.(png|jpg|gif|webp)$'
                                                 r'|/moods/[a-z0-9-]+/(#m-[0-9a-f-]{36})?$)', (source, out))
                     if name == 'data-mood':  # the page opens it
