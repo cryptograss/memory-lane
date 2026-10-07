@@ -853,3 +853,34 @@ def api_push_unsubscribe(request):
         return JsonResponse({'error': 'expected {"endpoint": ...}'}, status=400)
     PushSubscription.objects.filter(endpoint=endpoint, device__entity=device.entity).delete()
     return JsonResponse({'subscribed': False})
+
+
+@require_POST
+def api_media_to_pickipedia(request, sha256):
+    """{"mood", "message", "name", "description", "rights"}: put a picture sent here on PickiPedia
+    (services/wiki_upload.py). An SSH-key sign-in's choice: it publishes, under the upload bot."""
+    from .models import Media
+    from .services import wiki_upload
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device, refused = mood_auth.key_device(request, 'put pictures on PickiPedia')
+    if refused:
+        return refused
+    if not _under_limit(f'wiki-upload:{device.pk}', 6):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    try:
+        body = json.loads(request.body)
+    except ValueError:
+        return JsonResponse({'error': 'expected JSON'}, status=400)
+    media = Media.objects.filter(sha256=sha256).first()
+    mood = Mood.by_slug(str(body.get('mood') or ''))
+    if media is None or mood is None:
+        return JsonResponse({'error': 'no such picture, or no such Mood'}, status=404)
+    try:
+        done = wiki_upload.to_pickipedia(media, str(body.get('name') or ''), str(body.get('description') or '')[:2000],
+                                         str(body.get('rights') or 'ask'), device.entity_id, mood,
+                                         _uuid_or_none(body.get('message')))
+    except wiki_upload.UploadError as e:
+        return JsonResponse({'error': str(e)}, status=e.status)
+    return JsonResponse(done, status=201 if done['new'] else 200)
