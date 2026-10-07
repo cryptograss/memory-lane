@@ -63,7 +63,7 @@ class RenderHtmlTest(TestCase):
         allowed = {'p': set(), 'br': set(), 'strong': set(), 'em': set(), 'code': set(), 'pre': set(),
                    'ul': set(), 'ol': set(), 'li': set(), 'h4': set(), 'table': set(), 'thead': set(),
                    'tbody': set(), 'tr': set(), 'th': set(), 'td': set(),
-                   'a': {'href', 'class', 'target', 'rel', 'data-yarn', 'data-who', 'data-mood', 'data-reveal'},
+                   'a': {'href', 'class', 'target', 'rel', 'data-yarn', 'data-who', 'data-mood', 'data-reveal', 'data-full'},
                    'span': {'class', 'data-who'},
                    'img': {'src', 'alt', 'loading'},
                    'video': {'controls', 'preload', 'playsinline', 'src', 'poster'},
@@ -80,7 +80,7 @@ class RenderHtmlTest(TestCase):
                         case.assertEqual(value, fixed[name], (source, out))
                     if name == 'data-yarn':  # the page builds a player from it
                         case.assertRegex(value, r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', (source, out))
-                    if name in ('href', 'src', 'poster'):  # decoded: entities are fine
+                    if name in ('href', 'src', 'poster', 'data-full'):  # decoded: entities are fine
                         case.assertRegex(value, r'^(https?://|/moods/media/[0-9a-f]{64}\.(png|jpg|gif|webp)$'
                                                 r'|/moods/[a-z0-9-]+/(#m-[0-9a-f-]{36})?$)', (source, out))
                     if name == 'data-mood':  # the page opens it

@@ -618,6 +618,40 @@ def api_speak(request, slug, message_id):
 
 
 @require_GET
+def api_voice_sample(request, voice_id):
+    """A voice's sample (ElevenLabs' preview), served from here as audio/mpeg.
+
+    Its host labels some samples text/plain, which Firefox won't play. Only
+    the voices ElevenLabs lists -- nothing else is fetched -- and each kept a day.
+    """
+    from django.core.cache import cache
+    from django.http import HttpResponse
+    from .services import voice
+    key = f'voice:sample:{voice_id[:40]}'
+    audio = cache.get(key)
+    if audio is None:
+        try:
+            listed = {v['voice_id']: v.get('preview_url') for v in voice.voices()}
+        except voice.VoiceError:
+            listed = {}
+        url = listed.get(voice_id)
+        if not url:
+            return JsonResponse({'error': 'no sample of that voice'}, status=404)
+        import requests
+        try:
+            answer = requests.get(url, timeout=15)
+        except requests.RequestException:
+            return JsonResponse({'error': 'the sample could not be fetched'}, status=502)
+        if answer.status_code != 200 or not answer.content[:3] in (b'ID3', b'\xff\xfb', b'\xff\xf3', b'\xff\xf2'):
+            return JsonResponse({'error': 'the sample is not audio'}, status=502)
+        audio = answer.content
+        cache.set(key, audio, 86400)
+    response = HttpResponse(audio, content_type='audio/mpeg')
+    response['Cache-Control'] = 'public, max-age=86400'
+    return response
+
+
+@require_GET
 def api_voices(request):
     """The voices there are to choose from (for a ```voice block, or the house voice), and today's spend."""
     from .services import settings as knobs

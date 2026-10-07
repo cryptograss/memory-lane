@@ -49,7 +49,8 @@ class EmbedsTest(TestCase):
         self.addCleanup(thumb.stop)
 
     def test_a_file_by_wikilink_page_or_commons_is_the_picture(self):
-        picture = ('<a class="img" href="https://commons.wikimedia.org/wiki/File:Earl_Scruggs.jpg" target="_blank" '
+        picture = ('<a class="img" href="https://commons.wikimedia.org/wiki/File:Earl_Scruggs.jpg" '
+                   'data-full="https://upload.wikimedia.org/c/e/Earl_Scruggs.jpg" target="_blank" '
                    'rel="noopener"><img src="https://upload.wikimedia.org/c/thumb/e/800px-Earl_Scruggs.jpg" ')
         for text in ('[[File:Earl Scruggs.jpg]]', '[[File:Earl_Scruggs.jpg|thumb|300px|Earl, 1977]]',
                      'https://pickipedia.xyz/wiki/File:Earl_Scruggs.jpg',
@@ -61,8 +62,10 @@ class EmbedsTest(TestCase):
         self.assertEqual(self.asked.call_count, 1)  # one question for all four: kept
 
     def test_a_file_thats_a_video_plays(self):
-        self.assertIn('<video controls preload="metadata" playsinline src="https://upload.wikimedia.org/c/b/Breakdown.webm">',
-                      render_html('[[File:Breakdown.webm]]'))
+        out = render_html('[[File:Breakdown.webm]]')
+        self.assertIn('<video controls preload="metadata" playsinline src="https://upload.wikimedia.org/c/b/Breakdown.webm">', out)
+        self.assertIn('<a class="caption" href="https://commons.wikimedia.org/wiki/File:Breakdown.webm" target="_blank" '
+                      'rel="noopener">Breakdown.webm ↗</a>', out)  # a player has its page beside it
 
     def test_a_file_nobody_has_stays_a_link(self):
         self.assertIn('<a class="wikilink" href="https://pickipedia.xyz/wiki/File:Nope.jpg"', render_html('[[File:Nope.jpg]]'))

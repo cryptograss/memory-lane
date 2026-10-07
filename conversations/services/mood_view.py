@@ -165,11 +165,15 @@ def _file_embed(name, caption=''):
         return None
     page, full, src = (html.escape(found[k], quote=True) for k in ('page', 'full', 'src'))
     said = f'<span class="caption">{caption}</span>' if caption else ''
+    # A player always has its page beside it; a picture opens large (the page's
+    # lightbox), the full-size file in data-full, its page from there.
+    to_page = f'<a class="caption" href="{page}"{_OUT}>{caption or name} ↗</a>'
     if found['mime'].startswith('video/'):
-        return f'<span class="embed"><video controls preload="metadata" playsinline src="{full}"></video>{said}</span>'
+        return f'<span class="embed"><video controls preload="metadata" playsinline src="{full}"></video>{to_page}</span>'
     if found['mime'].startswith('audio/'):
-        return f'<span class="embed"><audio controls preload="none" src="{full}"></audio>{said}</span>'
-    return f'<a class="img" href="{page}"{_OUT}><img src="{src}" alt="{caption or name}" loading="lazy"></a>{said}'
+        return f'<span class="embed"><audio controls preload="none" src="{full}"></audio>{to_page}</span>'
+    return (f'<a class="img" href="{page}" data-full="{full}"{_OUT}><img src="{src}" alt="{caption or name}" '
+            f'loading="lazy"></a>{said}')
 
 
 def _release_embed(cid):

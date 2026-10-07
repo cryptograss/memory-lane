@@ -192,3 +192,33 @@ class ReaderReportsTest(TestCase):
         self.assertEqual(client.post('/api/voice/heard/', json.dumps({'mood': 'general', 'outcome': 'exploded'}),
                                      content_type='application/json').status_code, 400)
         self.assertEqual(Client().post('/api/voice/heard/', '{}', content_type='application/json').status_code, 401)
+
+
+@override_settings(ELEVENLABS_API_KEY='test-eleven-key')
+class VoiceSampleTest(TestCase):
+    """ElevenLabs' samples, served from here as audio: its host calls some text/plain, which Firefox won't play."""
+
+    def setUp(self):
+        cache.clear()
+
+    def test_a_listed_voices_sample_comes_as_audio_and_nothing_else_is_fetched(self):
+        listed = [{'name': 'Aria', 'voice_id': 'v-aria', 'preview_url': 'https://storage.example/aria.mp3'}]
+        fetched = []
+
+        def get(url, **kw):
+            fetched.append(url)
+            return Answer(200, content=b'ID3\x04' + b'\x00' * 60)
+        with mock.patch('conversations.services.voice.voices', return_value=listed), mock.patch('requests.get', get):
+            first = Client().get('/api/voice/sample/v-aria/')
+            again = Client().get('/api/voice/sample/v-aria/')
+            other = Client().get('/api/voice/sample/v-somebody-else/')
+        self.assertEqual((first.status_code, first['Content-Type']), (200, 'audio/mpeg'))
+        self.assertEqual(again.content, first.content)
+        self.assertEqual(fetched, ['https://storage.example/aria.mp3'])  # once, and only a listed voice's
+        self.assertEqual(other.status_code, 404)
+
+    def test_what_isnt_audio_isnt_served(self):
+        listed = [{'name': 'Aria', 'voice_id': 'v-aria', 'preview_url': 'https://storage.example/aria.mp3'}]
+        with mock.patch('conversations.services.voice.voices', return_value=listed), \
+                mock.patch('requests.get', lambda url, **kw: Answer(200, content=b'<html>nope</html>')):
+            self.assertEqual(Client().get('/api/voice/sample/v-aria/').status_code, 502)

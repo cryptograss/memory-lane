@@ -489,6 +489,16 @@
   /* Images: in turns, as thumbnails on a run of work, inside a step. */
   .turn .body a.img { display: inline-block; margin: 4px 0; }
   .turn .body img { display: block; max-width: 100%; max-height: 420px; border-radius: 6px; border: 1px solid var(--line); }
+  /* A picture, large, over everything: its caption, and its page. */
+  #lightbox { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.86); display: flex; flex-direction: column;
+              align-items: center; justify-content: center; gap: 10px; padding: 16px; }
+  #lightbox[hidden] { display: none; }
+  #lightbox img { max-width: 94vw; max-height: 80vh; object-fit: contain; border-radius: 6px; box-shadow: 0 6px 30px rgba(0,0,0,.5); }
+  #lightbox .lbfoot { color: #eee; font-size: 14px; text-align: center; max-width: 90vw; }
+  #lightbox .lbfoot a { color: #ffb3d9; margin-left: 10px; white-space: nowrap; }
+  #lightbox .close { position: absolute; top: 10px; right: 14px; font-size: 26px; line-height: 1; color: #fff; background: none;
+                     border: 0; cursor: pointer; padding: 6px; }
+  .turn .body a.img { cursor: zoom-in; }
   /* A file or a release, shown where it was linked (mood_view._file_embed, _release_embed). */
   .turn .body .embed { display: block; margin: 6px 0; max-width: 560px; }
   .turn .body .embed video { display: block; width: 100%; max-height: 60vh; border-radius: 6px; background: #000; }
@@ -642,6 +652,8 @@
     </div>
   </span>
 </header>
+<div id="lightbox" hidden role="dialog" aria-label="Picture"><button type="button" class="close" aria-label="Close">✕</button>
+  <img alt=""><div class="lbfoot"><span class="lbcap"></span><a class="lbpage" target="_blank" rel="noopener"></a></div></div>
 <div id="voicesBox" hidden role="dialog" aria-label="Voices">
   <div class="head"><b>Who is read in which voice</b> <button type="button" id="voicesClose">close</button></div>
   <div id="voicesList"></div>
@@ -967,6 +979,32 @@
       b.textContent = b.dataset.label || '▶';
     } finally { b.classList.remove('busy'); }
   });
+
+  // A picture in what was said opens large, here; from there, its page (PickiPedia,
+  // Commons) or, for one sent here, the file itself. ✕, Esc or the dark around it closes.
+  const lightbox = document.getElementById('lightbox');
+  function closeLightbox() { lightbox.hidden = true; lightbox.querySelector('img').removeAttribute('src'); }
+  document.addEventListener('click', e => {
+    const a = e.target.closest('.turn .body a.img');
+    if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button) return;
+    e.preventDefault();
+    const img = a.querySelector('img');
+    const full = a.dataset.full || a.href;
+    lightbox.querySelector('img').src = full;
+    lightbox.querySelector('img').alt = img ? img.alt : '';
+    const cap = a.nextElementSibling && a.nextElementSibling.classList.contains('caption') ? a.nextElementSibling.textContent : '';
+    lightbox.querySelector('.lbcap').textContent = cap;
+    const page = lightbox.querySelector('.lbpage');
+    page.href = a.href;
+    const host = new URL(a.href, location.href).hostname;
+    page.textContent = !a.dataset.full ? 'the picture itself ↗'
+      : host.endsWith('wikimedia.org') ? 'its page on Commons ↗' : 'its page on PickiPedia ↗';
+    lightbox.hidden = false;
+  });
+  lightbox.addEventListener('click', e => { if (e.target === lightbox || e.target.closest('.close')) closeLightbox(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !lightbox.hidden) { e.preventDefault(); e.stopImmediatePropagation(); closeLightbox(); }
+  }, { capture: true });
 
   // A release this browser can't play (a .mov outside Safari, say): its caption is the link to it.
   document.addEventListener('error', e => {
@@ -2201,7 +2239,7 @@
       if (!keyHolder) {
         return row
           + `${esc(describeListening(l))} · ${esc(a.discretion || 'normal')} · ${esc(REPLY_LENGTHS[a.verbosity || 'normal'])}`
-          + ` · ${esc(a.model || 'default')} · effort ${esc(EFFORT_LABELS[a.effort] || a.effort)} · 📖${esc(kTokens(a.reads || 10000))}`
+          + ` · ${esc(a.model || 'default')} · effort ${esc(EFFORT_LABELS[a.effort] || a.effort)} · reads ${esc(kTokens(a.reads || 10000))}`
           + (a.ultracode ? ' · ultracode' : '') + '</span>';
       }
       const listen = `<select data-agent="${esc(agent)}" data-knob="listening" title="listen: answers mentions and may speak up unasked · mention: answers mentions only · hush: wakes for nothing (mentions wait); with a time, back to listening then"><option selected disabled>${esc(describeListening(l))}</option>`
@@ -2214,8 +2252,8 @@
         + EFFORTS.map(v => `<option value="${v}"${v === a.effort ? ' selected' : ''}>${EFFORT_LABELS[v] || v}</option>`).join('') + '</select>';
       // How much of what was said since its last word a wake reads word for word.
       const reads = `<select data-agent="${esc(agent)}" data-knob="catch_up_tokens" title="How much of what was said here since it last spoke a wake reads word for word; older is summarized">`
-        + READS.map(n => `<option value="${n}"${n === a.reads ? ' selected' : ''}>📖${kTokens(n)}</option>`).join('')
-        + (READS.includes(a.reads) ? '' : `<option value="${a.reads}" selected>📖${kTokens(a.reads)}</option>`) + '</select>';
+        + READS.map(n => `<option value="${n}"${n === a.reads ? ' selected' : ''}>reads ${kTokens(n)}</option>`).join('')
+        + (READS.includes(a.reads) ? '' : `<option value="${a.reads}" selected>reads ${kTokens(a.reads)}</option>`) + '</select>';
       // How readily it speaks up unasked here, and how long its replies run.
       const discretion = `<select data-agent="${esc(agent)}" data-knob="discretion" title="How readily it speaks up unasked here: reserved, normal, or chatty (joins in, small talk included)">`
         + DISCRETIONS.map(v => `<option value="${v}"${v === (a.discretion || 'normal') ? ' selected' : ''}>${v}</option>`).join('') + '</select>';
@@ -2673,7 +2711,7 @@
     const chosen = b.closest('.spk').querySelector('select').value;
     const v = (voiceData.voices || []).find(o => o.voice_id === chosen) || voiceFor(voiceData, b.closest('.spk').dataset.name);
     if (!v || !v.preview_url) { showError('no sample of that voice to play'); return; }
-    voiceSample.src = v.preview_url;
+    voiceSample.src = `/api/voice/sample/${encodeURIComponent(v.voice_id)}/`;  // served as audio (views_auth.api_voice_sample)
     voiceSample.play().catch(err => showError('sample: ' + err.message));
   });
   voicesBox.addEventListener('change', async e => {
