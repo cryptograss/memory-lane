@@ -16,3 +16,5 @@ debugpy>=1.8.0
 requests>=2.31.0
 # Web Push: notifications with magenta closed (conversations/services/push.py).
 pywebpush==2.5.0
+# A Mood's to-do list, YAML on PickiPedia (conversations/services/todo.py).
+PyYAML>=6.0,<7
