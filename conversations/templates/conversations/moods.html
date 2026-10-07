@@ -1242,7 +1242,7 @@
     // One line a deploy: "redeploying…" while it's under way, then, in that same
     // line, how it ended -- with its log. A start nothing ever finished says so.
     const commit = e.commit ? ` · <code>${esc(e.commit.slice(0, 8))}</code>` : '';
-    const by = e.by ? ` · by ${esc(e.by)}` : '';
+    const by = e.by ? ` · by ${deployer(e.by)}` : '';
     const log = deployLog(e.note);
     const started = e.state === 'started' ? null
       : [...container.querySelectorAll(':scope > .event.started')].filter(x => x.dataset.server === (e.server || '')).pop();
@@ -1260,7 +1260,15 @@
     prev = null;
     refreshServers(true);  // the dots, now
   }
-  const DEPLOY_PATIENCE_MS = 90 * 60 * 1000;  // as services/servers.py: unheard of this long, presumed over
+  const DEPLOY_PATIENCE_MS = 90 * 60 * 1000;
+  // Who deployed, by their PickiPedia name and linked to their page: a deploy script
+  // says a name here ('justin') or their PickiPedia name in any case ('jmyles').
+  function deployer(by) {
+    const lower = String(by).toLowerCase();
+    const here = WIKI_NAMES[lower] ? lower : Object.keys(WIKI_NAMES).find(n => WIKI_NAMES[n].toLowerCase() === lower);
+    if (!here) return esc(by);  // nobody PickiPedia knows ('remote'): as the script said it
+    return `<a href="${esc(userPage(here))}" target="_blank" rel="noopener">${esc(WIKI_NAMES[here])}</a>`;
+  }  // as services/servers.py: unheard of this long, presumed over
 
   // An attestation's proof: what was signed, the signature, the key, and how to check it anywhere.
   document.addEventListener('click', e => {
