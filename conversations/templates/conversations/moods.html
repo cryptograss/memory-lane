@@ -2436,6 +2436,7 @@
   // Bring a message into view, reaching back a few pages if need be.
   async function reveal(id) {
     if (!id) return false;
+    stopSettling();  // taken to a message: the newest no longer pulls
     for (let i = 0; i < 12; i++) {
       const el = document.getElementById('m-' + id);
       if (el) {
@@ -2479,6 +2480,7 @@
 
   async function open(slug, push) {
     if (slug === current && document.getElementById('turns')) return;
+    const opening = Date.now();
     saveDraft();  // what's typed here waits here, with the reply it's answering
     replyTo = null; replying.hidden = true;
     stash();
@@ -2503,6 +2505,7 @@
       inner.replaceChildren(saved.nodes);
       ({ lastId, firstId, prev } = saved);
       showMoodName(saved.headMood);
+      toNewest();  // before anything is painted: never its top while the poll is out
       await poll(false);
     } else {
       lastId = null;
@@ -2510,18 +2513,35 @@
       await poll(true);
     }
     // A Mood opens at its newest, always: what's for you is marked, and the @
-    // arrows (or a notification, a search hit, a link) take you to it.
-    toNewest();
+    // arrows (or a notification, a search hit, a link) take you to it. Unless
+    // they've already scrolled it themselves while it was loading.
+    if (touchedAt < opening) toNewest();
     renderToBottom();
   }
-  // To the newest, and stay there while images above it load and push it down.
+  // To the newest, and stay there while what's above it settles -- pictures
+  // loading, link cards arriving, a poll's new turns -- for SETTLE_MS, or until
+  // they scroll themselves (wheel, touch, a key that scrolls).
+  const SETTLE_MS = 4000;
+  let settling = null;
+  let touchedAt = 0;  // when they last scrolled the Mood themselves
+  const touched = () => { touchedAt = Date.now(); };
+  main.addEventListener('wheel', touched, { passive: true });
+  main.addEventListener('pointerdown', touched, { passive: true });
+  addEventListener('keydown', e => { if (/^(PageUp|ArrowUp|Home)$/.test(e.key)) touched(); });
   function toNewest() {
     main.scrollTop = main.scrollHeight;
-    const until = Date.now() + 4000;
-    document.querySelectorAll('#turns img').forEach(img => {
-      if (!img.complete) img.addEventListener('load', () => { if (Date.now() < until) main.scrollTop = main.scrollHeight; }, { once: true });
-    });
+    if (settling) settling.abort();
+    const done = settling = new AbortController();
+    const watch = new ResizeObserver(() => { main.scrollTop = main.scrollHeight; });
+    watch.observe(inner);
+    done.signal.addEventListener('abort', () => watch.disconnect());
+    const stop = () => { done.abort(); if (settling === done) settling = null; };
+    main.addEventListener('wheel', stop, { passive: true, signal: done.signal });
+    main.addEventListener('pointerdown', stop, { passive: true, signal: done.signal });  // a touch, a click, the scrollbar
+    addEventListener('keydown', e => { if (/^(PageUp|ArrowUp|Home)$/.test(e.key)) stop(); }, { signal: done.signal });
+    setTimeout(stop, SETTLE_MS);
   }
+  function stopSettling() { if (settling) { settling.abort(); settling = null; } }
 
   let firstId = null;      // the oldest item shown, for ?before=
   async function loadEarlier() {
@@ -2979,6 +2999,9 @@
     if (w) return { kind: 'wiki', start: upto.length - w[1].length, prefix: w[1] };
     let m = upto.match(/(^|[^\w@\/.])@([A-Za-z][\w.-]*)?$/);
     if (m) return { kind: 'mention', start: upto.length - (m[2] || '').length, prefix: (m[2] || '').toLowerCase() };
+    // #mood, as mood_view._HASH links it: not after a word, an & or a / (a URL's #anchor, &#39;).
+    m = upto.match(/(^|[^\w&#\/;=])#([a-z0-9][a-z0-9-]{0,79})?$/i);
+    if (m) return { kind: 'mood', start: upto.length - (m[2] || '').length, prefix: (m[2] || '').toLowerCase() };
     // `:` starting a word -- so 10:30 doesn't open it.
     m = upto.match(/(^|[\s(]):([a-z0-9_+-]{0,30})$/);
     if (m) return { kind: 'emoji', start: upto.length - m[2].length - 1, prefix: m[2] };
@@ -3017,7 +3040,17 @@
       });
       return;
     }
-    if (at.kind === 'emoji') {
+    if (at.kind === 'mood') {
+      // By its name (the slug a link takes) or the words of its title; the most lately active first, as the list has them.
+      const p = at.prefix;
+      const byTitle = m => (m.title || '').toLowerCase().split(/[^a-z0-9]+/).some(w => w && w.startsWith(p));
+      const open = moods.filter(m => !m.archived), shut = moods.filter(m => m.archived);
+      const hits = [...open, ...shut].filter(m => m.slug.startsWith(p))
+        .concat(p ? [...open, ...shut].filter(m => !m.slug.startsWith(p) && (byTitle(m) || m.slug.includes(p))) : [])
+        .slice(0, 8);
+      choices = hits.map(m => ({ insert: m.slug + ' ', html: `<span class="emo">#</span>${esc(m.slug)}`
+        + `<small>${m.title && m.title !== m.slug ? esc(m.title) : ''}${m.archived ? (m.title && m.title !== m.slug ? ' · ' : '') + 'archived' : ''}</small>` }));
+    } else if (at.kind === 'emoji') {
       const hits = EMOJI.filter(([name]) => name.startsWith(at.prefix))
         .concat(at.prefix ? EMOJI.filter(([name]) => !name.startsWith(at.prefix) && name.includes(at.prefix)) : [])
         .slice(0, 8);
