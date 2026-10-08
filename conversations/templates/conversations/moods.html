@@ -484,12 +484,16 @@
                       max-height: 60vh; overflow-y: auto; }
   #activity, #composer { max-width: 760px; margin: 0 auto; }  /* the reading column's width */
   #composer { display: none; position: relative; padding: 10px 16px 14px; }
-  body.writer #composer { display: flex; gap: 8px; align-items: flex-end; }
+  body.writer #composer { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
   #composer textarea { flex: 1; font-family: inherit; line-height: inherit; min-height: 44px; max-height: 40vh; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
   #composer button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
   #composer button:disabled { opacity: .5; cursor: default; }
+  /* A word from the page (an error, a note) goes on its own line under the box: beside it, a
+     long one squeezed the box to a sliver on a phone, and you couldn't type to clear it. */
+  #composer textarea { min-width: 0; }
+  #composer .err, #composer .note { flex: 0 0 100%; order: 10; margin-top: -4px; }
   #composer .err { color: var(--accent); font-size: 12px; }
-  #composer .note { color: var(--muted); font-size: 12px; align-self: center; }
+  #composer .note { color: var(--muted); font-size: 12px; }
   #activity { display: none; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--muted); }
   #activity.on { display: flex; }
   #activity .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--agent); animation: pulse 1.2s ease-in-out infinite; }
@@ -3088,6 +3092,8 @@
     composer.querySelectorAll('.err, .note').forEach(el => el.remove());
     composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(message)}</span>`);
   }
+  // What's said next makes an old error old news.
+  sayBox.addEventListener('input', () => { const err = composer.querySelector('.err'); if (err) err.remove(); });
   function showNote(message, ms) {  // a word under the box, gone after a while
     composer.querySelectorAll('.err, .note').forEach(el => el.remove());
     composer.insertAdjacentHTML('beforeend', `<span class="note">${esc(message)}</span>`);
