@@ -380,6 +380,22 @@ class WikiFeedTest(TestCase):
         self.assertEqual(body['turns'], [])  # lines, not words: nothing to answer
         self.assertEqual(self.client.get('/api/moods/').json()['moods'][0]['message_count'], 0)
 
+    def test_a_moods_todo_list_is_shown_in_that_mood_only(self):
+        from conversations.models import MoodAlias
+        from conversations.services import wiki_feed
+        jam = Mood.objects.create(slug='jam', title='jam')
+        MoodAlias.objects.create(slug='old-jam', mood=jam)
+        http = self.wiki(1)
+        found = http.get.return_value.json()['query']['recentchanges']
+        found += [{'type': 'edit', 'title': title, 'rcid': n, 'revid': 900 + n, 'user': 'Magent', 'oldlen': 1,
+                   'newlen': 2, 'timestamp': '2026-10-03T23:00:00Z', 'comment': ''}
+                  for n, title in ((2, 'Cryptograss:Moods/jam/todo'), (3, 'Cryptograss:Moods/old-jam/todo'),
+                                   (4, 'Cryptograss:Moods/nobody-here/todo'), (5, 'Cryptograss:Moods/jam'))]
+        wiki_feed.refresh(http)
+        lines = lambda slug: [e['title'] for e in self.client.get(f'/api/moods/{slug}/turns/').json()['events']]
+        self.assertEqual(sorted(lines('general')), ['Cryptograss:Moods/jam', 'Page 1'])  # not the to-do lists
+        self.assertEqual(sorted(lines('jam')), ['Cryptograss:Moods/jam/todo', 'Cryptograss:Moods/old-jam/todo'])
+
     def test_at_most_once_a_minute(self):
         from conversations.services import wiki_feed
         http = self.wiki(1)
