@@ -27,9 +27,12 @@ it's written, its markdown taken out.
 
 **Each speaker has a voice**, so a Mood heard and not seen still makes
 sense: the one they chose, or else one given at their first reading --
-unlike the narrator's and everyone else's -- and kept. The narrator is
-magent, in the house voice unless it has chosen another; when messages are
-read one after another, it says who speaks next ("Justin says:").
+unlike the narrator's and everyone else's -- and kept. magent reads in the
+house voice unless it has chosen another. **The narrator** has a voice of
+its own (the 'narrator_voice' setting; given at its first word, nobody
+else's, changeable in the voices list): when messages are read one after
+another it says who speaks next ("Justin says:"), and when an agent starts
+work, that it's thinking ("Magent is thinking, in magenta interface").
 
 **It starts at once.** A message is read in pieces (pieces()): its first
 paragraph alone -- cut at a sentence if it runs long -- so it's spoken in a
@@ -263,15 +266,20 @@ def voice_id_for(name, http=requests):
 
 # --- who speaks in which voice ------------------------------------------------------
 
-NARRATOR = 'magent'  # introduces each speaker, in its own voice: the house voice, unless it has chosen one
+NARRATOR = 'narrator'  # says who speaks next, and who's thinking: in a voice of its own ('narrator_voice')
+HOUSE_SPEAKER = 'magent'  # reads in the house voice, unless it has chosen another
 
 
 def chosen_voices():
-    """{name: voice (an id, or a name)}: each speaker's voice, chosen or given (the 'speaker_voice' setting)."""
+    """{name: voice (an id, or a name)}: each speaker's voice, chosen or given (the
+    'speaker_voice' setting), and the narrator's ('narrator_voice')."""
     from conversations.models import Setting
     from conversations.services import settings as knobs
     rows = Setting.objects.filter(key='speaker_voice', mood=None, agent__isnull=False)
-    return {agent: row.value for (_, agent, _), row in knobs.latest(rows).items() if row.value}
+    chosen = {agent: row.value for (_, agent, _), row in knobs.latest(rows).items() if row.value}
+    if knobs.global_value('narrator_voice'):
+        chosen[NARRATOR] = knobs.global_value('narrator_voice')
+    return chosen
 
 
 def voice_of(name, http=requests):
@@ -287,7 +295,7 @@ def voice_of(name, http=requests):
     if chosen.get(name):
         return voice_id_for(chosen[name], http)
     house = voice_id_for('', http)
-    if name == NARRATOR:
+    if name == HOUSE_SPEAKER:
         return house
     try:
         listed = [v['voice_id'] for v in voices(http) if v.get('voice_id')]
@@ -298,6 +306,9 @@ def voice_of(name, http=requests):
     if not free:
         return house
     pick = free[int(hashlib.sha256(name.encode()).hexdigest(), 16) % len(free)]
+    if name == NARRATOR:
+        knobs.change('narrator_voice', pick, note='given at its first word')
+        return pick
     entity = ThinkingEntity.objects.filter(name=name).first()
     if entity is not None:
         knobs.change('speaker_voice', pick, agent=entity, note='given at their first reading aloud')
@@ -319,6 +330,17 @@ def intro(message, by, where=False, http=requests):
         script = f'{who} says:'
     return _spoken(message.mood, by, voice_of(NARRATOR, http), {'text': script, 'model_id': TTS_MODEL}, script,
                    http, intro=message.sender_id)
+
+
+def narrate_thinking(mood, agent, by, where=False, http=requests):
+    """The URL of the narrator saying `agent` has started work ("Magent is
+    thinking" -- with `where`, ", in magenta interface"). Made once per wording, and kept."""
+    script = f'{spoken_name(agent)} is thinking'
+    if where:
+        script += f", in {(mood.title or mood.slug).replace('-', ' ')}"
+    script += '.'
+    return _spoken(mood, by, voice_of(NARRATOR, http), {'text': script, 'model_id': TTS_MODEL}, script,
+                   http, narrated='thinking', agent=agent)
 
 
 # --- reading a message aloud --------------------------------------------------------

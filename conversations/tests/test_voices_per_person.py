@@ -41,7 +41,7 @@ class SpeakersTest(TestCase):
 
     def test_each_person_gets_a_voice_of_their_own_and_keeps_it(self):
         voice.speak(self.said(self.magent, 'Shipped.'), 'justin', http=self.fake)
-        self.assertEqual(self.voice_used(), 'v-aria')  # the narrator: the house voice (here, the first)
+        self.assertEqual(self.voice_used(), 'v-aria')  # magent: the house voice (here, the first)
         voice.speak(self.said(self.justin, 'Nice.'), 'justin', http=self.fake)
         justins = self.voice_used()
         voice.speak(self.said(self.skyler, 'Agreed.'), 'justin', http=self.fake)
@@ -65,7 +65,10 @@ class SpeakersTest(TestCase):
     def test_the_narrator_says_who_speaks_once_per_wording(self):
         message = self.said(self.skyler, 'Bus at nine.')
         url = voice.intro(message, 'justin', http=self.fake)
-        self.assertEqual((self.voice_used(), self.fake.asked[-1][2]['json']['text']), ('v-aria', 'Skyler says:'))
+        narrators = self.voice_used()
+        self.assertEqual(self.fake.asked[-1][2]['json']['text'], 'Skyler says:')
+        self.assertNotEqual(narrators, 'v-aria')  # a voice of its own: not magent's, the house voice
+        self.assertEqual(voice.chosen_voices()['narrator'], narrators)  # given once, and kept
         asked = len(self.fake.asked)
         self.assertEqual(voice.intro(self.said(self.skyler, 'And a capo.'), 'justin', http=self.fake), url)
         self.assertEqual(len(self.fake.asked), asked)  # the same words: made once
@@ -74,11 +77,24 @@ class SpeakersTest(TestCase):
         row = Message.objects.filter(source_file='voice', content__intro='skyler').first()
         self.assertEqual((row.content['type'], row.content['by']), ('spoken', 'justin'))
 
-    def test_a_narrator_with_a_voice_of_its_own_introduces_in_it(self):
+    def test_the_narrators_chosen_voice_is_its_own_whatever_magents(self):
         from conversations.services import settings as knobs
-        knobs.change('speaker_voice', 'Bill', agent=self.magent, by=self.justin)
+        knobs.change('speaker_voice', 'Clyde', agent=self.magent, by=self.justin)
+        knobs.change('narrator_voice', 'Bill', by=self.justin)
         voice.intro(self.said(self.skyler, 'Hi.'), 'justin', http=self.fake)
         self.assertEqual(self.voice_used(), 'v-bill')
+        voice.speak(self.said(self.magent, 'Shipped.'), 'justin', http=self.fake)
+        self.assertEqual(self.voice_used(), 'v-clyde')
+
+    def test_the_narrator_says_an_agent_is_thinking_once_per_wording(self):
+        url = voice.narrate_thinking(self.mood, 'magent', 'justin', where=True, http=self.fake)
+        self.assertEqual(self.fake.asked[-1][2]['json']['text'], 'Magent is thinking, in magenta interface.')
+        self.assertEqual(self.voice_used(), voice.voice_id_for(voice.chosen_voices()['narrator'], self.fake))
+        asked = len(self.fake.asked)
+        self.assertEqual(voice.narrate_thinking(self.mood, 'magent', 'skyler', where=True, http=self.fake), url)
+        self.assertEqual(len(self.fake.asked), asked)
+        voice.narrate_thinking(self.mood, 'magent', 'justin', http=self.fake)
+        self.assertEqual(self.fake.asked[-1][2]['json']['text'], 'Magent is thinking.')
 
     def test_without_the_list_everyone_is_the_house_voice_and_nothing_is_kept(self):
         class Closed(FakeEleven):
@@ -124,8 +140,27 @@ class SpeakerEndpointsTest(TestCase):
             self.assertEqual(Client().post('/api/voice/speaker/', '{}', content_type='application/json').status_code, 401)
             listed = Client().get('/api/voice/voices/').json()
         self.assertEqual(listed['speakers'], {'skyler': 'Dolly', 'magent': 'Bill'})
-        self.assertEqual(listed['narrator'], 'magent')
+        self.assertEqual(listed['narrator'], 'narrator')
         self.assertEqual(listed['voices'][0]['preview_url'], 'https://x/Aria.mp3')
+
+    def test_the_narrators_voice_takes_an_ssh_key_to_change(self):
+        fake = FakeQuartet()
+        with mock.patch('requests.get', fake.get):
+            self.assertEqual(self.choose(self.client_for(self.skyler, tier='wiki'), 'narrator', 'Dolly').status_code, 403)
+            self.assertEqual(self.choose(self.client_for(self.justin), 'narrator', 'Dolly').status_code, 201)
+            self.assertEqual(Client().get('/api/voice/voices/').json()['speakers']['narrator'], 'Dolly')
+
+    def test_thinking_said_for_an_agent_only_and_a_signed_in_device(self):
+        fake = FakeQuartet()
+        client = self.client_for(self.justin)
+        ask = lambda c, who: c.post('/api/voice/narrate/', json.dumps({'mood': 'general', 'agent': who, 'where': True}),
+                                    content_type='application/json')
+        with mock.patch('requests.get', fake.get), mock.patch('requests.post', fake.post):
+            self.assertEqual(ask(Client(), 'magent').status_code, 401)
+            self.assertEqual(ask(client, 'skyler').status_code, 404)  # a person: never "thinking", by this
+            said = ask(client, 'magent')
+        self.assertTrue(said.json()['url'].endswith('.mp3'))
+        self.assertEqual(fake.asked[-1][2]['json']['text'], 'Magent is thinking, in general.')
 
     def test_speak_can_say_who_speaks_first_or_only_that(self):
         fake = FakeQuartet()
