@@ -738,7 +738,7 @@
       <div id="suggest"></div>
       <button type="button" id="agentsBtn" title="Agents here: listening, model, effort" aria-label="Agent settings" aria-expanded="false">⚙</button>
       <button type="button" id="attach" title="Add an image (or paste or drop one). Your pictures are shared under CC BY-SA 4.0, or CC0 if you choose." aria-label="Add an image">＋</button>
-      <button type="button" id="memoBtn" title="Record a voice memo: tap to start, tap again to stop. It's transcribed for you to look over before sending." aria-label="Record a voice memo" hidden>🎙</button>
+      <button type="button" id="memoBtn" title="Record a voice memo: tap to start, tap again to stop. It's ready to send at once; its words are written in when it's sent." aria-label="Record a voice memo" hidden>🎙</button>
       <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
       <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
       <button type="submit" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z" fill="currentColor"/></svg></button>
@@ -2773,8 +2773,10 @@
     if (files.length) { e.preventDefault(); files.forEach(upload); }
   });
 
-  // A voice memo: recorded here, transcribed there, put in the box to look
-  // over before sending -- a player for the audio, then what was heard.
+  // A voice memo: recorded here, and in the box the moment it's stopped, ready
+  // to send. The server hears it meanwhile (voice.hear_later); sent, it's
+  // posted as soon as its words are in -- usually already -- and until then
+  // the page says it's on its way (memoOnItsWay).
   const memoBtn = document.getElementById('memoBtn');
   const MEMO_MAX_S = 600;
   let recorder = null, memoTimer = null;
@@ -2795,22 +2797,21 @@
       stream.getTracks().forEach(t => t.stop());
       const seconds = (Date.now() - started) / 1000;
       recorder = null;
-      memoBtn.classList.remove('recording'); memoBtn.classList.add('busy'); memoBtn.textContent = 'transcribing…';
+      memoBtn.classList.remove('recording'); memoBtn.classList.add('busy'); memoBtn.textContent = 'saving…';
       try {
         const r = await fetch('/api/moods/' + encodeURIComponent(current) + '/memo/', {
           method: 'POST', headers: { 'X-CSRFToken': csrf() }, body: new Blob(chunks, { type: chunks[0]?.type || type || 'audio/webm' }) });
         const body = await r.json().catch(() => ({}));
-        if (body.url) {
-          const heard = body.text ? '\n\n' + body.text : '';
-          insertAtCaret(`🎙 [voice memo · ${clock(body.seconds || seconds)}](${body.url})${heard}`);
-          sayBox.dispatchEvent(new Event('input'));
-          sayBox.focus();
-        }
         if (!r.ok) throw new Error(body.error || r.status);
+        insertAtCaret(`🎙 [voice memo · ${clock(seconds)}](${body.url})`);
+        sayBox.dispatchEvent(new Event('input'));
+        sayBox.focus();
+        composer.insertAdjacentHTML('beforeend', '<span class="note">Ready to send: its words are written in as it goes.</span>');
       } catch (e) { showError('voice memo: ' + e.message); }
       finally { memoBtn.classList.remove('busy'); memoBtn.textContent = '🎙'; }
     });
     recorder.start(1000);
+    composer.querySelectorAll('.err, .note').forEach(el => el.remove());
     memoBtn.classList.add('recording');
     memoBtn.textContent = '■ 0:00';
     memoTimer = setInterval(() => {
@@ -2819,6 +2820,21 @@
       if (s >= MEMO_MAX_S && recorder) recorder.stop();
     }, 500);
   });
+
+  // A sent memo whose words aren't in yet: said under the box until it's in the thread.
+  function memoOnItsWay(sha) {
+    composer.insertAdjacentHTML('beforeend', `<span class="note memo-pending" data-sha="${esc(sha)}">🎙 Sent: it shows here once its words are written in…</span>`);
+    const note = composer.querySelector(`.memo-pending[data-sha="${CSS.escape(sha)}"]`);
+    const started = Date.now();
+    const look = setInterval(() => {
+      const arrived = document.querySelector(`.turn .body audio[src*="${CSS.escape(sha)}"]`);
+      if (arrived || !note?.isConnected || Date.now() - started > 300e3) {
+        clearInterval(look);
+        if (arrived) note?.remove();
+        else if (note?.isConnected) note.textContent = "🎙 Your memo is taking a while; it'll show when it's in.";
+      }
+    }, 1500);
+  }
 
   // --- voices: who is read in which ---------------------------------------------
   // Each speaker has a voice (services/voice.py, voice_of): chosen here, or
@@ -3277,6 +3293,8 @@
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
       const done = await r.json().catch(() => ({}));
       sayBox.value = ''; fitSay(); typingSent = 0; sendTyping(false); cancelReply(); showLicense();
+      composer.querySelectorAll('.note').forEach(el => el.remove());
+      if (done.pending) memoOnItsWay(done.pending);
       if (/^\/(?:clips|yarn)\s+(save|forget)\b/i.test(text)) clipsCache = null;  // the library changed
       if (done.note) {  // what a /clips command did, for whoever sent it
         composer.insertAdjacentHTML('beforeend', `<span class="note">${esc(done.note)}</span>`);

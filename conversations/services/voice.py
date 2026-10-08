@@ -1,9 +1,12 @@
 """Voice: memos people speak, and messages read aloud. ElevenLabs does both.
 
-A **memo** is recorded in the browser and posted here (views_auth.api_memo):
-its audio is stored like an image (services/media.py), and Scribe turns it
-into text the person can correct before sending. What's sent is a link to
-the audio and the transcript, so agents read it as text.
+A **memo** is recorded in the browser and posted here (views_auth.api_memo)
+the moment it's stopped: its audio is stored like an image (services/media.py)
+and Scribe starts on it at once, in the background (hear_later). The box
+holds the recording, ready to send; sent, it's posted as soon as its words
+are in -- usually already -- with the transcript after the link
+(views_auth.api_say, memo_in / with_transcript), so agents read it as text
+and a spoken "Magent, ..." wakes as a typed one would.
 
 **Reading aloud** turns one message into speech, on demand: someone presses
 ▶ (views_auth.api_speak). Agents can direct their own delivery with a block
@@ -414,6 +417,98 @@ def transcribe(media, mood, by, http=requests):
     record(mood, 'transcribed', by, media=media.sha256, seconds=seconds, usd=usd)
     return {'text': (result.get('text') or '').strip(), 'seconds': seconds,
             'language': result.get('language_code') or ''}
+
+
+# --- a memo, heard while it's being sent -----------------------------------------------
+
+HEARD_FOR = 86400       # seconds a memo's words are kept, waiting for it to be sent
+HEARING_FOR = 300       # seconds one transcription may take before another may try
+WAIT_TO_POST = 240      # seconds a sent memo waits for its words before going without
+_MEMO = re.compile(r'🎙 \[voice memo[^\]]*\]\(/(?:moods|motions)/media/([0-9a-f]{64})\.[a-z0-9]+\)')
+
+
+def _in_background(fn, *args):
+    """Run fn(*args) in a thread of its own, with its own database connection. (Tests run it inline.)"""
+    import threading
+
+    def run():
+        from django.db import connection
+        try:
+            fn(*args)
+        finally:
+            connection.close()
+    threading.Thread(target=run, daemon=True).start()
+
+
+def hear_later(media, mood, by, mentionable, aliases=None):
+    """Start transcribing a memo now, in the background, so its words are in
+    by the time it's sent. Once per recording. `mentionable`: the names a
+    spoken name may become an @mention of (not agents', for a wiki sign-in)."""
+    from django.core.cache import cache
+    if cache.get(f'memo:heard:{media.sha256}') is not None or not cache.add(f'memo:hearing:{media.sha256}', 1, HEARING_FOR):
+        return
+    _in_background(_hear, media.sha256, mood.pk, by, sorted(mentionable), aliases or {})
+
+
+def _hear(sha, mood_pk, by, mentionable, aliases):
+    from django.core.cache import cache
+    from conversations.models import Media, Mood
+    try:
+        heard = transcribe(Media.objects.get(sha256=sha), Mood.objects.get(pk=mood_pk), by)
+        heard['text'] = spoken_mentions(heard['text'], set(mentionable), aliases)
+    except VoiceError as e:
+        heard = {'error': str(e)}
+    except Exception:  # noqa: BLE001 -- whatever it was, the memo still goes, saying so
+        heard = {'error': 'transcribing failed'}
+    cache.set(f'memo:heard:{sha}', heard, HEARD_FOR)
+    cache.delete(f'memo:hearing:{sha}')
+
+
+def memo_in(text):
+    """The sha of a memo in `text` still waiting for its words (one recorded
+    here since hear_later), or None."""
+    from django.core.cache import cache
+    match = _MEMO.search(text or '')
+    if not match:
+        return None
+    sha = match.group(1)
+    heard = cache.get(f'memo:heard:{sha}')
+    if heard is None and cache.get(f'memo:hearing:{sha}') is None:
+        return None  # not one being heard: posted as written
+    if heard and heard.get('text') and heard['text'] in text:
+        return None  # its words are there already
+    return sha
+
+
+def heard(sha):
+    """A memo's words, if they're in: {'text', ...} or {'error'}; None while still being heard."""
+    from django.core.cache import cache
+    return cache.get(f'memo:heard:{sha}')
+
+
+def with_transcript(text, heard_as):
+    """`text` with the memo's words after its link (or why there are none)."""
+    match = _MEMO.search(text)
+    words = (heard_as or {}).get('text') or f"(not transcribed: {(heard_as or {}).get('error') or 'no words heard'})"
+    rest = text[match.end():].lstrip('\n')
+    return text[:match.end()] + '\n\n' + words + ('\n\n' + rest if rest else '')
+
+
+def post_when_heard(sha, text, post):
+    """In the background: wait for the memo's words (hearing it here if nobody
+    is), then post(text with them)."""
+    _in_background(_post_when_heard, sha, text, post)
+
+
+def _post_when_heard(sha, text, post):
+    from django.core.cache import cache
+    for _ in range(WAIT_TO_POST):
+        if heard(sha) is not None:
+            break
+        if cache.get(f'memo:hearing:{sha}') is None:
+            break  # nobody's hearing it (a restart, an eviction): it goes without, saying so
+        time.sleep(1)
+    post(with_transcript(text, heard(sha) or {'error': 'it took too long'}))
 
 
 # --- a mention, spoken ------------------------------------------------------------

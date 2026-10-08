@@ -140,13 +140,17 @@ class SpeakerEndpointsTest(TestCase):
         self.assertEqual(texts, ['In general, Skyler says:', 'Bus at nine.'])
         self.assertEqual(set(only), {'intro'})
 
-    def test_a_memo_that_names_someone_comes_back_mentioning_them(self):
+    def test_a_memo_that_names_someone_is_posted_mentioning_them(self):
         from conversations.tests.test_voice import WEBM
         client = self.client_for(self.justin)
         heard = {'text': 'Hey magnet, can you ask at skyler about the bus?', 'seconds': 3.0, 'language': 'eng'}
-        with mock.patch('conversations.services.voice.transcribe', return_value=heard):
-            back = client.post('/api/moods/general/memo/', WEBM, content_type='audio/webm').json()
-        self.assertEqual(back['text'], 'Hey @magent, can you ask @skyler about the bus?')
+        with mock.patch('conversations.services.voice.transcribe', return_value=heard), \
+                mock.patch('conversations.services.voice._in_background', lambda fn, *a: fn(*a)):
+            url = client.post('/api/moods/general/memo/', WEBM, content_type='audio/webm').json()['url']
+            client.post('/api/moods/general/say/', json.dumps({'text': f'🎙 [voice memo · 0:03]({url})'}),
+                        content_type='application/json')
+        posted = Message.objects.get(source_file='mood-web').content
+        self.assertIn('Hey @magent, can you ask @skyler about the bus?', posted)
 
 
 class SpokenMentionsTest(TestCase):
