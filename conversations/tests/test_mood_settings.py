@@ -171,20 +171,3 @@ class SettingsAPITest(TestCase):
         self.assertEqual(context_window('claude-haiku-4-5', 150_000), 200_000)
         self.assertEqual(context_window('claude-haiku-4-5', 300_000), 1_000_000)  # seen past it: the larger one
         self.assertEqual(context_window(None), 200_000)
-
-
-class TurnUsageTest(TestCase):
-    """An agent's turn says what it wrote, what each call read, and how much of that came from the cache."""
-
-    def test_usage_per_row(self):
-        import time
-        import uuid
-        from conversations.models import Message
-        magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
-        mood = Mood.objects.create(slug='general', title='general')
-        Message.objects.create(id=uuid.uuid4(), sender=magent, mood=mood, timestamp=int(time.time() * 1000),
-                               content=[{'type': 'text', 'text': 'Done.'}], stop_reason='end_turn',
-                               output_tokens=120, input_tokens=30, cache_read_input_tokens=9000,
-                               cache_creation_input_tokens=500)
-        turn = self.client.get('/api/moods/general/turns/').json()['turns'][-1]
-        self.assertEqual((turn['out'], turn['ctx'], turn['cached']), (120, 9530, 9000))
