@@ -765,6 +765,22 @@ def api_mood_todo(request, slug):
 
 
 @require_GET
+def api_unfurl(request, slug, message_id):
+    """The preview cards for a message's plain links (services/unfurl.py): {"cards": [...]}. Only links
+    said in this Mood, so the server fetches nothing a reader names; each page kept a day."""
+    from .services import unfurl
+    from .views_auth import _under_limit, _uuid_or_none
+    mood = Mood.by_slug_or_404(slug)
+    message = Message.objects.filter(id=_uuid_or_none(message_id), mood=mood).first()
+    if message is None:
+        return JsonResponse({'error': 'no such message in this Mood'}, status=404)
+    if not _under_limit('unfurl:' + (request.META.get('REMOTE_ADDR') or ''), 60):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    cards = [c for c in (unfurl.card(url) for url in unfurl.links_in(prose(message.content))) if c]
+    return JsonResponse({'cards': cards})
+
+
+@require_GET
 def api_moods_live(request):
     """Each Mood's people of the moment: who has spoken in the last 100 blocks
     (about 20 minutes), who's typing, which agent is working. Cached for

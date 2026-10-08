@@ -412,6 +412,14 @@
   .event.wiki summary { cursor: pointer; }
   .event.wiki .each { margin: 4px 0 0 18px; }
   .event code { font-size: 11.5px; }
+  /* A link's preview card (services/unfurl.py): its picture at the left, its title and a line. */
+  .turn .cards { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 2px; max-width: 520px; }
+  .turn .card { display: flex; gap: 10px; text-decoration: none; color: var(--ink); border: 1px solid var(--line);
+                border-left: 3px solid var(--accent); border-radius: 6px; padding: 8px 10px; background: var(--panel); overflow: hidden; }
+  .turn .card img { flex: none; width: 84px; height: 84px; object-fit: cover; border-radius: 4px; }
+  .turn .card .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; }
+  .turn .card .desc { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .turn .card small { color: var(--muted); font-size: 11.5px; }
   /* Context taken from another Mood: one line, the context beneath on demand. */
   .event.handoff summary { cursor: pointer; list-style: none; }
   .event.handoff .body { text-align: left; font-size: 13.5px; color: var(--ink); background: var(--code); border-radius: 6px;
@@ -1369,8 +1377,33 @@
     if (t.attested) el._proof = t.attested;
     markTurn(el, t.mentions || []);
     el.querySelectorAll('a.yarn[data-yarn]').forEach(decorateYarn);
+    if (el.querySelector('.body a[href^="http"]:not([class])')) cardsWatch.observe(el);  // a preview, as it nears the screen
     if (wikiUpload && viewer && t.sender === viewer) offerUpload(el, t);  // theirs to publish
     return el;
+  }
+
+  // --- link previews (services/unfurl.py): a card under a message for each plain link,
+  // asked for as the message nears the screen -- the page's own title, a line, its picture.
+  const cardsWatch = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      cardsWatch.unobserve(entry.target);
+      addCards(entry.target);
+    }
+  }, { rootMargin: '600px 0px' });
+  async function addCards(el) {
+    if (el.querySelector('.cards') || el.classList.contains('deleted')) return;
+    let cards = [];
+    try {
+      const r = await fetch(`/api/moods/${encodeURIComponent(current)}/unfurl/${encodeURIComponent(el.dataset.id)}/`);
+      if (r.ok) cards = (await r.json()).cards || [];
+    } catch (e) { return; }
+    if (!cards.length || !el.isConnected || el.querySelector('.cards')) return;
+    el.querySelector('.body').insertAdjacentHTML('afterend', '<div class="cards">' + cards.map(c =>
+      `<a class="card" href="${esc(c.url)}" target="_blank" rel="noopener">`
+      + (c.image ? `<img src="${esc(c.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : '')
+      + `<span class="txt"><b>${esc(c.title)}</b>${c.description ? `<span class="desc">${esc(c.description)}</span>` : ''}`
+      + `<small>${esc(c.site)}</small></span></a>`).join('') + '</div>');
   }
 
   // --- tool steps: grouped into one collapsed line per run of work ----------

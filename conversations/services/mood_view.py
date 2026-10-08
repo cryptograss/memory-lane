@@ -506,6 +506,25 @@ def _link_url(match):
     return f'<a href="{url}"{_OUT}>{url}</a>{tail}'
 
 
+def plain_links(text):
+    """The web links in what was said that show as plain links -- not a picture, a release, a page
+    of PickiPedia, a Yarn clip or a message here -- in order, each once: the ones a card is for
+    (services/unfurl.py)."""
+    text = re.sub(r'```.*?(```|$)', ' ', text or '', flags=re.S)
+    text = _INLINE_CODE.sub(' ', text)
+    found = []
+    for match in _URL.finditer(text):
+        url, _ = _trim_url(match.group(1))
+        if url in found or urlparse(url).hostname in OWN_HOSTS:
+            continue
+        if _link_url(match).startswith(f'<a href="{url}"'):
+            found.append(url)
+    return found
+
+
+OWN_HOSTS = {'magenta.cryptograss.live', 'memory-lane.maybelle.cryptograss.live'}
+
+
 def _inline(text, mentionable=()):
     # Inline code is literal: lift it out so nothing below formats it.
     codes = []
