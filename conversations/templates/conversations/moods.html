@@ -493,6 +493,11 @@
   #composer textarea { min-width: 0; }
   #composer .err, #composer .note { flex: 0 0 100%; order: 10; margin-top: -4px; }
   #composer .err { color: var(--accent); font-size: 12px; }
+  /* Not signed in here: said where the box would be, with the way back in, rather than the box just gone. */
+  #signedOut { max-width: 760px; margin: 0 auto; padding: 10px 16px 14px; font-size: 13.5px; color: var(--muted); }
+  #signedOut[hidden] { display: none; }
+  #signedOut b { color: var(--ink); }
+  #signedOut a { color: var(--accent); font-weight: 600; }
   #composer .note { color: var(--muted); font-size: 12px; }
   #activity { display: none; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--muted); }
   #activity.on { display: flex; }
@@ -851,6 +856,7 @@
       <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
       <button type="submit" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z" fill="currentColor"/></svg></button>
     </form>
+    <div id="signedOut" hidden></div>
     </div>
   </main>
   <aside id="todo" hidden aria-label="To do">
@@ -3535,6 +3541,7 @@
   const userMenu = document.getElementById('userMenu');
   if (viewer) {
     document.body.classList.add('writer');
+    try { localStorage.setItem('moods.signedInAs', viewer); } catch (e) {}
     userBtn.textContent = shown(viewer) + ' ▾';
     auth.innerHTML = keyHolder ? `signed in as <b>${esc(shown(viewer))}</b>`
       : `signed in as <b>${esc(shown(viewer))}</b> with PickiPedia: you can chat and mention people. To wake agents `
@@ -3547,6 +3554,14 @@
       location.reload();
     });
   } else {
+    // In place of the box: you're reading, not signed in on this browser -- and if it was, as whom, and how back in.
+    const was = localStorage.getItem('moods.signedInAs');
+    const signedOut = document.getElementById('signedOut');
+    signedOut.innerHTML = (was ? `<b>This browser isn't signed in as ${esc(shown(was))} any more</b>, so there's no box to write in. `
+                               : `<b>Reading only:</b> this browser isn't signed in. `)
+      + (wikiSignin ? '<a href="/moods/auth/wiki/">Sign in with PickiPedia</a>, or open' : 'Open')
+      + ' the menu at the top right for an SSH-key sign-in or a sign-in link. (A phone\'s home-screen app and its browser sign in separately.)';
+    signedOut.hidden = false;
     userBtn.textContent = 'read-only ▾';
     auth.innerHTML = (wikiSignin ? '<a class="wikiin" href="/moods/auth/wiki/">Sign in with PickiPedia</a> to chat.<br>' : '')
       + 'To wake agents and run Moods, run <code>magenta.sh login</code> on a machine with your SSH key.'
