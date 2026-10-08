@@ -234,6 +234,11 @@ WEBPUSH_CONTACT = os.getenv('WEBPUSH_CONTACT', 'https://magenta.cryptograss.live
 # no wiki sign-in, only SSH keys.
 PICKIPEDIA_OAUTH_CLIENT_ID = os.getenv('PICKIPEDIA_OAUTH_CLIENT_ID', '')
 PICKIPEDIA_OAUTH_CLIENT_SECRET = os.getenv('PICKIPEDIA_OAUTH_CLIENT_SECRET', '')
+# "→ PickiPedia" under a picture (conversations/services/wiki_upload.py): a second
+# OAuth 2 consumer, asking to upload and edit as the picture's sharer, once per
+# upload. Kept apart so signing in stays identity-only. Unset: no button.
+PICKIPEDIA_UPLOAD_CLIENT_ID = os.getenv('PICKIPEDIA_UPLOAD_CLIENT_ID', '')
+PICKIPEDIA_UPLOAD_CLIENT_SECRET = os.getenv('PICKIPEDIA_UPLOAD_CLIENT_SECRET', '')
 # Each person's PickiPedia name, from hunter's inventory: "<name> <WikiName>" lines.
 MOOD_WIKI_NAMES = os.getenv('MOOD_WIKI_NAMES', '')
 
@@ -242,7 +247,7 @@ MOOD_WIKI_NAMES = os.getenv('MOOD_WIKI_NAMES', '')
 MOOD_ADMINS = tuple(n.strip().lower() for n in os.getenv('MOOD_ADMINS', '').split(',') if n.strip())
 
 # Hosts a Mood may embed images from by URL, besides its own stored media.
-MOOD_IMAGE_HOSTS = {'pickipedia.xyz', 'www.pickipedia.xyz', 'raw.githubusercontent.com',
+MOOD_IMAGE_HOSTS = {'pickipedia.xyz', 'www.pickipedia.xyz', 'upload.wikimedia.org', 'raw.githubusercontent.com',
                       'user-images.githubusercontent.com', 'private-user-images.githubusercontent.com'}
 
 # Writing into Moods (conversations/services/mood_auth.py): an OpenSSH

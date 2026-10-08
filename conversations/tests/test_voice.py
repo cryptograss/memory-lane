@@ -257,14 +257,16 @@ class VoiceEndpointsTest(SignedInCase):
         self.assertEqual(self.client.post('/api/moods/m26/memo/', WEBM, content_type='audio/webm').status_code, 401)
         self.assertEqual(self.client.post(f'/api/moods/m26/speak/{uuid.uuid4()}/').status_code, 401)
 
-    def test_a_memo_comes_back_as_audio_and_words(self):
+    def test_a_memo_comes_back_as_audio_at_once_and_is_heard_meanwhile(self):
         client = self.sign_in()
-        with mock.patch('requests.post', FakeEleven().post), mock.patch('requests.get', FakeEleven().get):
+        with mock.patch('requests.post', FakeEleven().post), mock.patch('requests.get', FakeEleven().get), \
+                mock.patch('conversations.services.voice._in_background', lambda fn, *a: fn(*a)):
             self.assertEqual(self.post(client, '/api/moods/m26/memo/', b'not audio').status_code, 400)
-            heard = self.post(client, '/api/moods/m26/memo/', WEBM).json()
-        self.assertEqual(heard['text'], 'Bring the capo to soundcheck.')
-        self.assertTrue(heard['url'].endswith('.webm'))
-        self.assertTrue(Media.objects.filter(mime='audio/webm').exists())
+            back = self.post(client, '/api/moods/m26/memo/', WEBM).json()
+        self.assertEqual(set(back), {'url'})
+        self.assertTrue(back['url'].endswith('.webm'))
+        sha = Media.objects.get(mime='audio/webm').sha256
+        self.assertEqual(voice.heard(sha)['text'], 'Bring the capo to soundcheck.')
 
     def test_speak_reads_a_message_of_this_mood_only(self):
         client = self.sign_in()

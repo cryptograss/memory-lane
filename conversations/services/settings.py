@@ -54,6 +54,8 @@ GLOBAL_KNOBS = {
     'voice_usd_per_day': (10.0, 'Dollars a day for voice: messages read aloud and memos transcribed (ElevenLabs).'),
     'voice': ('', "The voice messages are read in unless one directs otherwise: a name from /api/voice/voices/. "
                   "Empty: the first ElevenLabs offers."),
+    'narrator_voice': ('', "The narrator's voice (services/voice.py): who speaks next, and who's thinking, "
+                           "when Moods are read as they come. Empty: given one at its first word, nobody else's."),
 }
 MODERATION_KEYS = ('scram', 'banned')
 # About one person or agent, wherever they are: set with `agent` naming them
@@ -137,7 +139,7 @@ def clean(key, value):
         if isinstance(value, bool):
             return value
         raise Invalid(f'{key}: true or false')
-    if key in ('voice', 'speaker_voice'):
+    if key in ('voice', 'speaker_voice', 'narrator_voice'):
         value = str(value or '').strip()
         if len(value) > 100:
             raise Invalid(f'{key}: a name, at most 100 characters')

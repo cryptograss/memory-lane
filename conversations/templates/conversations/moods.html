@@ -111,6 +111,19 @@
   #voicesBox select { font: inherit; font-size: 12px; max-width: 55%; }
   #voicesBox button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel);
                       color: var(--ink); cursor: pointer; }
+  /* "→ PickiPedia" under a picture sent here, and its form (services/wiki_upload.py). */
+  .turn .body .topp { display: block; margin: 2px 0 6px; font: inherit; font-size: 12px; color: var(--muted); background: none;
+                      border: 1px solid var(--line); border-radius: 10px; padding: 1px 9px; cursor: pointer; }
+  .turn .body .topp:hover { color: var(--accent); border-color: var(--accent); }
+  .turn .body a.onwiki { display: block; font-size: 12.5px; color: var(--muted); margin: 2px 0 6px; text-decoration: none; }
+  #uploadBox { position: fixed; z-index: 40; top: 64px; left: 50%; transform: translateX(-50%); width: min(440px, 94vw);
+               background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.18);
+               padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; }
+  #uploadBox[hidden] { display: none; }
+  #uploadBox label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); }
+  #uploadBox .hint { font-size: 12.5px; color: var(--muted); }
+  #uploadBox input, #uploadBox textarea, #uploadBox select { font: inherit; color: var(--ink); background: var(--bg);
+                                                             border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; }
   /* Reading as they come: who's speaking, and the player's three buttons. */
   #readBar { display: flex; align-items: center; gap: 8px; max-width: 760px; margin: 0 auto; padding: 6px 16px; font-size: 13px;
              color: var(--muted); }
@@ -360,6 +373,10 @@
   #replying[hidden] { display: none; }
   #replying .what { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #replying button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+  /* The license a picture of yours goes out under, said as it's attached (services/media.LICENSES). */
+  #licenseBar { max-width: 760px; margin: 0 auto; padding: 6px 16px 0; font-size: 12.5px; color: var(--muted); }
+  #licenseBar[hidden] { display: none; }
+  #licenseBar button { font: inherit; border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline; }
   a.permalink:hover time { text-decoration: underline; }
   a.permalink[data-copied]::after { content: ' link copied'; color: var(--accent); font-size: 11px; }
   /* An agent's turn: everything it did between a person's words and its last, under one header. */
@@ -395,6 +412,11 @@
   .event.wiki summary { cursor: pointer; }
   .event.wiki .each { margin: 4px 0 0 18px; }
   .event code { font-size: 11.5px; }
+  /* Context taken from another Mood: one line, the context beneath on demand. */
+  .event.handoff summary { cursor: pointer; list-style: none; }
+  .event.handoff .body { text-align: left; font-size: 13.5px; color: var(--ink); background: var(--code); border-radius: 6px;
+                         padding: 8px 12px; margin-top: 6px; }
+  .event.handoff .from { font-size: 12px; margin: 6px 0 0; }
   .compaction { margin: 10px 0; font-size: 13px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
   .compaction summary { cursor: pointer; list-style: none; }
   .compaction summary::before { content: '⟲ '; }
@@ -489,6 +511,23 @@
   /* Images: in turns, as thumbnails on a run of work, inside a step. */
   .turn .body a.img { display: inline-block; margin: 4px 0; }
   .turn .body img { display: block; max-width: 100%; max-height: 420px; border-radius: 6px; border: 1px solid var(--line); }
+  /* A picture, large, over everything: its caption, and its page. */
+  #lightbox { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.86); display: flex; flex-direction: column;
+              align-items: center; justify-content: center; gap: 10px; padding: 16px; }
+  #lightbox[hidden] { display: none; }
+  #lightbox img { max-width: 94vw; max-height: 80vh; object-fit: contain; border-radius: 6px; box-shadow: 0 6px 30px rgba(0,0,0,.5); }
+  #lightbox .lbfoot { color: #eee; font-size: 14px; text-align: center; max-width: 90vw; }
+  #lightbox .lbfoot a { color: #ffb3d9; margin-left: 10px; white-space: nowrap; }
+  #lightbox .close { position: absolute; top: 10px; right: 14px; font-size: 26px; line-height: 1; color: #fff; background: none;
+                     border: 0; cursor: pointer; padding: 6px; }
+  .turn .body a.img { cursor: zoom-in; }
+  /* A file or a release, shown where it was linked (mood_view._file_embed, _release_embed). */
+  .turn .body .embed { display: block; margin: 6px 0; max-width: 560px; }
+  .turn .body .embed video { display: block; width: 100%; max-height: 60vh; border-radius: 6px; background: #000; }
+  .turn .body .embed audio { display: block; width: 100%; }
+  .turn .body .caption { display: block; font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  .turn .body a.caption { text-decoration: none; }
+  .turn .body a.caption:hover { color: var(--accent); }
   .work .thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 4px; }
   .work .thumbs img, .step-detail .shots img { height: 84px; max-width: 160px; object-fit: cover; border-radius: 4px;
                                                 border: 1px solid var(--line); cursor: zoom-in; }
@@ -551,7 +590,8 @@
   .hush .ultra input { vertical-align: -2px; margin: 0 2px 0 0; }
   /* How full an agent's context is: a little pie, its details on hover. */
   /* Its colour says how close to compacting: green to 70%, yellow to 80, orange to 90, red above. */
-  .pie { --pc: #2e9e4f; display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px;
+  /* flex: none -- in an agent's one-line row of settings, too long for the bar, it would shrink to nothing. */
+  .pie { --pc: #2e9e4f; display: inline-block; flex: none; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px;
          margin-right: 4px; background: conic-gradient(var(--pc) var(--p), transparent 0);
          box-shadow: inset 0 0 0 1px var(--pc); cursor: help; }
   .pie.warm { --pc: #d4a514; }
@@ -572,7 +612,40 @@
           color: var(--muted); cursor: pointer; padding: 0 2px; }
   /* A phone, either way up: narrow, or a touch screen this short (a phone on its side
      is as wide as a small laptop, and gets the laptop's layout otherwise). PHONE in the script. */
+  /* The Mood's to-do list (services/todo.py): a tab at the right edge, opening to a column. */
+  #todo { flex: none; display: flex; border-left: 1px solid var(--line); background: var(--panel); min-height: 0; }
+  #todo[hidden] { display: none; }
+  #todoTab { writing-mode: vertical-rl; display: flex; gap: 6px; align-items: center; width: 28px; padding: 14px 0;
+             border: 0; background: none; color: var(--muted); font: inherit; font-size: 12.5px; letter-spacing: .04em; cursor: pointer; }
+  #todoTab:hover { color: var(--accent); }
+  #todoTab .n { writing-mode: horizontal-tb; font-weight: 600; color: var(--accent); }
+  #todo.open #todoTab { display: none; }
+  #todoBody { display: none; width: 300px; overflow-y: auto; padding: 12px 14px; font-size: 13.5px; }
+  #todo.open #todoBody { display: block; }
+  #todoBody .head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  #todoBody .head b { flex: 1; }
+  #todoBody .head a { color: var(--muted); font-size: 12px; }
+  #todoBody .head button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+  #todoBody .note { color: var(--muted); font-size: 12.5px; margin: 0 0 8px; }
+  #todoBody .note:empty { display: none; }
+  #todoBody ul { list-style: none; margin: 0; padding: 0; }
+  #todoBody li { display: flex; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+  #todoBody li .box { color: var(--muted); flex: none; }
+  #todoBody li .meta { color: var(--muted); font-size: 12px; }
+  #todoBody li .meta .you { color: var(--accent); font-weight: 600; }
+  #todoBody li .why { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  #todoBody li .task a { color: inherit; }
+  #todoDone { margin-top: 8px; color: var(--muted); }
+  #todoDone summary { cursor: pointer; font-size: 12.5px; }
+  #todoDone li .task { text-decoration: line-through; }
+  #todoDone:not([data-n]) { display: none; }
+
   @media (max-width: 720px), (pointer: coarse) and (max-height: 520px) {
+    /* A phone: the tab rides the right edge; open, the list lies over the Mood. */
+    #todo { position: fixed; right: 0; top: 38%; z-index: 25; border: 1px solid var(--line); border-right: 0;
+            border-radius: 8px 0 0 8px; box-shadow: -2px 2px 10px rgba(0,0,0,.12); }
+    #todo.open { top: 44px; bottom: 0; border-radius: 0; }
+    #todoBody { width: min(320px, 88vw); }
     header { flex-wrap: nowrap; gap: 8px; padding: 6px 12px; }
     header .brand small { display: none; }
     header .preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
@@ -627,7 +700,7 @@
       <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
       <span class="textsize">text size <button type="button" data-step="-1" aria-label="Smaller text">A−</button><span id="textSizeVal">100%</span><button type="button" data-step="1" aria-label="Larger text">A+</button></span>
       <button id="notify" type="button" hidden aria-label="Notifications"></button>
-      <label class="readall" id="readAllLabel" hidden title="Each new message read aloud as it arrives, in its speaker's voice, magent saying who speaks. Your own messages aren't read.">read aloud as they come <select id="readAll"><option value="off">off</option><option value="here">this Mood</option><option value="everywhere">every Mood</option></select></label>
+      <label class="readall" id="readAllLabel" hidden title="Each new message read aloud as it arrives, in its speaker's voice, the narrator saying who speaks and when an agent starts thinking. Your own messages aren't read.">read aloud as they come <select id="readAll"><option value="off">off</option><option value="here">this Mood</option><option value="everywhere">every Mood</option></select></label>
       <a href="#" id="voicesLink" hidden>voices</a>
       <a href="#" id="devicesLink" hidden>your devices</a>
       <a class="settings" href="/moods/settings/" title="How each agent carries itself in each Mood">settings</a>
@@ -635,6 +708,8 @@
     </div>
   </span>
 </header>
+<div id="lightbox" hidden role="dialog" aria-label="Picture"><button type="button" class="close" aria-label="Close">✕</button>
+  <img alt=""><div class="lbfoot"><span class="lbcap"></span><a class="lbpage" target="_blank" rel="noopener"></a></div></div>
 <div id="voicesBox" hidden role="dialog" aria-label="Voices">
   <div class="head"><b>Who is read in which voice</b> <button type="button" id="voicesClose">close</button></div>
   <div id="voicesList"></div>
@@ -643,6 +718,18 @@
   <div class="head"><b id="devicesTitle">Your devices</b> <button type="button" id="devicesClose">close</button></div>
   <div id="devicesList"></div>
 </div>
+<form id="uploadBox" hidden>
+  <b>Put this picture on PickiPedia</b>
+  <label>Name <input id="upName" maxlength="180" required></label>
+  <label>What it is <textarea id="upDesc" rows="3" maxlength="2000" placeholder="Who, what, where, when"></textarea></label>
+  <label>License <select id="upRights">
+    <option value="cc-by-sa-4.0">CC BY-SA 4.0: anyone may reuse it, crediting you</option>
+    <option value="cc0">CC0: public domain, no strings</option>
+  </select></label>
+  <span class="hint">It goes up as you, from your PickiPedia account: PickiPedia will ask you to allow it.</span>
+  <span class="note" id="upNote"></span>
+  <span><button type="submit">Put it on PickiPedia</button> <button type="button" id="upCancel">Cancel</button></span>
+</form>
 <form id="renameBox" hidden>
   <input id="renameTitle" maxlength="200" aria-label="Title" placeholder="Title">
   <textarea id="renameDesc" rows="2" maxlength="2000" aria-label="Description" placeholder="What it's about (optional)"></textarea>
@@ -684,18 +771,28 @@
     <div id="readBar" hidden><span class="what"></span><button type="button" id="readPause" title="Pause or go on">⏸</button><button type="button" id="readSkip" title="Skip to the next message">⏭</button><button type="button" id="readStop" title="Stop reading as they come">■</button></div>
     <div id="activity"><span class="dot"></span><span id="activityText"></span><button type="button" id="stopBtn" title="Stop it, as Esc does in a terminal (Esc in the message box does the same). What was said stays; add to it and it reads both." hidden>■ stop</button></div>
     <div class="hush" id="hush"></div>
+    <div id="licenseBar" hidden><span class="what"></span> <button type="button" id="licenseFlip"></button></div>
     <div id="replying" hidden><span class="what"></span><button type="button" id="replyCancel" title="Don't reply (Esc)" aria-label="Cancel the reply">✕</button></div>
     <form id="composer" autocomplete="off">
       <div id="suggest"></div>
       <button type="button" id="agentsBtn" title="Agents here: listening, model, effort" aria-label="Agent settings" aria-expanded="false">⚙</button>
-      <button type="button" id="attach" title="Add an image (or paste or drop one)" aria-label="Add an image">＋</button>
-      <button type="button" id="memoBtn" title="Record a voice memo: tap to start, tap again to stop. It's transcribed for you to look over before sending." aria-label="Record a voice memo" hidden>🎙</button>
+      <button type="button" id="attach" title="Add an image (or paste or drop one). Your pictures are shared under CC BY-SA 4.0, or CC0 if you choose." aria-label="Add an image">＋</button>
+      <button type="button" id="memoBtn" title="Record a voice memo: tap to start, tap again to stop. It's ready to send at once; its words are written in when it's sent." aria-label="Record a voice memo" hidden>🎙</button>
       <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
       <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
       <button type="submit" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z" fill="currentColor"/></svg></button>
     </form>
     </div>
   </main>
+  <aside id="todo" hidden aria-label="To do">
+    <button type="button" id="todoTab" title="What the people here have to do: a list kept on PickiPedia"><span>To do</span><b class="n"></b></button>
+    <div id="todoBody">
+      <div class="head"><b>To do</b><a id="todoEdit" target="_blank" rel="noopener" title="The list is YAML on PickiPedia: anyone can edit it">edit</a><button type="button" id="todoClose" aria-label="Close the to-do list">✕</button></div>
+      <p class="note" id="todoNote"></p>
+      <ul id="todoList"></ul>
+      <details id="todoDone"><summary></summary><ul></ul></details>
+    </div>
+  </aside>
 </div>
 
 {{ wiki_names|json_script:"wiki-names" }}
@@ -716,6 +813,7 @@
   const viewerTier = "{{ viewer_tier|escapejs }}" || null;
   const keyHolder = !!viewer && viewerTier === 'key';
   const wikiSignin = {{ wiki_signin|yesno:"true,false" }};
+  const wikiUpload = {{ wiki_upload|yesno:"true,false" }};  // "→ PickiPedia" on pictures (services/wiki_upload.py)
   // Our VAPID key's public half, for pushes with magenta closed (services/push.py); '' if push is off.
   const PUSH_KEY = "{{ push_key|escapejs }}";
   // PickiPedia names for the names here (hunter's inventory); shown wherever a person is named.
@@ -831,11 +929,85 @@
   async function refreshLive() {
     try {
       const r = await fetch('/api/moods/live/');
-      if (r.ok) { liveData = (await r.json()).moods || {}; markLive(); }
+      if (r.ok) {
+        const before = liveData;
+        liveData = (await r.json()).moods || {};
+        markLive();
+        noticeThinking(before);
+      }
     } catch (e) {}
+  }
+  // An agent starting work where Moods are being read as they come: the narrator
+  // says so ("Magent is thinking"), in its own voice, in turn with what's said.
+  function noticeThinking(before) {
+    if (readMode === 'off') return;  // (after an await: the reader's state is set up by then)
+    for (const [slug, d] of Object.entries(liveData)) {
+      if (!d.busy || (before[slug] || {}).busy === d.busy) continue;  // not working, or working already
+      if (readMode !== 'everywhere' && slug !== current) continue;
+      readQueue.push({ kind: 'thinking', mood: slug, who: d.busy, agent: d.busy });
+    }
+    readNext();
   }
   setInterval(refreshLive, 5000);
   refreshLive();
+
+  // --- the Mood's to-do list: kept on PickiPedia (services/todo.py), shown at the right ---
+  // A tab with how many are open; pressed, the list. Asked for again every minute,
+  // and when the page is looked at again (an edit on PickiPedia, perhaps).
+  const todoEl = document.getElementById('todo');
+  let todoShown = null;  // the list as last drawn, for its Mood
+  function linkOf(link) {
+    if (/^https?:\/\//i.test(link)) return link;
+    if (/^#m-[0-9a-f-]{8,36}$/i.test(link)) return link;
+    if (/^#[\w-]+$/.test(link)) return '/moods/' + link.slice(1) + '/';
+    return link ? `${WIKI}/wiki/${encodeURIComponent(link.replace(/ /g, '_'))}` : '';
+  }
+  function todoItem(it) {
+    const who = it.who.map(n => n.toLowerCase() === viewer ? '<span class="you">you</span>' : esc(shown(n.toLowerCase())));
+    const meta = [it.kind, who.join(', ')].filter(Boolean).join(' · ');
+    // A task with a link is the link, as on PickiPedia (its <todo> tag).
+    const href = it.link ? linkOf(it.link) : '';
+    const task = href ? `<a href="${esc(href)}"${/^https?:/i.test(href) ? ' target="_blank" rel="noopener"' : ''} title="${esc(it.link)}">${esc(it.task)}</a>`
+      : esc(it.task);
+    return `<li><span class="box">${it.done ? '☑' : '☐'}</span><div><span class="task">${task}</span>`
+      + (meta ? `<div class="meta">${meta}</div>` : '') + (it.note ? `<div class="why">${esc(it.note)}</div>` : '') + '</div></li>';
+  }
+  function renderTodo(t) {
+    todoShown = t;
+    const open = t.items.filter(i => !i.done), done = t.items.filter(i => i.done);
+    todoEl.hidden = !t.exists && !viewer;  // no list yet: there to start one, for whoever can write here
+    todoEl.querySelector('#todoTab .n').textContent = open.length || '';
+    todoEl.querySelector('#todoTab').setAttribute('aria-label', `To do: ${open.length} open`);
+    document.getElementById('todoEdit').href = t.edit;
+    document.getElementById('todoNote').textContent = t.error ? `The list couldn't be read: ${t.error}.`
+      : !t.exists ? 'No list here yet: "edit" starts one on PickiPedia, as YAML between <todo> tags ("- task: ...").'
+      : !t.items.length ? 'Nothing to do.' : '';
+    document.getElementById('todoList').innerHTML = open.map(todoItem).join('');
+    const fold = document.getElementById('todoDone');
+    if (done.length) fold.dataset.n = done.length; else delete fold.dataset.n;
+    fold.querySelector('summary').textContent = `Done (${done.length})`;
+    fold.querySelector('ul').innerHTML = done.map(todoItem).join('');
+  }
+  async function loadTodo(fresh) {
+    const slug = current;
+    if (!slug) return;
+    try {
+      const r = await fetch(`/api/moods/${encodeURIComponent(slug)}/todo/${fresh ? '?fresh=1' : ''}`);
+      if (!r.ok) return;
+      const t = await r.json();
+      if (slug === current) renderTodo(t);
+    } catch (e) {}
+  }
+  function openTodo(open) {
+    todoEl.classList.toggle('open', open);
+    store.set('todoOpen', open);
+  }
+  if (store.get('todoOpen', false) && !matchMedia(PHONE).matches) todoEl.classList.add('open');
+  document.getElementById('todoTab').addEventListener('click', () => openTodo(true));
+  document.getElementById('todoClose').addEventListener('click', () => openTodo(false));
+  document.getElementById('todoEdit').addEventListener('click', () => { todoShown = null; });  // back from editing: ask afresh
+  setInterval(() => loadTodo(), 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) loadTodo(todoShown === null); });
 
   // --- the chain's height: from the explorer now and then, a block every 12 s between ---
   const blockEl = document.getElementById('block');
@@ -919,6 +1091,19 @@
       + ` title="${title}" aria-label="${title}">▶</button>`;
   }
   let speaking = null;  // {audio, button}
+  // A message read aloud comes in pieces (voice.pieces): the first is short, so it
+  // starts at once. Each next piece is asked for as the one before starts playing --
+  // made while it plays, and made knowing it, so they sound like one reading.
+  function laterPieces(mood, id, part, count) {
+    const asked = new Map();
+    return i => {
+      if (i >= count) return null;
+      if (!asked.has(i)) asked.set(i, fetch(`/api/moods/${encodeURIComponent(mood)}/speak/${encodeURIComponent(id)}/?part=${encodeURIComponent(part || 0)}&piece=${i}`,
+        { method: 'POST', headers: { 'X-CSRFToken': csrf() } })
+        .then(async r => { const body = await r.json().catch(() => ({})); if (!r.ok) throw new Error(body.error || r.status); return body.url; }));
+      return asked.get(i);
+    };
+  }
   function stopSpeaking() {
     if (!speaking) return;
     speaking.audio.pause();
@@ -951,15 +1136,64 @@
       if (!r.ok) throw new Error(body.error || r.status);
       if (ask !== speakAsk) { b.textContent = b.dataset.label || '▶'; return; }  // another ▶ was pressed meanwhile: that one plays
       const audio = new Audio(body.url);
+      const more = laterPieces(current, b.dataset.id, b.dataset.part, body.pieces || 1);
+      let at = 0;
       speaking = { audio, button: b };
-      audio.addEventListener('ended', stopSpeaking);
+      audio.addEventListener('ended', async () => {
+        const next = more(++at);
+        if (!next || speaking?.audio !== audio) { stopSpeaking(); return; }
+        try {
+          const src = await next;
+          if (speaking?.audio !== audio) return;  // stopped while it was being made
+          audio.src = src;
+          await audio.play();
+          more(at + 1);
+        } catch (err) { showError('read aloud: ' + err.message); stopSpeaking(); }
+      });
       b.classList.add('playing'); b.textContent = b.dataset.label ? b.dataset.label.replace(/^▶/, '■') : '■';
       await audio.play();
+      more(1);
     } catch (err) {
       showError('read aloud: ' + err.message);
       b.textContent = b.dataset.label || '▶';
     } finally { b.classList.remove('busy'); }
   });
+
+  // A picture in what was said opens large, here; from there, its page (PickiPedia,
+  // Commons) or, for one sent here, the file itself. ✕, Esc or the dark around it closes.
+  const lightbox = document.getElementById('lightbox');
+  function closeLightbox() { lightbox.hidden = true; lightbox.querySelector('img').removeAttribute('src'); }
+  document.addEventListener('click', e => {
+    const a = e.target.closest('.turn .body a.img');
+    if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button) return;
+    e.preventDefault();
+    const img = a.querySelector('img');
+    const full = a.dataset.full || a.href;
+    lightbox.querySelector('img').src = full;
+    lightbox.querySelector('img').alt = img ? img.alt : '';
+    const cap = a.nextElementSibling && a.nextElementSibling.classList.contains('caption') ? a.nextElementSibling.textContent : '';
+    lightbox.querySelector('.lbcap').textContent = cap;
+    const page = lightbox.querySelector('.lbpage');
+    page.href = a.href;
+    const host = new URL(a.href, location.href).hostname;
+    page.textContent = !a.dataset.full ? 'the picture itself ↗'
+      : host.endsWith('wikimedia.org') ? 'its page on Commons ↗' : 'its page on PickiPedia ↗';
+    lightbox.hidden = false;
+  });
+  lightbox.addEventListener('click', e => { if (e.target === lightbox || e.target.closest('.close')) closeLightbox(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !lightbox.hidden) { e.preventDefault(); e.stopImmediatePropagation(); closeLightbox(); }
+  }, { capture: true });
+
+  // A release this browser can't play (a .mov outside Safari, say): its caption is the link to it.
+  document.addEventListener('error', e => {
+    const v = e.target;
+    if (!(v instanceof HTMLMediaElement) || !v.closest('.turn .embed') || v._gave_up) return;
+    v._gave_up = true;
+    const cap = v.closest('.embed').querySelector('.caption');
+    v.replaceWith(Object.assign(document.createElement('span'), {
+      className: 'caption', textContent: 'This browser can\'t play it here' + (cap ? ':' : '.') }));
+  }, true);
 
   // A memo recorded in a browser doesn't say how long it is (MediaRecorder writes no
   // duration), so its player can't place its bar: it races ahead, then crawls.
@@ -979,6 +1213,70 @@
     a.addEventListener('durationchange', back);
     a.currentTime = 1e101;
   }, true);
+
+  // --- "→ PickiPedia": a picture sent here goes onto the wiki, by choice ------------
+  // (services/wiki_upload.py). Only pictures stored here (/moods/media/), offered
+  // to whoever sent them: it goes up as them, from their own PickiPedia account,
+  // after PickiPedia asks them. Once one is there, it says so, and its button goes.
+  const uploadBox = document.getElementById('uploadBox');
+  let uploading = null;  // {sha, message}
+  function offerUpload(el, t) {
+    for (const img of el.querySelectorAll('.body a.img img')) {
+      const sha = ((img.getAttribute('src') || '').match(/^\/(?:moods|motions)\/media\/([0-9a-f]{64})\./) || [])[1];
+      if (!sha || img.parentElement.nextElementSibling?.classList.contains('topp')) continue;
+      img.parentElement.insertAdjacentHTML('afterend',
+        `<button type="button" class="topp" data-sha="${sha}" data-message="${esc(t.id)}" title="Put this picture on PickiPedia">→ PickiPedia</button>`);
+    }
+  }
+  function markUploaded(sha, file, page) {
+    if (!sha) return;
+    for (const img of document.querySelectorAll(`.turn .body a.img img[src*="${CSS.escape(sha)}"]`)) {
+      const a = img.parentElement;
+      if (a.nextElementSibling?.classList.contains('topp')) a.nextElementSibling.remove();
+      if (a.nextElementSibling?.classList.contains('onwiki')) continue;
+      a.insertAdjacentHTML('afterend', `<a class="caption onwiki" href="${esc(page)}" target="_blank" rel="noopener">on PickiPedia as File:${esc(file)} ↗</a>`);
+    }
+  }
+  document.addEventListener('click', e => {
+    const b = e.target.closest('.turn .body .topp');
+    if (!b) return;
+    uploading = { sha: b.dataset.sha, message: b.dataset.message };
+    const title = (moods.find(m => m.slug === current) || {}).title || current || 'magenta';
+    document.getElementById('upName').value = `${title} ${new Date().toISOString().slice(0, 10)}`;
+    document.getElementById('upDesc').value = '';
+    document.getElementById('upNote').textContent = '';
+    const rights = document.getElementById('upRights');
+    rights.value = 'cc-by-sa-4.0';
+    fetch(`/api/media/${uploading.sha}/license/`).then(r => r.json()).then(l => { if (l.license) rights.value = l.license; })
+      .catch(() => {});  // as it was shared: CC BY-SA 4.0 unless they made it CC0
+    uploadBox.hidden = false;
+    document.getElementById('upName').focus();
+  });
+  document.getElementById('upCancel').addEventListener('click', () => { uploadBox.hidden = true; uploading = null; });
+  uploadBox.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!uploading) return;
+    const note = document.getElementById('upNote');
+    note.textContent = 'Asking PickiPedia…';
+    try {
+      const r = await fetch(`/api/media/${uploading.sha}/pickipedia/`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+        body: JSON.stringify({ mood: current, message: uploading.message, name: document.getElementById('upName').value,
+                               description: document.getElementById('upDesc').value,
+                               license: document.getElementById('upRights').value }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || r.status);
+      if (body.go) {  // to PickiPedia to say yes; back at the picture, uploaded
+        saveDraft();
+        note.textContent = 'Off to PickiPedia…';
+        location.href = body.go;
+        return;
+      }
+      markUploaded(uploading.sha, body.file, body.page);  // it was there already
+      uploadBox.hidden = true; uploading = null;
+      poll(false);
+    } catch (err) { note.textContent = err.message; }
+  });
 
   // --- Yarn clips ----------------------------------------------------------
   // The server marks a pasted Yarn clip as a card (a.yarn, data-yarn = its id,
@@ -1071,6 +1369,7 @@
     if (t.attested) el._proof = t.attested;
     markTurn(el, t.mentions || []);
     el.querySelectorAll('a.yarn[data-yarn]').forEach(decorateYarn);
+    if (wikiUpload && viewer && t.sender === viewer) offerUpload(el, t);  // theirs to publish
     return el;
   }
 
@@ -1204,6 +1503,23 @@
       prev = null;
       return;
     }
+    if (e.type === 'handoff' || e.type === 'handoff-sent') {  // context taken between Moods (services/handoff.py)
+      const moodA = slug => `<a class="moodlink" data-mood="${esc(slug)}" href="/moods/${encodeURIComponent(slug)}/">#${esc(slug)}</a>`;
+      const by = `<b>${esc(shown(e.by || 'an agent'))}</b>`, about = e.about ? ` about <i>${esc(e.about)}</i>` : '';
+      el.className = 'event handoff';
+      if (e.type === 'handoff-sent') {
+        el.innerHTML = `🔀 ${by} took this to ${moodA(e.to_mood || '')}${e.about ? `: <i>${esc(e.about)}</i>` : ''} · ${esc(stamp(e.created_at))}`;
+      } else {
+        const from = e.message ? ` <a href="/moods/${encodeURIComponent(e.from_mood || '')}/#m-${esc(e.message)}">where it was said</a>` : '';
+        const did = e.pulled ? `${by} brought in${e.about ? ` <i>${esc(e.about)}</i>` : ' context'}`  // asked here to look there
+          : `${by} informed <b>${esc(shown(e.for || e.by || ''))}</b>${about}`;
+        el.innerHTML = `<details><summary>🔀 ${did} from ${moodA(e.from_mood || '')}`
+          + ` · ${esc(stamp(e.created_at))}</summary><div class="body">${e.html || ''}<p class="from">${from}</p></div></details>`;
+      }
+      container.appendChild(el);
+      prev = null;
+      return;
+    }
     if (e.type === 'access') {  // someone signed in, or an admin acted (services/access.py)
       el.className = 'event access';
       const who = `<b>${esc(shown(e.who || 'someone'))}</b>`, by = `<b>${esc(shown(e.by || 'an admin'))}</b>`;
@@ -1232,6 +1548,15 @@
       prev = null;
       return;
     }
+    if (e.type === 'wiki-upload') {  // a picture put on PickiPedia (services/wiki_upload.py)
+      el.className = 'event';
+      el.innerHTML = `🖼 <b>${esc(shown(e.by || 'someone'))}</b>${e.already ? "'s picture was on PickiPedia already" : ' put a picture on PickiPedia'}: `
+        + `<a href="${esc(e.page || '#')}" target="_blank" rel="noopener">File:${esc(e.file || '')}</a> · ${esc(stamp(e.created_at))}`;
+      container.appendChild(el);
+      markUploaded(e.sha, e.file, e.page);
+      prev = null;
+      return;
+    }
     if (e.type !== 'deploy') {  // something newer than this page: say so, rather than guess
       el.className = 'event';
       el.textContent = `· something this page can't show yet (${e.type || 'unknown'}): reload to see it · ${stamp(e.created_at)}`;
@@ -1239,17 +1564,36 @@
       prev = null;
       return;
     }
-    el.className = 'event ' + (e.state || '');
+    // One line a deploy: "redeploying…" while it's under way, then, in that same
+    // line, how it ended -- with its log. A start nothing ever finished says so.
     const commit = e.commit ? ` · <code>${esc(e.commit.slice(0, 8))}</code>` : '';
-    const by = e.by ? ` · by ${esc(e.by)}` : '';
+    const by = e.by ? ` · by ${deployer(e.by)}` : '';
     const log = deployLog(e.note);
-    el.innerHTML = e.state === 'started' ? `⚙ <b>${esc(e.server)}</b> redeploying…${by}${commit} · ${esc(stamp(e.created_at))}`
+    const started = e.state === 'started' ? null
+      : [...container.querySelectorAll(':scope > .event.started')].filter(x => x.dataset.server === (e.server || '')).pop();
+    const line = started || el;
+    line.className = 'event ' + (e.state || '');
+    line.dataset.server = e.server || '';
+    const unheard = e.state === 'started' && Date.now() - new Date(e.created_at).getTime() > DEPLOY_PATIENCE_MS;
+    line.innerHTML = e.state === 'started'
+      ? (unheard ? `⚙ <b>${esc(e.server)}</b> began redeploying${by}${commit}; no word of how it ended · ${esc(stamp(e.created_at))}`
+                 : `⚙ <b>${esc(e.server)}</b> redeploying…${by}${commit} · ${esc(stamp(e.created_at))}`)
       : e.state === 'failed' ? `✗ <b>${esc(e.server)}</b> redeploy failed${took(e.took)}${by}${log} · ${esc(stamp(e.created_at))}`
       : `✓ <b>${esc(e.server)}</b> redeployed${took(e.took)}${commit}${by}${log} · ${esc(stamp(e.created_at))}`;
-    container.appendChild(el);
+    if (unheard) line.classList.remove('started');  // over, presumed: a finish that comes late gets a line of its own
+    if (!started) container.appendChild(line);
     prev = null;
     refreshServers(true);  // the dots, now
   }
+  const DEPLOY_PATIENCE_MS = 90 * 60 * 1000;
+  // Who deployed, by their PickiPedia name and linked to their page: a deploy script
+  // says a name here ('justin') or their PickiPedia name in any case ('jmyles').
+  function deployer(by) {
+    const lower = String(by).toLowerCase();
+    const here = WIKI_NAMES[lower] ? lower : Object.keys(WIKI_NAMES).find(n => WIKI_NAMES[n].toLowerCase() === lower);
+    if (!here) return esc(by);  // nobody PickiPedia knows ('remote'): as the script said it
+    return `<a href="${esc(userPage(here))}" target="_blank" rel="noopener">${esc(WIKI_NAMES[here])}</a>`;
+  }  // as services/servers.py: unheard of this long, presumed over
 
   // An attestation's proof: what was signed, the signature, the key, and how to check it anywhere.
   document.addEventListener('click', e => {
@@ -1965,6 +2309,7 @@
     gen++;
     current = slug;
     restoreDraft();
+    showLicense();  // pictures in the draft left behind aren't in this one
     if (push) history.pushState({ slug }, '', '/moods/' + encodeURIComponent(slug) + '/');
     newBelow = 0;
     touch(slug);
@@ -1975,6 +2320,7 @@
     tasks = []; renderTasks();
     typingNow = []; renderTyping();
     renderAgents({});
+    loadTodo();
     const saved = drawn.get(slug);
     if (saved) {
       drawn.delete(slug);
@@ -2184,7 +2530,7 @@
       if (!keyHolder) {
         return row
           + `${esc(describeListening(l))} · ${esc(a.discretion || 'normal')} · ${esc(REPLY_LENGTHS[a.verbosity || 'normal'])}`
-          + ` · ${esc(a.model || 'default')} · ⚡${esc(EFFORT_LABELS[a.effort] || a.effort)} · 📖${esc(kTokens(a.reads || 10000))}`
+          + ` · ${esc(a.model || 'default')} · effort ${esc(EFFORT_LABELS[a.effort] || a.effort)} · reads ${esc(kTokens(a.reads || 10000))}`
           + (a.ultracode ? ' · ultracode' : '') + '</span>';
       }
       const listen = `<select data-agent="${esc(agent)}" data-knob="listening" title="listen: answers mentions and may speak up unasked · mention: answers mentions only · hush: wakes for nothing (mentions wait); with a time, back to listening then"><option selected disabled>${esc(describeListening(l))}</option>`
@@ -2194,11 +2540,11 @@
         + models.map(([v, label]) => `<option value="${esc(v)}"${v === a.model ? ' selected' : ''}>`
           + `${esc(v ? label : (ctx.model ? `default (${shortModel(ctx.model)})` : label))}</option>`).join('') + '</select>';
       const effort = `<select data-agent="${esc(agent)}" data-knob="mention_effort" title="how hard it thinks when @mentioned here">`
-        + EFFORTS.map(v => `<option value="${v}"${v === a.effort ? ' selected' : ''}>⚡${EFFORT_LABELS[v] || v}</option>`).join('') + '</select>';
+        + EFFORTS.map(v => `<option value="${v}"${v === a.effort ? ' selected' : ''}>${EFFORT_LABELS[v] || v}</option>`).join('') + '</select>';
       // How much of what was said since its last word a wake reads word for word.
       const reads = `<select data-agent="${esc(agent)}" data-knob="catch_up_tokens" title="How much of what was said here since it last spoke a wake reads word for word; older is summarized">`
-        + READS.map(n => `<option value="${n}"${n === a.reads ? ' selected' : ''}>📖${kTokens(n)}</option>`).join('')
-        + (READS.includes(a.reads) ? '' : `<option value="${a.reads}" selected>📖${kTokens(a.reads)}</option>`) + '</select>';
+        + READS.map(n => `<option value="${n}"${n === a.reads ? ' selected' : ''}>reads ${kTokens(n)}</option>`).join('')
+        + (READS.includes(a.reads) ? '' : `<option value="${a.reads}" selected>reads ${kTokens(a.reads)}</option>`) + '</select>';
       // How readily it speaks up unasked here, and how long its replies run.
       const discretion = `<select data-agent="${esc(agent)}" data-knob="discretion" title="How readily it speaks up unasked here: reserved, normal, or chatty (joins in, small talk included)">`
         + DISCRETIONS.map(v => `<option value="${v}"${v === (a.discretion || 'normal') ? ' selected' : ''}>${v}</option>`).join('') + '</select>';
@@ -2529,12 +2875,43 @@
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || r.status);
       sayBox.value = sayBox.value.replace(marker, body.markdown);
+      if (body.mine) { sharing.add(body.sha); licenseNow = body.license; showLicense(); }
     } catch (e) {
       sayBox.value = sayBox.value.replace(marker + '\n', '');
       showError('image: ' + e.message);
     }
     sayBox.dispatchEvent(new Event('input'));
   }
+  // Pictures of yours in the box go out CC BY-SA 4.0 unless you make them CC0:
+  // said here as they're attached, and changeable until sent (api_media_license).
+  const licenseBar = document.getElementById('licenseBar');
+  const LICENSE_SAID = {
+    'cc-by-sa-4.0': ['under CC BY-SA 4.0: anyone may reuse it, crediting you.', 'Make it CC0'],
+    'cc0': ['as CC0: public domain, no strings.', 'Back to CC BY-SA'],
+  };
+  const sharing = new Set();
+  let licenseNow = 'cc-by-sa-4.0';
+  function showLicense() {
+    for (const sha of [...sharing]) if (!sayBox.value.includes(sha)) sharing.delete(sha);
+    licenseBar.hidden = !sharing.size;
+    if (!sharing.size) return;
+    const [said, flip] = LICENSE_SAID[licenseNow] || LICENSE_SAID['cc-by-sa-4.0'];
+    licenseBar.querySelector('.what').textContent = (sharing.size > 1 ? 'Your pictures go out ' : 'Your picture goes out ') + said;
+    document.getElementById('licenseFlip').textContent = flip;
+  }
+  document.getElementById('licenseFlip').addEventListener('click', async () => {
+    const wanted = licenseNow === 'cc0' ? 'cc-by-sa-4.0' : 'cc0';
+    try {
+      for (const sha of sharing) {
+        const r = await fetch(`/api/media/${sha}/license/`, { method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify({ license: wanted }) });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+      }
+      licenseNow = wanted;
+      showLicense();
+    } catch (e) { showError('license: ' + e.message); }
+  });
+  sayBox.addEventListener('input', () => { if (sharing.size) showLicense(); });
   function insertAtCaret(text) {
     const at = sayBox.selectionStart ?? sayBox.value.length;
     sayBox.value = sayBox.value.slice(0, at) + text + sayBox.value.slice(sayBox.selectionEnd ?? at);
@@ -2562,8 +2939,10 @@
     if (files.length) { e.preventDefault(); files.forEach(upload); }
   });
 
-  // A voice memo: recorded here, transcribed there, put in the box to look
-  // over before sending -- a player for the audio, then what was heard.
+  // A voice memo: recorded here, and in the box the moment it's stopped, ready
+  // to send. The server hears it meanwhile (voice.hear_later); sent, it's
+  // posted as soon as its words are in -- usually already -- and until then
+  // the page says it's on its way (memoOnItsWay).
   const memoBtn = document.getElementById('memoBtn');
   const MEMO_MAX_S = 600;
   let recorder = null, memoTimer = null;
@@ -2584,22 +2963,21 @@
       stream.getTracks().forEach(t => t.stop());
       const seconds = (Date.now() - started) / 1000;
       recorder = null;
-      memoBtn.classList.remove('recording'); memoBtn.classList.add('busy'); memoBtn.textContent = 'transcribing…';
+      memoBtn.classList.remove('recording'); memoBtn.classList.add('busy'); memoBtn.textContent = 'saving…';
       try {
         const r = await fetch('/api/moods/' + encodeURIComponent(current) + '/memo/', {
           method: 'POST', headers: { 'X-CSRFToken': csrf() }, body: new Blob(chunks, { type: chunks[0]?.type || type || 'audio/webm' }) });
         const body = await r.json().catch(() => ({}));
-        if (body.url) {
-          const heard = body.text ? '\n\n' + body.text : '';
-          insertAtCaret(`🎙 [voice memo · ${clock(body.seconds || seconds)}](${body.url})${heard}`);
-          sayBox.dispatchEvent(new Event('input'));
-          sayBox.focus();
-        }
         if (!r.ok) throw new Error(body.error || r.status);
+        insertAtCaret(`🎙 [voice memo · ${clock(seconds)}](${body.url})`);
+        sayBox.dispatchEvent(new Event('input'));
+        sayBox.focus();
+        composer.insertAdjacentHTML('beforeend', '<span class="note">Ready to send: its words are written in as it goes.</span>');
       } catch (e) { showError('voice memo: ' + e.message); }
       finally { memoBtn.classList.remove('busy'); memoBtn.textContent = '🎙'; }
     });
     recorder.start(1000);
+    composer.querySelectorAll('.err, .note').forEach(el => el.remove());
     memoBtn.classList.add('recording');
     memoBtn.textContent = '■ 0:00';
     memoTimer = setInterval(() => {
@@ -2608,6 +2986,21 @@
       if (s >= MEMO_MAX_S && recorder) recorder.stop();
     }, 500);
   });
+
+  // A sent memo whose words aren't in yet: said under the box until it's in the thread.
+  function memoOnItsWay(sha) {
+    composer.insertAdjacentHTML('beforeend', `<span class="note memo-pending" data-sha="${esc(sha)}">🎙 Sent: it shows here once its words are written in…</span>`);
+    const note = composer.querySelector(`.memo-pending[data-sha="${CSS.escape(sha)}"]`);
+    const started = Date.now();
+    const look = setInterval(() => {
+      const arrived = document.querySelector(`.turn .body audio[src*="${CSS.escape(sha)}"]`);
+      if (arrived || !note?.isConnected || Date.now() - started > 300e3) {
+        clearInterval(look);
+        if (arrived) note?.remove();
+        else if (note?.isConnected) note.textContent = "🎙 Your memo is taking a while; it'll show when it's in.";
+      }
+    }, 1500);
+  }
 
   // --- voices: who is read in which ---------------------------------------------
   // Each speaker has a voice (services/voice.py, voice_of): chosen here, or
@@ -2631,18 +3024,20 @@
       voiceData = await r.json();
     } catch (e) { voicesList.textContent = 'Could not ask for the voices.'; return; }
     const data = voiceData;
-    const everyone = [...people].sort((a, b) => (b.name === viewer) - (a.name === viewer) || a.name.localeCompare(b.name));
+    const narrator = data.narrator || 'narrator';
+    const everyone = [{ name: narrator, narrator: true },
+                      ...[...people].sort((a, b) => (b.name === viewer) - (a.name === viewer) || a.name.localeCompare(b.name))];
     voicesList.innerHTML = (data.note ? `<p class="meta">${esc(data.note)}</p>` : '')
-      + `<p class="meta">Reading as they come, ${esc(shown(data.narrator || 'magent'))} says who speaks next, in its own voice.</p>`
+      + `<p class="meta">Reading as they come, the narrator says who speaks next, and when an agent starts thinking.</p>`
       + everyone.map(p => {
         const v = voiceFor(data, p.name);
         const may = p.name === viewer || keyHolder;
-        const unset = p.name === data.narrator ? 'the house voice' : 'given at their first reading';
+        const unset = p.narrator ? 'given at its first word' : p.name === 'magent' ? 'the house voice' : 'given at their first reading';
         const options = (data.voices || []).map(o =>
           `<option value="${esc(o.voice_id)}"${v && v.voice_id === o.voice_id ? ' selected' : ''}>${esc(o.name)}</option>`).join('');
         const other = v && !(data.voices || []).some(o => o.voice_id === v.voice_id)
           ? `<option value="${esc(v.voice_id)}" selected>${esc(v.name)}</option>` : '';
-        return `<div class="spk" data-name="${esc(p.name)}"><span class="nm">${esc(shown(p.name))}${p.is_human ? '' : ' <span class="tier">agent</span>'}</span>`
+        return `<div class="spk" data-name="${esc(p.name)}"><span class="nm">${p.narrator ? 'Narrator' : esc(shown(p.name))}${p.is_human || p.narrator ? '' : ' <span class="tier">agent</span>'}</span>`
           + `<select ${may ? '' : 'disabled title="Only your own, from a PickiPedia sign-in"'} aria-label="${esc(shown(p.name))}'s voice">`
           + `<option value="">${unset}</option>${other}${options}</select>`
           + `<button type="button" class="sample" title="Hear this voice">▷</button></div>`;
@@ -2656,7 +3051,7 @@
     const chosen = b.closest('.spk').querySelector('select').value;
     const v = (voiceData.voices || []).find(o => o.voice_id === chosen) || voiceFor(voiceData, b.closest('.spk').dataset.name);
     if (!v || !v.preview_url) { showError('no sample of that voice to play'); return; }
-    voiceSample.src = v.preview_url;
+    voiceSample.src = `/api/voice/sample/${encodeURIComponent(v.voice_id)}/`;  // served as audio (views_auth.api_voice_sample)
     voiceSample.play().catch(err => showError('sample: ' + err.message));
   });
   voicesBox.addEventListener('change', async e => {
@@ -2790,6 +3185,7 @@
   async function readNext() {
     if (readNow || readHeld || readBlocked || readMode === 'off' || !readQueue.length) { renderReadBar(); return; }
     const item = readQueue.shift();
+    if (item.kind === 'thinking' && (liveData[item.mood] || {}).busy !== item.agent) { readNext(); return; }  // done before its turn came
     const now = readNow = { item, skipped: false };
     renderReadBar();
     const memo = (item.text || '').match(MEMO_AUDIO);  // heard as recorded: only who's speaking needs saying
@@ -2797,7 +3193,14 @@
     const intro = newMood && readMode === 'everywhere' ? 'where' : newMood || readLast.who !== item.who ? '1' : '';
     const clips = [];
     try {
-      if (intro || !memo) {
+      if (item.kind === 'thinking') {
+        const r = await fetch('/api/voice/narrate/', { method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+          body: JSON.stringify({ mood: item.mood, agent: item.agent, where: readMode === 'everywhere' }) });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.error || r.status);
+        clips.push(['thinking', body.url]);
+      } else if (intro || !memo) {
         const ask = new URLSearchParams(intro ? { intro } : {});
         if (memo) ask.set('only', 'intro');
         const r = await fetch(`/api/moods/${encodeURIComponent(item.mood)}/speak/${encodeURIComponent(item.id)}/?${ask}`,
@@ -2813,7 +3216,12 @@
           if (r.status === 429 || r.status === 503) setReadMode('off');  // the day's voice budget spent, or no voice here
           throw new Error(body.error || r.status);
         }
-        clips.push(['intro', body.intro], ['message', body.url]);
+        clips.push(['intro', body.intro]);
+        if (!memo && body.pieces > 1) {  // the rest of it, each asked for as the one before starts
+          const more = laterPieces(item.mood, item.id, 0, body.pieces);
+          clips.push(['message', body.url, () => more(1)]);
+          for (let i = 1; i < body.pieces; i++) clips.push(['message', () => more(i), () => more(i + 1)]);
+        } else clips.push(['message', body.url]);
       }
       if (memo) clips.push(['memo', memo[1]]);
     } catch (err) {
@@ -2821,15 +3229,21 @@
       if (readNow === now) { readNow = null; readNext(); }
       return;
     }
-    for (const [clip, src] of clips.filter(([, src]) => src)) {
+    for (const [clip, source, after] of clips.filter(([, src]) => src)) {
       if (now.skipped || readMode === 'off' || readNow !== now) break;
+      let src = source;
+      if (typeof source === 'function') {  // a later piece: made while the one before played
+        try { src = await source(); } catch (err) { showError('read aloud: ' + err.message); break; }
+        if (now.skipped || readMode === 'off' || readNow !== now) break;
+      }
+      if (after) after();  // the piece after this one: made while this one plays
       let how = await playClip(src);
       if (how === 'failed' && !now.skipped && readNow === now) {  // once more, after a breath
         readReport(item, clip, 'failed');
         await new Promise(r => setTimeout(r, 1500));
         how = await playClip(src);
       }
-      readReport(item, clip, how);
+      if (item.kind !== 'thinking') readReport(item, clip, how);
       if (how === 'blocked' || how === 'failed') {
         // Not on to the next as if this were heard: wait, and say why. ▶ (or the car's play)
         // tries it again -- a press is what a phone wants -- and ⏭ leaves it.
@@ -2838,7 +3252,7 @@
       }
     }
     if (readNow !== now) return;  // stopped meanwhile
-    readLast = { who: item.who, mood: item.mood };
+    if (item.kind !== 'thinking') readLast = { who: item.who, mood: item.mood };  // its answer still says who speaks
     readNow = null;
     readNext();
   }
@@ -3065,7 +3479,9 @@
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
       const done = await r.json().catch(() => ({}));
-      sayBox.value = ''; fitSay(); typingSent = 0; sendTyping(false); cancelReply();
+      sayBox.value = ''; fitSay(); typingSent = 0; sendTyping(false); cancelReply(); showLicense();
+      composer.querySelectorAll('.note').forEach(el => el.remove());
+      if (done.pending) memoOnItsWay(done.pending);
       if (/^\/(?:clips|yarn)\s+(save|forget)\b/i.test(text)) clipsCache = null;  // the library changed
       if (done.note) {  // what a /clips command did, for whoever sent it
         composer.insertAdjacentHTML('beforeend', `<span class="note">${esc(done.note)}</span>`);

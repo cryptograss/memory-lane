@@ -1447,6 +1447,9 @@ class Media(models.Model):
     size = models.IntegerField()
     added_by = models.ForeignKey(ThinkingEntity, models.SET_NULL, null=True, blank=True, related_name='media')
     created_at = models.DateTimeField(auto_now_add=True)
+    # What whoever shared it lets others do with it (services/media.LICENSES):
+    # CC BY-SA 4.0 unless they made it CC0, said where it's attached.
+    license = models.CharField(max_length=20, default='cc-by-sa-4.0')
 
     class Meta:
         db_table = 'media'

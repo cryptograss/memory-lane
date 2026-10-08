@@ -28,7 +28,7 @@ COMPACTION_PREFIX = 'This session is being continued from a previous conversatio
 INTERRUPT_SOURCE = 'interrupt'
 # System rows shown as a line in the thread.
 NEW_MOOD_SOURCE = 'mood-new'
-EVENT_SOURCES = ('deploy', INTERRUPT_SOURCE, NEW_MOOD_SOURCE, 'wiki', 'access')  # wiki: services/wiki_feed.py; access: services/access.py
+EVENT_SOURCES = ('deploy', INTERRUPT_SOURCE, NEW_MOOD_SOURCE, 'wiki', 'access', 'wiki-upload', 'handoff')  # wiki: services/wiki_feed.py; access: services/access.py; wiki-upload: services/wiki_upload.py; handoff: services/handoff.py
 # Words posted into a Mood directly, not typed into a session: from the
 # composer, or attested with a key (magenta.sh attest).
 POSTED = ('mood-web', 'mood-attest')
@@ -155,8 +155,64 @@ def _is_table_separator(cells):
 _OUT = ' target="_blank" rel="noopener"'
 
 
+# A file or a release, shown in place (services/embeds.py). `name`, `caption`
+# and `title` arrive escaped, as all text does here; what PickiPedia says is
+# escaped on the way out.
+def _file_embed(name, caption=''):
+    from . import embeds
+    found = embeds.wiki_file(html.unescape(name))
+    if not found:
+        return None
+    page, full, src = (html.escape(found[k], quote=True) for k in ('page', 'full', 'src'))
+    said = f'<span class="caption">{caption}</span>' if caption else ''
+    # A player always has its page beside it; a picture opens large (the page's
+    # lightbox), the full-size file in data-full, its page from there.
+    to_page = f'<a class="caption" href="{page}"{_OUT}>{caption or name} ↗</a>'
+    if found['mime'].startswith('video/'):
+        return f'<span class="embed"><video controls preload="metadata" playsinline src="{full}"></video>{to_page}</span>'
+    if found['mime'].startswith('audio/'):
+        return f'<span class="embed"><audio controls preload="none" src="{full}"></audio>{to_page}</span>'
+    return (f'<a class="img" href="{page}" data-full="{full}"{_OUT}><img src="{src}" alt="{caption or name}" '
+            f'loading="lazy"></a>{said}')
+
+
+def _release_embed(cid):
+    from . import embeds
+    found = embeds.release(html.unescape(cid))
+    if not found:
+        return None
+    src, page, title = (html.escape(found[k], quote=True) for k in ('src', 'page', 'title'))
+    poster = f' poster="{html.escape(found["poster"], quote=True)}"' if found['poster'] else ''
+    player = (f'<video controls preload="none" playsinline src="{src}"{poster}></video>' if found['kind'] == 'video'
+              else f'<audio controls preload="none" src="{src}"></audio>')
+    mark = '🎬' if found['kind'] == 'video' else '🎵'
+    return f'<span class="embed release">{player}<a class="caption" href="{page}"{_OUT}>{mark} {title}</a></span>'
+
+
+def _page_embed(title):
+    """A File: or Release: page's title, shown as what it is; None for anything else."""
+    kind, _, rest = title.partition(':')
+    if kind.lower() in ('file', 'image') and rest:
+        return _file_embed(rest)
+    if kind.lower() == 'release' and rest:
+        return _release_embed(rest)
+    return None
+
+
+_COMMONS_FILE = re.compile(r'^https://commons\.wikimedia\.org/wiki/((?:File|Image):[^\s?#<>"]+)$')
+_GATEWAY_CID = re.compile(r'^https://ipfs\.delivery-kid\.cryptograss\.live/ipfs/([A-Za-z0-9]{46,64})/?$')
+
+
 def _wikilink(match):
     target = match.group(1).strip()
+    kind = target.partition(':')[0].lower()
+    if kind in ('file', 'image', 'release'):
+        params = (match.group(2) or '').split('|')
+        from .embeds import file_caption
+        shown = (_file_embed(target.partition(':')[2], file_caption(params)) if kind != 'release'
+                 else _release_embed(target.partition(':')[2]))
+        if shown:
+            return shown
     label = (match.group(2) or target).strip()
     href = f"{pickipedia_url()}/wiki/{target.replace(' ', '_')}"
     return f'<a class="wikilink" href="{href}"{_OUT}>{label}</a>'
@@ -288,8 +344,10 @@ def reply_to(text):
 def snippet_of(text):
     """A message's first words as a line of plain text: links as their words, an image as 🖼,
     code and voice blocks left out -- for a reply's quote and a linked message's card."""
+    from .handoff import split as split_handoffs
     from .voice import split_voices
     text, _ = split_voices(text or '')
+    text, _ = split_handoffs(text)
     text = re.sub(r'```.*?(```|$)', ' ', text, flags=re.S)
     text = re.sub(r'!\[[^\]]*\]\([^)]*\)', '🖼', text)
     text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)
@@ -426,6 +484,14 @@ def _hash_link(match):
 def _link_url(match):
     """Link a bare URL, leaving sentence punctuation outside the anchor."""
     url, tail = _trim_url(match.group(1))
+    # A picture, a recording, a release: shown in place (services/embeds.py).
+    commons, gateway = _COMMONS_FILE.match(url), _GATEWAY_CID.match(url)
+    shown = (_page_embed(unquote(commons.group(1)).replace('_', ' ')) if commons
+             else _release_embed(gateway.group(1)) if gateway else None)
+    if shown is None and (page := pickipedia_page(url)) and not page[1]:
+        shown = _page_embed(page[0])
+    if shown:
+        return shown + tail
     own = _PERMALINK.match(url)
     if own and (card := _message_link(own.group(1))):
         return card + tail
@@ -746,8 +812,11 @@ def attestation_of(msg):
 def turn_payload(msg, text, mentionable=()):
     from .links import linked_from
     # A ```voice block is how its writer wants it read aloud: performed, not shown.
+    # A ```handoff block went to another Mood (services/handoff.py): a line says so, not the block.
+    from .handoff import split as split_handoffs
     from .voice import split_voices
     text, directions = split_voices(text)
+    text, _ = split_handoffs(text)
     target, said = reply_to(text)
     answered = replied(target) if target else None
     return {

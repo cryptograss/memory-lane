@@ -25,6 +25,10 @@ import json
 import re
 
 MAX_BYTES = 8 * 1024 * 1024
+# What a picture's sharer lets others do with it: CC BY-SA 4.0 unless they
+# say CC0, told so where they attach it (models.Media.license). It goes with
+# the picture to PickiPedia (services/wiki_upload.py).
+LICENSES = {'cc-by-sa-4.0': 'CC BY-SA 4.0', 'cc0': 'CC0'}
 MAX_AUDIO_BYTES = 25 * 1024 * 1024
 
 _SIGNATURES = (
@@ -78,6 +82,16 @@ def store(data, added_by=None, audio=False):
     media, _ = Media.objects.get_or_create(
         sha256=sha, defaults={'mime': mime, 'data': data, 'size': len(data), 'added_by': added_by})
     return media
+
+
+def relicense(media, license, by):
+    """Set a picture's license (LICENSES): only whoever shared it may. True if it's theirs to set."""
+    if license not in LICENSES or by is None or media.added_by_id != getattr(by, 'pk', by):
+        return False
+    if media.license != license:
+        type(media).objects.filter(pk=media.pk).update(license=license)
+        media.license = license
+    return True
 
 
 def store_base64(text, added_by=None):

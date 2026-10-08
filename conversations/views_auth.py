@@ -140,7 +140,9 @@ def api_media(request, slug):
     stored = media.store(request.body, added_by=device.entity)
     if stored is None:
         return JsonResponse({'error': 'not a PNG, JPEG, GIF or WebP image'}, status=400)
-    return JsonResponse({'url': stored.url, 'markdown': media.markdown(stored)}, status=201)
+    # Their own: told it's CC BY-SA 4.0, with CC0 a press away (api_media_license).
+    return JsonResponse({'url': stored.url, 'markdown': media.markdown(stored), 'sha': stored.sha256,
+                         'license': stored.license, 'mine': stored.added_by_id == device.entity_id}, status=201)
 
 
 @require_GET
@@ -208,11 +210,23 @@ def api_say(request, slug):
     if recent >= PER_MINUTE:
         return JsonResponse({'error': 'slow down'}, status=429)
 
-    text, _ = redact(text)
-    message = Message.objects.create(
-        id=uuid.uuid4(), sender=device.entity, content=text, mood=mood,
-        timestamp=int(time.time() * 1000), source_file=WEB_SOURCE, client_version=web_client(request, device),
-    )
+    def post(text, client_version=web_client(request, device)):
+        text, _ = redact(text)
+        return Message.objects.create(
+            id=uuid.uuid4(), sender=device.entity, content=text[:MAX_CHARS], mood=mood,
+            timestamp=int(time.time() * 1000), source_file=WEB_SOURCE, client_version=client_version,
+        )
+
+    # A memo still being heard (voice.hear_later) goes when its words are in:
+    # now if they are, else in the background -- the page says it's on its way.
+    from .services import voice
+    memo = voice.memo_in(text)
+    if memo and voice.heard(memo) is None:
+        voice.post_when_heard(memo, text, post)
+        return JsonResponse({'pending': memo}, status=202)
+    if memo:
+        text = voice.with_transcript(text, voice.heard(memo))
+    message = post(text)
     if text.startswith('/clips '):
         clips.forget_cached()  # the library has a new save, or one fewer
     return JsonResponse({'id': str(message.id), **({'note': note} if note else {})}, status=201)
@@ -546,9 +560,9 @@ VOICE_PER_MINUTE = 6
 def api_memo(request, slug):
     """A voice memo, as the device's person: the body is the recording.
 
-    Stored like an image (by its bytes' hash), then transcribed. Answers
-    with the audio's URL and the transcript, for the person to look over
-    and send -- nothing is posted until they do.
+    Stored like an image (by its bytes' hash), and answered at once with its
+    URL, to go in the box ready to send. Scribe starts on it now, in the
+    background (voice.hear_later): sent, it's posted when its words are in.
     """
     from .services import media, voice
     from .views_admin import locked_response
@@ -568,14 +582,18 @@ def api_memo(request, slug):
     if stored is None:
         return JsonResponse({'error': 'not a recording this understands (WebM, Ogg, MP4, MP3 or WAV)'}, status=400)
     try:
-        heard = voice.transcribe(stored, mood, device.entity_id)
+        voice.check_budget(voice.STT_USD_PER_HOUR * 10 / 60)  # refused now, not after it's sent
     except voice.VoiceError as e:
         return JsonResponse({'error': str(e), 'url': stored.url}, status=e.status)
-    # "Magent, ..." or "at Skyler" said aloud: an @mention, there to look over before sending.
+    # "Magent, ..." or "at Skyler" said aloud becomes an @mention -- of an agent
+    # only from an SSH-key sign-in, as typing one would be (api_say).
     from .services import wiki_auth
     from .services.mood_view import known_names
-    heard['text'] = voice.spoken_mentions(heard['text'], known_names(), wiki_auth.aliases())
-    return JsonResponse({'url': stored.url, **heard}, status=201)
+    mentionable = set(known_names())
+    if device.tier == 'wiki':
+        mentionable -= set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
+    voice.hear_later(stored, mood, device.entity_id, mentionable, wiki_auth.aliases())
+    return JsonResponse({'url': stored.url}, status=201)
 
 
 @require_POST
@@ -588,6 +606,10 @@ def api_speak(request, slug, message_id):
     ?intro=1 adds {"intro"}: the narrator saying who speaks ("Justin says:");
     ?intro=where, and in which Mood. ?only=intro: that alone (a voice memo is
     heard as recorded, so only its speaker needs saying).
+
+    It comes in pieces (voice.pieces), so it starts at once: {"url"} is the
+    first, and {"pieces"} how many; ?piece=N asks for the Nth, as the one
+    before it starts playing.
     """
     from .services import voice
     from .views_admin import locked_response
@@ -599,22 +621,58 @@ def api_speak(request, slug, message_id):
     message = Message.objects.filter(id=_uuid_or_none(message_id), mood=Mood.by_slug(slug)).first()
     if message is None:
         return JsonResponse({'error': 'no such message in this Mood'}, status=404)
-    if not _under_limit(f'voice:{device.pk}', VOICE_PER_MINUTE):
-        return JsonResponse({'error': 'slow down'}, status=429)
     try:
         part = int(request.GET.get('part') or 0)
+        piece = int(request.GET.get('piece') or 0)
     except ValueError:
-        part = 0
+        part = piece = 0
+    # A message's later pieces are the same reading going on: only its start counts against the pace.
+    if piece == 0 and not _under_limit(f'voice:{device.pk}', VOICE_PER_MINUTE):
+        return JsonResponse({'error': 'slow down'}, status=429)
     intro = request.GET.get('intro', '')
     try:
         out = {}
         if intro or request.GET.get('only') == 'intro':
             out['intro'] = voice.intro(message, device.entity_id, where=intro == 'where')
         if request.GET.get('only') != 'intro':
-            out['url'] = voice.speak(message, device.entity_id, part=part)
+            out.update(voice.speak_piece(message, device.entity_id, part=part, piece=piece))
         return JsonResponse(out)
     except voice.VoiceError as e:
         return JsonResponse({'error': str(e)}, status=e.status)
+
+
+@require_GET
+def api_voice_sample(request, voice_id):
+    """A voice's sample (ElevenLabs' preview), served from here as audio/mpeg.
+
+    Its host labels some samples text/plain, which Firefox won't play. Only
+    the voices ElevenLabs lists -- nothing else is fetched -- and each kept a day.
+    """
+    from django.core.cache import cache
+    from django.http import HttpResponse
+    from .services import voice
+    key = f'voice:sample:{voice_id[:40]}'
+    audio = cache.get(key)
+    if audio is None:
+        try:
+            listed = {v['voice_id']: v.get('preview_url') for v in voice.voices()}
+        except voice.VoiceError:
+            listed = {}
+        url = listed.get(voice_id)
+        if not url:
+            return JsonResponse({'error': 'no sample of that voice'}, status=404)
+        import requests
+        try:
+            answer = requests.get(url, timeout=15)
+        except requests.RequestException:
+            return JsonResponse({'error': 'the sample could not be fetched'}, status=502)
+        if answer.status_code != 200 or not answer.content[:3] in (b'ID3', b'\xff\xfb', b'\xff\xf3', b'\xff\xf2'):
+            return JsonResponse({'error': 'the sample is not audio'}, status=502)
+        audio = answer.content
+        cache.set(key, audio, 86400)
+    response = HttpResponse(audio, content_type='audio/mpeg')
+    response['Cache-Control'] = 'public, max-age=86400'
+    return response
 
 
 @require_GET
@@ -689,7 +747,7 @@ def api_speaker_voice(request):
     except (ValueError, KeyError, TypeError):
         return JsonResponse({'error': 'expected {"name": ..., "voice": ...}'}, status=400)
     entity = ThinkingEntity.objects.filter(name=name).first()
-    if entity is None:
+    if entity is None and name != voice.NARRATOR:
         return JsonResponse({'error': f'nobody called {name}'}, status=404)
     if name != device.entity_id and (device.tier != 'key' or not device.entity.is_biological_human):
         return JsonResponse({'error': "only your own voice, from a PickiPedia sign-in; others' take your SSH key"},
@@ -703,10 +761,40 @@ def api_speaker_voice(request):
         if chosen.lower() not in known and not voice._VOICE_ID.match(chosen):
             return JsonResponse({'error': f'no voice called {chosen}'}, status=400)
     try:
-        row = knobs.change('speaker_voice', chosen, agent=entity, by=device.entity, note=body.get('note', ''))
+        if entity is None:  # the narrator: everyone's, so an SSH key's to change
+            row = knobs.change('narrator_voice', chosen, by=device.entity, note=body.get('note', ''))
+        else:
+            row = knobs.change('speaker_voice', chosen, agent=entity, by=device.entity, note=body.get('note', ''))
     except knobs.Invalid as e:
         return JsonResponse({'error': str(e)}, status=400)
     return JsonResponse(knobs.describe(row), status=201)
+
+
+@require_POST
+def api_narrate(request):
+    """{"mood", "agent", "where"}: the narrator saying an agent has started work there
+    ("Magent is thinking, in magenta interface"), for reading Moods as they come: {"url"}."""
+    from .services import voice
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = mood_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to hear Moods read aloud'}, status=401)
+    try:
+        body = json.loads(request.body)
+    except ValueError:
+        return JsonResponse({'error': 'expected JSON'}, status=400)
+    mood = Mood.by_slug(str(body.get('mood') or ''))
+    agent = ThinkingEntity.objects.filter(name=str(body.get('agent') or ''), is_biological_human=False).first()
+    if mood is None or agent is None:
+        return JsonResponse({'error': 'no such Mood, or no such agent'}, status=404)
+    if not _under_limit(f'voice:{device.pk}', VOICE_PER_MINUTE):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    try:
+        return JsonResponse({'url': voice.narrate_thinking(mood, agent.name, device.entity_id, where=bool(body.get('where')))})
+    except voice.VoiceError as e:
+        return JsonResponse({'error': str(e)}, status=e.status)
 
 
 def _uuid_or_none(value):
@@ -853,3 +941,98 @@ def api_push_unsubscribe(request):
         return JsonResponse({'error': 'expected {"endpoint": ...}'}, status=400)
     PushSubscription.objects.filter(endpoint=endpoint, device__entity=device.entity).delete()
     return JsonResponse({'subscribed': False})
+
+
+@require_POST
+def api_media_to_pickipedia(request, sha256):
+    """{"mood", "message", "name", "description", "license"}: put a picture on PickiPedia as whoever
+    shared it (services/wiki_upload.py), from either sign-in. Answers {"go": PickiPedia's "may magenta
+    upload for you?"}, to be sent to; or, if the picture is there already, {"file", "page"}."""
+    from .models import Media
+    from .services import wiki_upload
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = mood_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in first'}, status=401)
+    if not _under_limit(f'wiki-upload:{device.pk}', 6):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    try:
+        body = json.loads(request.body)
+    except ValueError:
+        return JsonResponse({'error': 'expected JSON'}, status=400)
+    media = Media.objects.filter(sha256=sha256).first()
+    mood = Mood.by_slug(str(body.get('mood') or ''))
+    if media is None or mood is None:
+        return JsonResponse({'error': 'no such picture, or no such Mood'}, status=404)
+    try:
+        done = wiki_upload.begin(media, str(body.get('name') or ''), str(body.get('description') or '')[:2000],
+                                 str(body.get('license') or 'cc-by-sa-4.0'), device.entity_id, mood,
+                                 _uuid_or_none(body.get('message')), _wiki_upload_return(request))
+    except wiki_upload.UploadError as e:
+        return JsonResponse({'error': str(e)}, status=e.status)
+    if 'go' not in done:
+        return JsonResponse(done)
+    response = JsonResponse({'go': done['go']})
+    response.set_cookie(wiki_upload.STATE_COOKIE, done['state'], max_age=wiki_upload.PENDING_FOR, httponly=True,
+                        secure=not settings.DEBUG, samesite='Lax')
+    return response
+
+
+@require_GET
+def wiki_upload_return(request):
+    """Back from PickiPedia with its yes (or not): upload as them, then back to the picture."""
+    from .services import wiki_upload
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    expected = request.COOKIES.get(wiki_upload.STATE_COOKIE, '')
+    back = wiki_upload.place(expected)
+    device = mood_auth.device_for(request)
+    try:
+        if device is None:
+            raise wiki_upload.UploadError('this browser is signed out of magenta', status=401)
+        if request.GET.get('error') == 'access_denied':
+            raise wiki_upload.UploadError("You didn't allow it on PickiPedia, so nothing went up.")
+        if request.GET.get('error'):
+            raise wiki_upload.UploadError('PickiPedia gave no permission, so nothing went up: '
+                                          + (request.GET.get('error_description') or request.GET['error']))
+        if not expected or request.GET.get('state') != expected or not request.GET.get('code'):
+            raise wiki_upload.UploadError('that went stale; press → PickiPedia again')
+        done = wiki_upload.finish(expected, request.GET['code'], device.entity_id, _wiki_upload_return(request))
+    except wiki_upload.UploadError as e:
+        response = render(request, 'conversations/mood_login.html',
+                          {'state': 'upload-refused', 'why': str(e), 'back': back}, status=e.status)
+    else:
+        response = HttpResponseRedirect(done['back'])
+    response.delete_cookie(wiki_upload.STATE_COOKIE)
+    return response
+
+
+def _wiki_upload_return(request):
+    return request.build_absolute_uri('/moods/auth/wiki/upload')
+
+
+@require_http_methods(['GET', 'POST'])
+def api_media_license(request, sha256):
+    """A picture's license (services/media.LICENSES): {"license", "mine"}. POST {"license"}
+    sets it: only whoever shared it may."""
+    from .models import Media
+    from .services import media as media_service
+    media = Media.objects.filter(sha256=sha256).first()
+    if media is None:
+        return JsonResponse({'error': 'no such picture'}, status=404)
+    device = mood_auth.device_for(request)
+    if request.method == 'POST':
+        if device is None:
+            return JsonResponse({'error': 'sign in first'}, status=401)
+        try:
+            wanted = str(json.loads(request.body).get('license') or '')
+        except (ValueError, AttributeError):
+            return JsonResponse({'error': 'expected {"license": ...}'}, status=400)
+        if wanted not in media_service.LICENSES:
+            return JsonResponse({'error': 'CC BY-SA 4.0 or CC0: ' + ', '.join(media_service.LICENSES)}, status=400)
+        if not media_service.relicense(media, wanted, device.entity_id):
+            return JsonResponse({'error': "only whoever shared a picture can choose its license"}, status=403)
+    return JsonResponse({'license': media.license, 'mine': bool(device) and media.added_by_id == device.entity_id})
