@@ -969,6 +969,19 @@
       + ` title="${title}" aria-label="${title}">▶</button>`;
   }
   let speaking = null;  // {audio, button}
+  // A message read aloud comes in pieces (voice.pieces): the first is short, so it
+  // starts at once. Each next piece is asked for as the one before starts playing --
+  // made while it plays, and made knowing it, so they sound like one reading.
+  function laterPieces(mood, id, part, count) {
+    const asked = new Map();
+    return i => {
+      if (i >= count) return null;
+      if (!asked.has(i)) asked.set(i, fetch(`/api/moods/${encodeURIComponent(mood)}/speak/${encodeURIComponent(id)}/?part=${encodeURIComponent(part || 0)}&piece=${i}`,
+        { method: 'POST', headers: { 'X-CSRFToken': csrf() } })
+        .then(async r => { const body = await r.json().catch(() => ({})); if (!r.ok) throw new Error(body.error || r.status); return body.url; }));
+      return asked.get(i);
+    };
+  }
   function stopSpeaking() {
     if (!speaking) return;
     speaking.audio.pause();
@@ -1001,10 +1014,23 @@
       if (!r.ok) throw new Error(body.error || r.status);
       if (ask !== speakAsk) { b.textContent = b.dataset.label || '▶'; return; }  // another ▶ was pressed meanwhile: that one plays
       const audio = new Audio(body.url);
+      const more = laterPieces(current, b.dataset.id, b.dataset.part, body.pieces || 1);
+      let at = 0;
       speaking = { audio, button: b };
-      audio.addEventListener('ended', stopSpeaking);
+      audio.addEventListener('ended', async () => {
+        const next = more(++at);
+        if (!next || speaking?.audio !== audio) { stopSpeaking(); return; }
+        try {
+          const src = await next;
+          if (speaking?.audio !== audio) return;  // stopped while it was being made
+          audio.src = src;
+          await audio.play();
+          more(at + 1);
+        } catch (err) { showError('read aloud: ' + err.message); stopSpeaking(); }
+      });
       b.classList.add('playing'); b.textContent = b.dataset.label ? b.dataset.label.replace(/^▶/, '■') : '■';
       await audio.play();
+      more(1);
     } catch (err) {
       showError('read aloud: ' + err.message);
       b.textContent = b.dataset.label || '▶';
@@ -3040,7 +3066,12 @@
           if (r.status === 429 || r.status === 503) setReadMode('off');  // the day's voice budget spent, or no voice here
           throw new Error(body.error || r.status);
         }
-        clips.push(['intro', body.intro], ['message', body.url]);
+        clips.push(['intro', body.intro]);
+        if (!memo && body.pieces > 1) {  // the rest of it, each asked for as the one before starts
+          const more = laterPieces(item.mood, item.id, 0, body.pieces);
+          clips.push(['message', body.url, () => more(1)]);
+          for (let i = 1; i < body.pieces; i++) clips.push(['message', () => more(i), () => more(i + 1)]);
+        } else clips.push(['message', body.url]);
       }
       if (memo) clips.push(['memo', memo[1]]);
     } catch (err) {
@@ -3048,8 +3079,14 @@
       if (readNow === now) { readNow = null; readNext(); }
       return;
     }
-    for (const [clip, src] of clips.filter(([, src]) => src)) {
+    for (const [clip, source, after] of clips.filter(([, src]) => src)) {
       if (now.skipped || readMode === 'off' || readNow !== now) break;
+      let src = source;
+      if (typeof source === 'function') {  // a later piece: made while the one before played
+        try { src = await source(); } catch (err) { showError('read aloud: ' + err.message); break; }
+        if (now.skipped || readMode === 'off' || readNow !== now) break;
+      }
+      if (after) after();  // the piece after this one: made while this one plays
       let how = await playClip(src);
       if (how === 'failed' && !now.skipped && readNow === now) {  // once more, after a breath
         readReport(item, clip, 'failed');

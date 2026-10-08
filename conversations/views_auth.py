@@ -606,6 +606,10 @@ def api_speak(request, slug, message_id):
     ?intro=1 adds {"intro"}: the narrator saying who speaks ("Justin says:");
     ?intro=where, and in which Mood. ?only=intro: that alone (a voice memo is
     heard as recorded, so only its speaker needs saying).
+
+    It comes in pieces (voice.pieces), so it starts at once: {"url"} is the
+    first, and {"pieces"} how many; ?piece=N asks for the Nth, as the one
+    before it starts playing.
     """
     from .services import voice
     from .views_admin import locked_response
@@ -617,19 +621,21 @@ def api_speak(request, slug, message_id):
     message = Message.objects.filter(id=_uuid_or_none(message_id), mood=Mood.by_slug(slug)).first()
     if message is None:
         return JsonResponse({'error': 'no such message in this Mood'}, status=404)
-    if not _under_limit(f'voice:{device.pk}', VOICE_PER_MINUTE):
-        return JsonResponse({'error': 'slow down'}, status=429)
     try:
         part = int(request.GET.get('part') or 0)
+        piece = int(request.GET.get('piece') or 0)
     except ValueError:
-        part = 0
+        part = piece = 0
+    # A message's later pieces are the same reading going on: only its start counts against the pace.
+    if piece == 0 and not _under_limit(f'voice:{device.pk}', VOICE_PER_MINUTE):
+        return JsonResponse({'error': 'slow down'}, status=429)
     intro = request.GET.get('intro', '')
     try:
         out = {}
         if intro or request.GET.get('only') == 'intro':
             out['intro'] = voice.intro(message, device.entity_id, where=intro == 'where')
         if request.GET.get('only') != 'intro':
-            out['url'] = voice.speak(message, device.entity_id, part=part)
+            out.update(voice.speak_piece(message, device.entity_id, part=part, piece=piece))
         return JsonResponse(out)
     except voice.VoiceError as e:
         return JsonResponse({'error': str(e)}, status=e.status)

@@ -31,6 +31,13 @@ unlike the narrator's and everyone else's -- and kept. The narrator is
 magent, in the house voice unless it has chosen another; when messages are
 read one after another, it says who speaks next ("Justin says:").
 
+**It starts at once.** A message is read in pieces (pieces()): its first
+paragraph alone -- cut at a sentence if it runs long -- so it's spoken in a
+few seconds and plays while the rest is made, a piece at a time, each asked
+for as the one before starts playing. Each piece is made knowing the ones
+before it (ElevenLabs' request stitching, previous_request_ids), so the
+pieces sound like one reading, not several.
+
 What's spoken is kept: the same words in the same voice and settings are
 never paid for twice. Every use is a system row in its Mood (who, what,
 roughly what it cost), and the day's total is capped (voice_usd_per_day).
@@ -51,6 +58,11 @@ STT_MODEL = 'scribe_v2'
 TTS_USD_PER_KCHAR = 0.08   # Eleven v4, list price
 STT_USD_PER_HOUR = 0.22    # Scribe v2
 MAX_SCRIPT_CHARS = 10_000  # one generation's limit
+FIRST_PIECE_MIN = 150      # the first piece read aloud: long enough to cover the making of the next,
+FIRST_PIECE_CHARS = 400    # short enough to start at once
+SECOND_PIECE_CHARS = 800   # the second: made while the first plays
+PIECE_CHARS = 1500         # every piece after them, at most
+STITCH_WITHIN = 7000       # seconds a piece's request id may condition the next (ElevenLabs: two hours)
 SOURCE = 'voice'           # source_file of the system rows that keep the record
 VOICES_FOR = 3600          # seconds the voice list is cached
 # The voice when the list can't be read (a key without "Voices: read") and
@@ -322,26 +334,107 @@ def script_for(text, part=0):
     return plain(rest)[:MAX_SCRIPT_CHARS], '', {}
 
 
-def speak(message, by, http=requests, part=0):
-    """The URL of `message` (its `part`th voice block) read aloud: made once, kept.
-    VoiceError if it can't be."""
+def _cut(text, limit):
+    """(the start of `text`, up to `limit` characters, ending where a sentence does; the rest)."""
+    if len(text) <= limit:
+        return text, ''
+    window = text[:limit]
+    ends = [m.end() for m in re.finditer(r'[.!?…][\'")\]]*\s', window)]
+    if ends and ends[-1] > limit // 3:
+        at = ends[-1]
+    else:  # no sentence ends early enough: at a word
+        at = window.rfind(' ') if window.rfind(' ') > limit // 3 else limit
+    return text[:at].strip(), text[at:].strip()
+
+
+def pieces(script):
+    """`script` in the pieces it's read in, paragraphs kept together where they fit:
+    a short first one, to start at once (FIRST_PIECE_MIN to FIRST_PIECE_CHARS);
+    a second made while it plays (SECOND_PIECE_CHARS); then up to PIECE_CHARS.
+    A paragraph too long for its piece is cut where a sentence ends."""
+    paragraphs = [p.strip() for p in re.split(r'\n\s*\n', script or '') if p.strip()]
+    out, current = [], ''
+
+    def limit():
+        return (FIRST_PIECE_CHARS, SECOND_PIECE_CHARS)[len(out)] if len(out) < 2 else PIECE_CHARS
+    while paragraphs:
+        paragraph = paragraphs.pop(0)
+        joined = f'{current}\n\n{paragraph}' if current else paragraph
+        if len(joined) <= limit():
+            current = joined
+            if not out and len(current) >= FIRST_PIECE_MIN:
+                out.append(current)  # the first is out as soon as it's enough
+                current = ''
+            continue
+        if current and (out or len(current) >= FIRST_PIECE_MIN):
+            out.append(current)  # what's gathered is a piece; this paragraph starts the next
+            current = ''
+            paragraphs.insert(0, paragraph)
+            continue
+        # Too long for what's left of this piece: as much of it as fits, at a sentence.
+        room = limit() - (len(current) + 2 if current else 0)
+        head, rest = _cut(paragraph, room)
+        out.append(f'{current}\n\n{head}' if current else head)
+        current = ''
+        if rest:
+            paragraphs.insert(0, rest)
+    if current:
+        out.append(current)
+    return out
+
+
+def speak(message, by, http=requests, part=0, piece=0):
+    """The URL of `message` (its `part`th voice block) read aloud -- its `piece`th
+    piece (speak_piece). VoiceError if it can't be."""
+    return speak_piece(message, by, http=http, part=part, piece=piece)['url']
+
+
+def speak_piece(message, by, http=requests, part=0, piece=0):
+    """{'url', 'pieces'}: the `piece`th piece of `message` read aloud, and how many
+    there are. Made once and kept; made knowing the pieces before it, if they
+    were made lately. VoiceError if it can't be."""
     from conversations.services.mood_view import prose
     script, voice_name, voice_settings = script_for(prose(message.content), part)
-    if not script.strip():
+    parts = pieces(script)
+    if not parts:
         raise VoiceError('nothing in that message to read aloud', status=400)
+    piece = min(max(piece, 0), len(parts) - 1)
     # A voice its writer named; else the writer's own.
     voice_id = voice_id_for(voice_name, http) if voice_name else voice_of(message.sender_id, http)
-    body = {'text': script, 'model_id': TTS_MODEL}
-    if voice_settings:
-        names = {'similarity': 'similarity_boost'}
-        body['voice_settings'] = {names.get(k, k): v for k, v in voice_settings.items()}
-    return _spoken(message.mood, by, voice_id, body, script, http, message=str(message.id))
+
+    def body_for(text):
+        body = {'text': text, 'model_id': TTS_MODEL}
+        if voice_settings:
+            names = {'similarity': 'similarity_boost'}
+            body['voice_settings'] = {names.get(k, k): v for k, v in voice_settings.items()}
+        return body
+    before = [_request_id(_key(voice_id, body_for(text))) for text in parts[max(0, piece - 3):piece]]
+    stitch = {'previous_request_ids': [r for r in before if r]} if any(before) else {}
+    url = _spoken(message.mood, by, voice_id, body_for(parts[piece]), parts[piece], http, extra=stitch,
+                  message=str(message.id), **({'piece': piece} if piece else {}))
+    return {'url': url, 'pieces': len(parts)}
 
 
-def _spoken(mood, by, voice_id, body, script, http, **details):
-    """The URL of `body` spoken in `voice_id`: the kept one if it's been made, else made now."""
+def _key(voice_id, body):
+    return hashlib.sha256(json.dumps([voice_id, body], sort_keys=True).encode()).hexdigest()
+
+
+def _request_id(key):
+    """ElevenLabs' id for the making of what `key` names, if it was made lately enough to stitch onto."""
+    from datetime import timedelta
+    from django.utils import timezone
+    from conversations.models import Message
+    row = (Message.objects.filter(source_file=SOURCE, content__type='spoken', content__key=key,
+                                  created_at__gte=timezone.now() - timedelta(seconds=STITCH_WITHIN))
+           .order_by('-created_at').values_list('content', flat=True).first())
+    return (row or {}).get('request_id') or None
+
+
+def _spoken(mood, by, voice_id, body, script, http, extra=None, **details):
+    """The URL of `body` spoken in `voice_id`: the kept one if it's been made, else
+    made now (sent with `extra` too: what it's stitched onto, not part of what it is)."""
     from conversations.models import Media, Message
-    key = hashlib.sha256(json.dumps([voice_id, body], sort_keys=True).encode()).hexdigest()
+    key = _key(voice_id, body)
 
     def made():
         done = (Message.objects.filter(source_file=SOURCE, content__type='spoken', content__key=key)
@@ -363,7 +456,7 @@ def _spoken(mood, by, voice_id, body, script, http, **details):
                 break
         raise VoiceError('it is still being read aloud for someone else; try again in a moment', status=409)
     try:
-        return made() or _make(mood, by, key, voice_id, body, script, http, details)
+        return made() or _make(mood, by, key, voice_id, {**body, **(extra or {})}, script, http, details)
     finally:
         cache.delete(f'voice:making:{key}')
 
@@ -379,7 +472,9 @@ def _make(mood, by, key, voice_id, body, script, http, details):
     stored = media_store.store(response.content, audio=True)
     if stored is None:
         raise VoiceError('ElevenLabs sent back something that is not audio')
-    record(mood, 'spoken', by, **details, key=key, media=stored.sha256, voice=voice_id, chars=len(script), usd=usd)
+    request_id = (getattr(response, 'headers', None) or {}).get('request-id')
+    record(mood, 'spoken', by, **details, key=key, media=stored.sha256, voice=voice_id, chars=len(script), usd=usd,
+           **({'request_id': request_id} if request_id else {}))
     return stored.url
 
 
