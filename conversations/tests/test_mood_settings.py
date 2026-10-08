@@ -171,3 +171,23 @@ class SettingsAPITest(TestCase):
         self.assertEqual(context_window('claude-haiku-4-5', 150_000), 200_000)
         self.assertEqual(context_window('claude-haiku-4-5', 300_000), 1_000_000)  # seen past it: the larger one
         self.assertEqual(context_window(None), 200_000)
+
+
+class SetByTest(TestCase):
+    """Each agent setting a Mood shows says who set it as it stands, and when."""
+
+    def test_who_set_each_and_when(self):
+        justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        skyler = ThinkingEntity.objects.create(name='skyler', is_biological_human=True)
+        magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+        general = Mood.objects.create(slug='general', title='general')
+        knobs.change('model', 'sonnet', mood=general, agent=magent, by=justin)
+        knobs.change('model', 'opus', mood=general, agent=magent, by=skyler)
+        knobs.change('mention_effort', 'low', by=justin)  # everywhere
+        knobs.change('verbosity', 'thorough')  # by nobody recorded
+        agents = self.client.get('/api/moods/general/turns/').json()['agents']
+        set_by = agents['magent']['set_by']
+        self.assertEqual((agents['magent']['model'], set_by['model']['by']), ('opus', 'skyler'))
+        self.assertEqual(set_by['mention_effort']['by'], 'justin')
+        self.assertNotIn('verbosity', set_by)
+        self.assertNotIn('discretion', set_by)  # still its default
