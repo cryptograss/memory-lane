@@ -43,6 +43,7 @@ urlpatterns = [
     path('api/moods/<slug:slug>/speak/<str:message_id>/', views_auth.api_speak, name='api_mood_speak'),
     path('api/moods/<slug:slug>/verify/<str:message_id>/', views_auth.api_verify, name='api_mood_verify'),
     path('api/voice/voices/', views_auth.api_voices, name='api_voices'),
+    path('api/voice/sample/<str:voice_id>/', views_auth.api_voice_sample, name='api_voice_sample'),
     path('api/voice/speaker/', views_auth.api_speaker_voice, name='api_speaker_voice'),
     path('api/voice/heard/', views_auth.api_voice_heard, name='api_voice_heard'),
     path('api/moods/<slug:slug>/media/', views_auth.api_media, name='api_mood_media'),
