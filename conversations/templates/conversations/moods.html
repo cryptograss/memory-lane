@@ -373,15 +373,27 @@
   /* Something that happened around the conversation: a server redeployed. */
   a.permalink { color: inherit; text-decoration: none; }
   /* Replies: ↩ on a message starts one; a reply shows what it answers above it. */
-  .turn .replybtn, .turn .editbtn, .turn .delbtn { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 4px; opacity: 0; }
-  .turn:hover .replybtn, .turn .replybtn:focus, .turn:hover .editbtn, .turn .editbtn:focus,
-  .turn:hover .delbtn, .turn .delbtn:focus { opacity: 1; }
-  @media (pointer: coarse) { .turn .replybtn, .turn .editbtn, .turn .delbtn { opacity: .6; } }
+  /* ↩ 🙂 ⋯ in one row: the heading's, or a follow-on message's top right. Editing and
+     deleting are behind ⋯, never a stray tap away from a reply or a reaction. */
+  .turn .replybtn, .turn .addreact, .turn .morebtn { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 4px; opacity: 0; }
+  .turn:hover .replybtn, .turn .replybtn:focus, .turn:hover .addreact, .turn .addreact:focus,
+  .turn:hover .morebtn, .turn .morebtn:focus { opacity: 1; }
+  @media (pointer: coarse) { .turn .replybtn, .turn .addreact, .turn .morebtn { opacity: .6; } }
+  #msgMenu { position: fixed; z-index: 50; display: flex; flex-direction: column; min-width: 150px; padding: 4px; background: var(--panel);
+             border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+  #msgMenu[hidden] { display: none; }
+  #msgMenu button { font: inherit; font-size: 14px; text-align: left; border: 0; background: none; color: var(--ink); cursor: pointer;
+                    padding: 8px 10px; border-radius: 6px; }
+  #msgMenu button:hover, #msgMenu button:focus { background: var(--code); }
+  #msgMenu button.danger { color: #c0392b; }
+  #msgMenu hr { border: 0; border-top: 1px solid var(--line); margin: 3px 4px; }
   /* Edited and deleted (services/retract.py). */
   .turn .edited { color: var(--muted); font-size: 11.5px; margin-left: 4px; }
   /* A follow-on message has no heading to hold ✎ 🗑: they sit at its top right, as its # does at the side. */
   .turn.cont > .acts { position: absolute; right: 2px; top: 0; z-index: 2; background: var(--bg); border-radius: 4px; }
-  .turn.cont:hover > .acts .editbtn, .turn.cont:hover > .acts .delbtn { opacity: 1; }
+  .turn.cont:hover > .acts button { opacity: 1; }
+  /* On a touch screen ▶ floats at the top right of a follow-on message: the row floats beside it, not under it. */
+  @media (pointer: coarse) { .turn.cont > .acts { position: static; float: right; margin: 6px 0 4px 4px; background: none; } }
   .turn .body.gone { color: var(--muted); font-style: italic; font-size: 13px; }
   .turn .editbox { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
                    background: var(--panel); color: var(--ink); resize: vertical; }
@@ -455,17 +467,13 @@
   .turn .card .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; }
   .turn .card .desc { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .turn .card small { color: var(--muted); font-size: 11.5px; }
-  /* Reactions (services/reactions.py): chips under a message; 🙂 to add one, on hover. */
+  /* Reactions (services/reactions.py): chips under a message; 🙂 beside ↩ adds one. */
   .turn .reacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; min-height: 0; }
   .turn .reacts:not(.some) { margin-top: 0; }
   .turn .reacts .chip { font: inherit; font-size: 13px; line-height: 1.2; padding: 1px 7px; border: 1px solid var(--line);
                         border-radius: 12px; background: var(--panel); color: var(--ink); cursor: pointer; }
   .turn .reacts .chip span { font-size: 11.5px; color: var(--muted); }
   .turn .reacts .chip.mine { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
-  .turn .reacts .addreact { font-size: 13px; padding: 0 4px; border: 0; background: none; cursor: pointer; opacity: 0; }
-  .turn:hover .reacts .addreact, .turn .reacts .addreact:focus { opacity: .7; }
-  .turn .reacts:not(.some) .addreact { position: absolute; right: 2px; bottom: 4px; }
-  @media (pointer: coarse) { .turn .reacts .addreact { opacity: .45; } }
   #reactPicker { position: fixed; z-index: 50; display: flex; gap: 2px; padding: 4px; background: var(--panel);
                  border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
   #reactPicker[hidden] { display: none; }
@@ -484,12 +492,21 @@
                       max-height: 60vh; overflow-y: auto; }
   #activity, #composer { max-width: 760px; margin: 0 auto; }  /* the reading column's width */
   #composer { display: none; position: relative; padding: 10px 16px 14px; }
-  body.writer #composer { display: flex; gap: 8px; align-items: flex-end; }
+  body.writer #composer { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
   #composer textarea { flex: 1; font-family: inherit; line-height: inherit; min-height: 44px; max-height: 40vh; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
   #composer button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
   #composer button:disabled { opacity: .5; cursor: default; }
+  /* A word from the page (an error, a note) goes on its own line under the box: beside it, a
+     long one squeezed the box to a sliver on a phone, and you couldn't type to clear it. */
+  #composer textarea { min-width: 0; }
+  #composer .err, #composer .note { flex: 0 0 100%; order: 10; margin-top: -4px; }
   #composer .err { color: var(--accent); font-size: 12px; }
-  #composer .note { color: var(--muted); font-size: 12px; align-self: center; }
+  /* Not signed in here: said where the box would be, with the way back in, rather than the box just gone. */
+  #signedOut { max-width: 760px; margin: 0 auto; padding: 10px 16px 14px; font-size: 13.5px; color: var(--muted); }
+  #signedOut[hidden] { display: none; }
+  #signedOut b { color: var(--ink); }
+  #signedOut a { color: var(--accent); font-weight: 600; }
+  #composer .note { color: var(--muted); font-size: 12px; }
   #activity { display: none; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--muted); }
   #activity.on { display: flex; }
   #activity .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--agent); animation: pulse 1.2s ease-in-out infinite; }
@@ -638,6 +655,9 @@
   .hush { display: flex; flex-wrap: wrap; gap: 8px; max-width: 760px; margin: 0 auto; padding: 6px 16px 0;
           font-size: 12.5px; color: var(--muted); }
   .hush:empty { display: none; }
+  /* An agent's setting someone else just changed: a moment's glow (renderAgents). */
+  @keyframes justset { 0%, 60% { box-shadow: 0 0 0 2px var(--accent); background: var(--accent-soft); } 100% { box-shadow: 0 0 0 0 transparent; } }
+  .hush .justset { animation: justset 4s ease-out; border-radius: 4px; }
   .hush select { font: inherit; font-size: 12.5px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px;
                  background: var(--panel); color: var(--ink); }
   .hush .off { color: var(--accent); }
@@ -847,6 +867,7 @@
       <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
       <button type="submit" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z" fill="currentColor"/></svg></button>
     </form>
+    <div id="signedOut" hidden></div>
     </div>
   </main>
   <aside id="todo" hidden aria-label="To do">
@@ -1414,10 +1435,12 @@
     // ✎ what you wrote here yourself; 🗑 what you wrote, or anything as an admin (services/retract.py).
     // As services/retract.py allows: your own, edited within a day, deleted within a week; an admin's, any.
     const age = Date.now() - new Date(t.created_at).getTime();
-    const editBtn = viewer && !t.deleted && t.sender === viewer && t.via === 'web' && !t.attested && age < 864e5
-      ? `<button type="button" class="editbtn" data-edit="${esc(t.id)}" title="Edit what you said" aria-label="Edit">✎</button>` : '';
-    const delBtn = viewer && !t.deleted && ((t.sender === viewer && age < 7 * 864e5) || viewerAdmin)
-      ? `<button type="button" class="delbtn" data-delete="${esc(t.id)}" title="Delete it: its words are taken out of the record" aria-label="Delete">🗑</button>` : '';
+    const mayEdit = viewer && !t.deleted && t.sender === viewer && t.via === 'web' && !t.attested && age < 864e5;
+    const mayDelete = viewer && !t.deleted && ((t.sender === viewer && age < 7 * 864e5) || viewerAdmin);
+    const moreBtn = mayEdit || mayDelete
+      ? `<button type="button" class="morebtn" data-more="${esc(t.id)}" data-edit="${mayEdit ? 1 : ''}" data-delete="${mayDelete ? 1 : ''}" `
+        + `title="${mayEdit ? 'Edit or delete' : 'Delete'}" aria-label="More" aria-haspopup="menu">⋯</button>` : '';
+    const reactBtn = viewer && !t.deleted ? '<button type="button" class="addreact" title="React" aria-label="React">🙂</button>' : '';
     // For an admin, each mark opens what it said before (the recovery key, in this tab only, below).
     const versions = viewerAdmin ? ` data-versions="${esc(t.id)}" role="button" tabindex="0"` : '';
     const seeThem = viewerAdmin ? ': click for what it said before (needs the recovery key)' : '';
@@ -1425,11 +1448,12 @@
       : t.restored ? `<span class="edited" title="put back ${esc(stamp(t.restored))}, with the recovery key${seeThem}"${versions}>(restored)</span>` : '';
     const answers = t.reply ? `<a class="replyto" href="#m-${esc(t.reply.id)}" data-reveal="${esc(t.reply.id)}" title="Go to the message this replies to">`
       + `↩ ${icon(t.reply.sender, human[t.reply.sender] !== false)}<b>${esc(shown(t.reply.sender))}</b> ${esc(t.reply.snippet || '(a message)')}</a>` : '';
-    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${cont ? '' : edited}${how(t)}${signed}${replyBtn}${cont ? '' : editBtn + delBtn}</div>`
-      + (cont && (edited || editBtn || delBtn) ? `<span class="acts">${edited}${editBtn}${delBtn}</span>` : '')
+    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${cont ? '' : edited}${how(t)}${signed}${replyBtn}${cont ? '' : reactBtn + moreBtn}</div>`
       + answers
       + `<a class="permalink mini" href="#m-${esc(t.id)}" title="${esc(stamp(t.created_at))} · this message's link: click to copy">#</a>`
       + (voiceOn && viewer && !t.deleted ? speakButton(t, true) : '')
+      // After ▶: on a touch screen both float right, ▶ at the edge where it always is, 🙂 ⋯ beside it.
+      + (cont && (edited || reactBtn || moreBtn) ? `<span class="acts">${edited}${reactBtn}${moreBtn}</span>` : '')
       + (t.deleted ? `<div class="body gone"${versions}${seeThem ? ` title="${esc(seeThem.slice(2))}"` : ''}>message deleted by ${esc(shown(t.deleted.by))} · ${esc(stamp(t.deleted.at))}</div>`
                    : `<div class="body">${t.html}</div>`);
     if (t.deleted) el.classList.add('deleted');
@@ -1499,9 +1523,7 @@
       return `<button type="button" class="chip${mine ? ' mine' : ''}" data-emoji="${esc(emoji)}" title="${esc(names)}"`
         + `${viewer ? '' : ' disabled'}>${esc(emoji)} <span>${who.length}</span></button>`;
     }).join('');
-    const add = viewer && !el.classList.contains('deleted')
-      ? '<button type="button" class="addreact" title="React" aria-label="React">🙂</button>' : '';
-    row.innerHTML = chips + add;
+    row.innerHTML = chips;
     row.classList.toggle('some', !!chips);
   }
   async function react(el, emoji) {
@@ -1522,7 +1544,7 @@
   document.addEventListener('click', e => {
     const chip = e.target.closest('.reacts .chip[data-emoji]');
     if (chip) { react(chip.closest('.turn'), chip.dataset.emoji); return; }
-    const add = e.target.closest('.reacts .addreact');
+    const add = e.target.closest('.turn .addreact');
     if (add) {
       const box = add.getBoundingClientRect();
       picker._for = add.closest('.turn');
@@ -2048,7 +2070,8 @@
     const at = new Date(v.created_at).getTime() / 1000;
     // From the words that set it going, when they're just before it.
     const asked = container._askedAt && container._askedAt <= at && at - container._askedAt < 6 * 3600 ? container._askedAt : at;
-    Object.assign(b, { _agent: agent, _start: asked, _end: at, _out: 0, _ctx: 0, _seen: new Set(), _how: {}, _ended: false, _final: '' });
+    Object.assign(b, { _agent: agent, _start: asked, _end: at, _out: 0, _ctx: 0, _read: 0, _cached: 0, _calls: 0, _seen: new Set(),
+                       _how: {}, _ended: false, _final: '' });
     b.innerHTML = '<button type="button" class="ahead"></button><div class="abody"></div>';
     container.appendChild(b);
     return b;
@@ -2057,7 +2080,9 @@
     b._end = Math.max(b._end, new Date(v.created_at).getTime() / 1000);
     if (v.out != null) {
       const usage = v.out + ':' + v.ctx;  // one response stored as several rows carries one usage
-      if (!b._seen.has(usage)) { b._seen.add(usage); b._out += v.out; }
+      // Each call to the model reads its whole context again (mostly from the cache): what a turn spent is
+      // all of those reads, and all it wrote -- not just how full its context ended.
+      if (!b._seen.has(usage)) { b._seen.add(usage); b._out += v.out; b._read += v.ctx || 0; b._cached += v.cached || 0; b._calls++; }
       if (v.ctx) b._ctx = v.ctx;
     }
     if (v.model) b._how.model = v.model;
@@ -2066,10 +2091,14 @@
   function drawBlockHead(b) {
     const took = Math.max(0, Math.round(b._end - b._start));
     const how = [b._how.model, b._how.effort].filter(Boolean).join(' · ');
-    const tokens = b._out || b._ctx ? `${kTokens(b._out)} out · ${kTokens(b._ctx)} context` : '';
+    const tokens = b._out || b._ctx ? `${kTokens(b._out)} out · ${kTokens(b._read)} read · ${kTokens(b._ctx)} context` : '';
+    const spent = tokens ? `This turn: ${b._calls} call${b._calls === 1 ? '' : 's'} to the model. Wrote ${b._out.toLocaleString()} tokens; `
+      + `read ${b._read.toLocaleString()} in all (${b._cached.toLocaleString()} from the cache, ${(b._read - b._cached).toLocaleString()} new), `
+      + `each call reading its whole context again. Its context at the end: ${b._ctx.toLocaleString()}.` : '';
     b.querySelector('.ahead').innerHTML = `<span class="caret">${b.classList.contains('folded') ? '▸' : '▾'}</span>`
       + `${icon(b._agent, false)}<b>${esc(b._agent)}</b>`
-      + [took ? elapsed(Date.now() / 1000 - took) : '', how, tokens].filter(Boolean).map(x => ' · ' + esc(x)).join('')
+      + [took ? elapsed(Date.now() / 1000 - took) : '', how].filter(Boolean).map(x => ' · ' + esc(x)).join('')
+      + (tokens ? ` · <span class="spent" title="${esc(spent)}">${esc(tokens)}</span>` : '')
       + (!b._ended && isWorking(b) ? ' · working…' : '')
       + `<span class="preview">${esc(b._final)}</span>`;
     // Its answer, read aloud without unfolding it (shown only while folded).
@@ -2427,6 +2456,7 @@
   // Bring a message into view, reaching back a few pages if need be.
   async function reveal(id) {
     if (!id) return false;
+    stopSettling();  // taken to a message: the newest no longer pulls
     for (let i = 0; i < 12; i++) {
       const el = document.getElementById('m-' + id);
       if (el) {
@@ -2470,6 +2500,7 @@
 
   async function open(slug, push) {
     if (slug === current && document.getElementById('turns')) return;
+    const opening = Date.now();
     saveDraft();  // what's typed here waits here, with the reply it's answering
     replyTo = null; replying.hidden = true;
     stash();
@@ -2494,6 +2525,7 @@
       inner.replaceChildren(saved.nodes);
       ({ lastId, firstId, prev } = saved);
       showMoodName(saved.headMood);
+      toNewest();  // before anything is painted: never its top while the poll is out
       await poll(false);
     } else {
       lastId = null;
@@ -2501,18 +2533,35 @@
       await poll(true);
     }
     // A Mood opens at its newest, always: what's for you is marked, and the @
-    // arrows (or a notification, a search hit, a link) take you to it.
-    toNewest();
+    // arrows (or a notification, a search hit, a link) take you to it. Unless
+    // they've already scrolled it themselves while it was loading.
+    if (touchedAt < opening) toNewest();
     renderToBottom();
   }
-  // To the newest, and stay there while images above it load and push it down.
+  // To the newest, and stay there while what's above it settles -- pictures
+  // loading, link cards arriving, a poll's new turns -- for SETTLE_MS, or until
+  // they scroll themselves (wheel, touch, a key that scrolls).
+  const SETTLE_MS = 4000;
+  let settling = null;
+  let touchedAt = 0;  // when they last scrolled the Mood themselves
+  const touched = () => { touchedAt = Date.now(); };
+  main.addEventListener('wheel', touched, { passive: true });
+  main.addEventListener('pointerdown', touched, { passive: true });
+  addEventListener('keydown', e => { if (/^(PageUp|ArrowUp|Home)$/.test(e.key)) touched(); });
   function toNewest() {
     main.scrollTop = main.scrollHeight;
-    const until = Date.now() + 4000;
-    document.querySelectorAll('#turns img').forEach(img => {
-      if (!img.complete) img.addEventListener('load', () => { if (Date.now() < until) main.scrollTop = main.scrollHeight; }, { once: true });
-    });
+    if (settling) settling.abort();
+    const done = settling = new AbortController();
+    const watch = new ResizeObserver(() => { main.scrollTop = main.scrollHeight; });
+    watch.observe(inner);
+    done.signal.addEventListener('abort', () => watch.disconnect());
+    const stop = () => { done.abort(); if (settling === done) settling = null; };
+    main.addEventListener('wheel', stop, { passive: true, signal: done.signal });
+    main.addEventListener('pointerdown', stop, { passive: true, signal: done.signal });  // a touch, a click, the scrollbar
+    addEventListener('keydown', e => { if (/^(PageUp|ArrowUp|Home)$/.test(e.key)) stop(); }, { signal: done.signal });
+    setTimeout(stop, SETTLE_MS);
   }
+  function stopSettling() { if (settling) { settling.abort(); settling = null; } }
 
   let firstId = null;      // the oldest item shown, for ?before=
   async function loadEarlier() {
@@ -2626,34 +2675,66 @@
   function applyChange(c) {
     const old = document.getElementById('m-' + c.id);
     if (!old || !c.turn) return;
-    const keep = prev; prev = null;
+    // Drawn as it was drawn: a follow-on message stays one, its "(edited)" and 🙂 ⋯ where a follow-on keeps them.
+    const keep = prev;
+    prev = old.classList.contains('cont') ? { sender: c.turn.sender, at: new Date(c.turn.created_at).getTime() } : null;
     const fresh = turnEl(c.turn, false);
     prev = keep;
-    if (old.classList.contains('cont')) fresh.classList.add('cont');
     old.replaceWith(fresh);
   }
-  document.addEventListener('click', async e => {
-    const edit = e.target.closest('.turn .editbtn[data-edit]');
-    const del = e.target.closest('.turn .delbtn[data-delete]');
-    if (!edit && !del) return;
-    const el = (edit || del).closest('.turn');
-    const id = (edit || del).dataset.edit || (del && del.dataset.delete);
-    const call = (what, body) => fetch(`/api/moods/${encodeURIComponent(current)}/messages/${encodeURIComponent(id)}/${what}/`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify(body || {}) })
-      .then(async r => { const b = await r.json().catch(() => ({})); if (!r.ok) throw new Error(b.error || r.status); return b; });
-    const told = done => {
-      const reached = done.reached || [];
-      const note = done.kind === 'deleted' ? 'Deleted: its words are out of the record' : 'Edited';
-      showNote(reached.length
-        ? `${note}. It had already been carried to ${reached.map(shown).join(', ')} in a wake: the record's copies are scrubbed, but that session saw it.`
-        : `${note}.`, 9000);
-    };
-    if (del) {
-      if (!confirm('Delete this message for everyone? Its words are taken out of the record; a line says it was deleted.')) return;
-      try { told(await call('delete')); await poll(false); } catch (err) { showError('delete: ' + err.message); }
+  // ⋯ on a message: a small menu, Edit (yours, within a day) and Delete (yours within a
+  // week, or anyone's as an admin), as services/retract.py allows.
+  const msgMenu = document.createElement('div');
+  msgMenu.id = 'msgMenu';
+  msgMenu.hidden = true;
+  msgMenu.setAttribute('role', 'menu');
+  document.body.appendChild(msgMenu);
+  function closeMsgMenu() { msgMenu.hidden = true; msgMenu._for = null; }
+  document.addEventListener('click', e => {
+    const more = e.target.closest('.turn .morebtn[data-more]');
+    if (more) {
+      if (msgMenu._for === more) { closeMsgMenu(); return; }
+      msgMenu.innerHTML = (more.dataset.edit ? '<button type="button" role="menuitem" data-act="edit">✎ Edit</button>' : '')
+        + (more.dataset.edit && more.dataset.delete ? '<hr>' : '')
+        + (more.dataset.delete ? '<button type="button" role="menuitem" data-act="delete" class="danger">🗑 Delete…</button>' : '');
+      msgMenu._for = more;
+      msgMenu.hidden = false;
+      const box = more.getBoundingClientRect();
+      msgMenu.style.left = Math.max(8, Math.min(box.right - msgMenu.offsetWidth, innerWidth - msgMenu.offsetWidth - 8)) + 'px';
+      const below = box.bottom + 4;
+      msgMenu.style.top = (below + msgMenu.offsetHeight > innerHeight - 8 ? Math.max(8, box.top - msgMenu.offsetHeight - 4) : below) + 'px';
+      msgMenu.querySelector('button').focus();
       return;
     }
-    // ✎: the message's words in a box where they were; Save or Cancel (Esc).
+    const act = e.target.closest('#msgMenu button[data-act]');
+    const from = msgMenu._for;
+    if (!msgMenu.hidden && !act) { closeMsgMenu(); return; }
+    if (!act || !from) return;
+    closeMsgMenu();
+    const el = from.closest('.turn');
+    if (act.dataset.act === 'edit') editMessage(el, from.dataset.more);
+    else deleteMessage(from.dataset.more);
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !msgMenu.hidden) closeMsgMenu(); });
+  main.addEventListener('scroll', () => { if (!msgMenu.hidden) closeMsgMenu(); }, { passive: true });
+  function changeMessage(id, what, body) {
+    return fetch(`/api/moods/${encodeURIComponent(current)}/messages/${encodeURIComponent(id)}/${what}/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify(body || {}) })
+      .then(async r => { const b = await r.json().catch(() => ({})); if (!r.ok) throw new Error(b.error || r.status); return b; });
+  }
+  function toldChanged(done) {
+    const reached = done.reached || [];
+    const note = done.kind === 'deleted' ? 'Deleted: its words are out of the record' : 'Edited';
+    showNote(reached.length
+      ? `${note}. It had already been carried to ${reached.map(shown).join(', ')} in a wake: the record's copies are scrubbed, but that session saw it.`
+      : `${note}.`, 9000);
+  }
+  async function deleteMessage(id) {
+    if (!confirm('Delete this message for everyone? Its words are taken out of the record; a line says it was deleted.')) return;
+    try { toldChanged(await changeMessage(id, 'delete')); await poll(false); } catch (err) { showError('delete: ' + err.message); }
+  }
+  // Edit: the message's words in a box where they were; Save or Cancel (Esc).
+  function editMessage(el, id) {
     const body = el.querySelector('.body');
     if (!body || body.querySelector('textarea')) return;
     const before = body.innerHTML;
@@ -2667,9 +2748,9 @@
     box.addEventListener('keydown', k => { if (k.key === 'Escape') { k.preventDefault(); cancel(); } });
     body.querySelector('.editsave').addEventListener('click', async () => {
       if (box.value.trim() === (el._text || '').trim()) { cancel(); return; }
-      try { told(await call('edit', { text: box.value })); await poll(false); } catch (err) { showError('edit: ' + err.message); }
+      try { toldChanged(await changeMessage(id, 'edit', { text: box.value })); await poll(false); } catch (err) { showError('edit: ' + err.message); }
     });
-  });
+  }
   function renderToBottom() {
     const far = main.scrollHeight - main.scrollTop - main.clientHeight > 400;
     if (!far) newBelow = 0;
@@ -2735,7 +2816,20 @@
       p.title = a.title;
     });
   }
+  // The payload's names for an agent's settings, and the keys its menus carry (data-knob).
+  const SHOWN_KNOBS = { listening: 'listening', model: 'model', effort: 'mention_effort', ultracode: 'ultracode',
+                        reads: 'catch_up_tokens', discretion: 'discretion', verbosity: 'verbosity' };
   function renderAgents(agents) {
+    // What someone else changed since the last look (not on first drawing a Mood: nothing to compare).
+    const changed = [];
+    for (const [name, a] of Object.entries(agents)) {
+      const before = agentsNow[name];
+      if (!before) continue;
+      for (const [field, knob] of Object.entries(SHOWN_KNOBS)) {
+        const who = ((a.set_by || {})[knob] || {}).by;
+        if (JSON.stringify(before[field]) !== JSON.stringify(a[field]) && who !== viewer) changed.push([name, knob]);
+      }
+    }
     agentsNow = agents;
     const box = document.getElementById('hush');
     // Redraw the menus only when a setting changed: never under someone's open menu.
@@ -2744,6 +2838,21 @@
     if (box && (key !== agentsShown || !box.childElementCount)) {
       agentsShown = key;
       box.innerHTML = agentRows(agents);
+    }
+    if (box) {
+      // Each setting says who set it, and when, on hover; one someone else just changed glows a moment.
+      box.querySelectorAll('[data-agent][data-knob]').forEach(el => {
+        const set = ((agents[el.dataset.agent] || {}).set_by || {})[el.dataset.knob];
+        const base = el.dataset.title || (el.dataset.title = el.title || el.closest('label')?.title || '');
+        const said = set ? ` · set by ${shown(set.by)}, ${ago(set.at)}` : '';
+        (el.type === 'checkbox' ? el.closest('label') : el).title = base + said;
+      });
+      for (const [name, knob] of changed) {
+        const el = box.querySelector(`[data-agent="${CSS.escape(name)}"][data-knob="${knob}"]`);
+        // Read-only rows are words, not menus: the agent's whole line glows instead.
+        const mark = el ? (el.type === 'checkbox' ? el.closest('label') : el) : box.querySelector(`.agent[data-who="${CSS.escape(name)}"]`);
+        if (mark) { mark.classList.remove('justset'); void mark.offsetWidth; mark.classList.add('justset'); }
+      }
     }
     refreshPies();
   }
@@ -2938,6 +3047,9 @@
     if (w) return { kind: 'wiki', start: upto.length - w[1].length, prefix: w[1] };
     let m = upto.match(/(^|[^\w@\/.])@([A-Za-z][\w.-]*)?$/);
     if (m) return { kind: 'mention', start: upto.length - (m[2] || '').length, prefix: (m[2] || '').toLowerCase() };
+    // #mood, as mood_view._HASH links it: not after a word, an & or a / (a URL's #anchor, &#39;).
+    m = upto.match(/(^|[^\w&#\/;=])#([a-z0-9][a-z0-9-]{0,79})?$/i);
+    if (m) return { kind: 'mood', start: upto.length - (m[2] || '').length, prefix: (m[2] || '').toLowerCase() };
     // `:` starting a word -- so 10:30 doesn't open it.
     m = upto.match(/(^|[\s(]):([a-z0-9_+-]{0,30})$/);
     if (m) return { kind: 'emoji', start: upto.length - m[2].length - 1, prefix: m[2] };
@@ -2976,7 +3088,17 @@
       });
       return;
     }
-    if (at.kind === 'emoji') {
+    if (at.kind === 'mood') {
+      // By its name (the slug a link takes) or the words of its title; the most lately active first, as the list has them.
+      const p = at.prefix;
+      const byTitle = m => (m.title || '').toLowerCase().split(/[^a-z0-9]+/).some(w => w && w.startsWith(p));
+      const open = moods.filter(m => !m.archived), shut = moods.filter(m => m.archived);
+      const hits = [...open, ...shut].filter(m => m.slug.startsWith(p))
+        .concat(p ? [...open, ...shut].filter(m => !m.slug.startsWith(p) && (byTitle(m) || m.slug.includes(p))) : [])
+        .slice(0, 8);
+      choices = hits.map(m => ({ insert: m.slug + ' ', html: `<span class="emo">#</span>${esc(m.slug)}`
+        + `<small>${m.title && m.title !== m.slug ? esc(m.title) : ''}${m.archived ? (m.title && m.title !== m.slug ? ' · ' : '') + 'archived' : ''}</small>` }));
+    } else if (at.kind === 'emoji') {
       const hits = EMOJI.filter(([name]) => name.startsWith(at.prefix))
         .concat(at.prefix ? EMOJI.filter(([name]) => !name.startsWith(at.prefix) && name.includes(at.prefix)) : [])
         .slice(0, 8);
@@ -3088,6 +3210,8 @@
     composer.querySelectorAll('.err, .note').forEach(el => el.remove());
     composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(message)}</span>`);
   }
+  // What's said next makes an old error old news.
+  sayBox.addEventListener('input', () => { const err = composer.querySelector('.err'); if (err) err.remove(); });
   function showNote(message, ms) {  // a word under the box, gone after a while
     composer.querySelectorAll('.err, .note').forEach(el => el.remove());
     composer.insertAdjacentHTML('beforeend', `<span class="note">${esc(message)}</span>`);
@@ -3529,6 +3653,7 @@
   const userMenu = document.getElementById('userMenu');
   if (viewer) {
     document.body.classList.add('writer');
+    try { localStorage.setItem('moods.signedInAs', viewer); } catch (e) {}
     userBtn.textContent = shown(viewer) + ' ▾';
     auth.innerHTML = keyHolder ? `signed in as <b>${esc(shown(viewer))}</b>`
       : `signed in as <b>${esc(shown(viewer))}</b> with PickiPedia: you can chat and mention people. To wake agents `
@@ -3541,6 +3666,14 @@
       location.reload();
     });
   } else {
+    // In place of the box: you're reading, not signed in on this browser -- and if it was, as whom, and how back in.
+    const was = localStorage.getItem('moods.signedInAs');
+    const signedOut = document.getElementById('signedOut');
+    signedOut.innerHTML = (was ? `<b>This browser isn't signed in as ${esc(shown(was))} any more</b>, so there's no box to write in. `
+                               : `<b>Reading only:</b> this browser isn't signed in. `)
+      + (wikiSignin ? '<a href="/moods/auth/wiki/">Sign in with PickiPedia</a>, or open' : 'Open')
+      + ' the menu at the top right for an SSH-key sign-in or a sign-in link. (A phone\'s home-screen app and its browser sign in separately.)';
+    signedOut.hidden = false;
     userBtn.textContent = 'read-only ▾';
     auth.innerHTML = (wikiSignin ? '<a class="wikiin" href="/moods/auth/wiki/">Sign in with PickiPedia</a> to chat.<br>' : '')
       + 'To wake agents and run Moods, run <code>magenta.sh login</code> on a machine with your SSH key.'
@@ -3573,11 +3706,14 @@
       + (devicesAll ? `<a href="#" data-devices="mine">mine</a> · <b>everyone</b>` : `<b>mine</b> · <a href="#" data-devices="all">everyone</a>`)
       + `</div>` : '';
     if (devicesAll) {
-      const n = d.people.reduce((sum, p) => sum + p.devices.length, 0);
+      const n = d.people.reduce((sum, p) => sum + p.devices.filter(v => !v.signed_out_at).length, 0);
       list.innerHTML = which + `<div class="meta">${n} device${n === 1 ? '' : 's'} signed in. To sign someone out: `
         + `<code>magenta.sh kick &lt;name&gt; --all</code>, or one device: click its id to copy the command.</div>` + d.people.map(p =>
           `<div class="devperson"><b>${icon(p.name, true)}${esc(p.name)}</b></div>` + p.devices.map(v => {
             const short = v.id.replace(/-/g, '').slice(0, 8);
+            // Signed out lately (by itself, its owner, or a kick): when, so a "why was I signed out?" has an answer.
+            if (v.signed_out_at) return `<div class="dev revoked"><b>${esc(v.label)}</b> · <span class="tier">${v.tier === 'wiki' ? 'WIKI' : 'KEY'}</span>`
+              + ` · signed out ${esc(ago(v.signed_out_at))}<div class="meta">signed in ${esc(ago(v.signed_in_at))} · last used ${esc(ago(v.last_used_at))}</div></div>`;
             return `<div class="dev"><b>${esc(v.label)}</b> · <span class="tier">${v.tier === 'wiki' ? 'WIKI' : 'KEY'}</span>`
             + (v.this ? ' · this device' : '')
             + (p.name === d.name ? ` <button type="button" data-revoke="${esc(v.id)}" data-this="${v.this ? 1 : ''}">revoke</button>`
@@ -3590,7 +3726,7 @@
     list.innerHTML = which + `<div class="meta">A device unused for ${d.idle_days} days times out; bring it back with `
       + `<code>magenta.sh renew &lt;its name&gt;</code>.</div>` + d.devices.map(v => {
         const state = v.state === 'live' ? (v.this ? 'this device' : 'signed in')
-          : v.state === 'timed out' ? 'timed out' : 'revoked';
+          : v.state === 'timed out' ? 'timed out' : 'signed out' + (v.signed_out_at ? ' ' + ago(v.signed_out_at) : '');
         const out = v.times_out_at ? ` · times out ${esc(new Date(v.times_out_at).toLocaleDateString())}` : '';
         return `<div class="dev ${v.state === 'revoked' ? 'revoked' : v.state === 'timed out' ? 'timed' : ''}">`
           + `<b>${esc(v.label)}</b> · ${esc(state)}`

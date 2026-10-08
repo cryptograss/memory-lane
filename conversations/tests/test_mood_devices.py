@@ -380,6 +380,22 @@ class WikiFeedTest(TestCase):
         self.assertEqual(body['turns'], [])  # lines, not words: nothing to answer
         self.assertEqual(self.client.get('/api/moods/').json()['moods'][0]['message_count'], 0)
 
+    def test_a_moods_todo_list_is_shown_in_that_mood_only(self):
+        from conversations.models import MoodAlias
+        from conversations.services import wiki_feed
+        jam = Mood.objects.create(slug='jam', title='jam')
+        MoodAlias.objects.create(slug='old-jam', mood=jam)
+        http = self.wiki(1)
+        found = http.get.return_value.json()['query']['recentchanges']
+        found += [{'type': 'edit', 'title': title, 'rcid': n, 'revid': 900 + n, 'user': 'Magent', 'oldlen': 1,
+                   'newlen': 2, 'timestamp': '2026-10-03T23:00:00Z', 'comment': ''}
+                  for n, title in ((2, 'Cryptograss:Moods/jam/todo'), (3, 'Cryptograss:Moods/old-jam/todo'),
+                                   (4, 'Cryptograss:Moods/nobody-here/todo'), (5, 'Cryptograss:Moods/jam'))]
+        wiki_feed.refresh(http)
+        lines = lambda slug: [e['title'] for e in self.client.get(f'/api/moods/{slug}/turns/').json()['events']]
+        self.assertEqual(sorted(lines('general')), ['Cryptograss:Moods/jam', 'Page 1'])  # not the to-do lists
+        self.assertEqual(sorted(lines('jam')), ['Cryptograss:Moods/jam/todo', 'Cryptograss:Moods/old-jam/todo'])
+
     def test_at_most_once_a_minute(self):
         from conversations.services import wiki_feed
         http = self.wiki(1)
@@ -428,8 +444,13 @@ class EveryonesDevicesTest(TestCase):
         self.assertTrue(laptop.get('/api/auth/devices/').json()['admin'])
         people = {p['name']: p['devices'] for p in laptop.get('/api/auth/devices/?all=1').json()['people']}
         self.assertEqual([(d['label'], d['tier'], d['this']) for d in people['justin']], [('laptop', 'key', True)])
-        self.assertEqual([(d['label'], d['tier']) for d in people['skyler']],
-                         [('PickiPedia sign-in (SkymanJenkins, Android)', 'wiki')])  # the revoked one isn't listed
+        self.assertEqual([(d['label'], d['tier'], bool(d['signed_out_at'])) for d in people['skyler']],
+                         [('PickiPedia sign-in (SkymanJenkins, Android)', 'wiki', False),
+                          ('old laptop', 'key', True)])  # signed out lately: listed, with when
+        long_gone = self.client_for(self.skyler, 'older laptop')[1]
+        Device.objects.filter(pk=long_gone.pk).update(revoked_at=timezone.now() - timedelta(days=30))
+        people = {p['name']: p['devices'] for p in laptop.get('/api/auth/devices/?all=1').json()['people']}
+        self.assertNotIn('older laptop', [d['label'] for d in people['skyler']])  # long ago: not
 
         # Seeing isn't signing out: someone else's device is still revoked only by a signed kick.
         revoke = laptop.post(f'/api/auth/devices/{sky_phone.pk}/revoke/')

@@ -198,6 +198,26 @@ def resolve(mood, agent, now=None, rows=None):
     return resolved
 
 
+def set_by(mood, agent, keys, rows=None):
+    """{key: {'by', 'at'}}: who set each of `keys` as it stands for `agent` in `mood`, and when.
+    A key still at its default, or set before anyone was recorded, is left out."""
+    from conversations.models import Setting
+    if rows is None:
+        rows = Setting.objects.filter(key__in=list(keys))
+    current = latest(rows)
+    mood_id = getattr(mood, 'slug', mood)
+    agent_id = getattr(agent, 'pk', agent)
+    out = {}
+    for key in keys:
+        for slot in ((mood_id, agent_id), (mood_id, None), (None, agent_id), (None, None)):
+            row = current.get((*slot, key))
+            if row is not None:
+                if row.set_by_id:
+                    out[key] = {'by': row.set_by_id, 'at': row.created_at.isoformat()}
+                break
+    return out
+
+
 def mood_flagged(key):
     """The Moods where `key` (a MOOD_KEYS flag) is on now: the newest row for each says so."""
     from conversations.models import Setting
