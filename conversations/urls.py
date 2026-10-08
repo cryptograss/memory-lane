@@ -29,6 +29,7 @@ urlpatterns = [
     path('api/moods/<slug:slug>/say/', views_auth.api_say, name='api_mood_say'),
     path('api/moods/<slug:slug>/messages/<str:message_id>/edit/', views_auth.api_message_edit, name='api_message_edit'),
     path('api/moods/<slug:slug>/messages/<str:message_id>/delete/', views_auth.api_message_delete, name='api_message_delete'),
+    path('api/moods/<slug:slug>/messages/<str:message_id>/react/', views_auth.api_react, name='api_message_react'),
     path('api/clips/', views_auth.api_clips, name='api_clips'),
     path('api/moods/<slug:slug>/rename/', views_auth.api_rename, name='api_mood_rename'),
     path('api/moods/', views_moods.api_moods, name='api_moods'),

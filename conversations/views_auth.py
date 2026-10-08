@@ -283,6 +283,32 @@ def _retract(request, slug, message_id, edit):
     return JsonResponse({'id': str(message.id), 'kind': 'edited' if edit else 'deleted', **done})
 
 
+@require_POST
+def api_react(request, slug, message_id):
+    """{"emoji"}: react to a message, or take the reaction back (services/reactions.py). Any sign-in.
+    Answers the message's reactions as they now stand: {"reactions": {emoji: [who]}, "on"}."""
+    from .services import reactions
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = mood_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to react'}, status=401)
+    message = Message.objects.filter(id=_uuid_or_none(message_id), mood=Mood.by_slug(slug)).first()
+    if message is None:
+        return JsonResponse({'error': 'no such message in this Mood'}, status=404)
+    try:
+        emoji = str(json.loads(request.body).get('emoji') or '').strip()
+    except (ValueError, AttributeError):
+        return JsonResponse({'error': 'expected {"emoji": ...}'}, status=400)
+    if not reactions.valid(emoji):
+        return JsonResponse({'error': 'an emoji, please'}, status=400)
+    if not _under_limit(f'react:{device.pk}', 40):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    on = reactions.toggle(message, device.entity_id, emoji)
+    return JsonResponse({'on': on, 'reactions': reactions.in_mood(message.mood, [message.id]).get(str(message.id), {})})
+
+
 @require_GET
 def api_clips(request):
     """The saved clips, by name: for the composer's /clips suggestions."""

@@ -432,6 +432,22 @@
   .turn .card .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; }
   .turn .card .desc { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .turn .card small { color: var(--muted); font-size: 11.5px; }
+  /* Reactions (services/reactions.py): chips under a message; 🙂 to add one, on hover. */
+  .turn .reacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; min-height: 0; }
+  .turn .reacts:not(.some) { margin-top: 0; }
+  .turn .reacts .chip { font: inherit; font-size: 13px; line-height: 1.2; padding: 1px 7px; border: 1px solid var(--line);
+                        border-radius: 12px; background: var(--panel); color: var(--ink); cursor: pointer; }
+  .turn .reacts .chip span { font-size: 11.5px; color: var(--muted); }
+  .turn .reacts .chip.mine { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+  .turn .reacts .addreact { font-size: 13px; padding: 0 4px; border: 0; background: none; cursor: pointer; opacity: 0; }
+  .turn:hover .reacts .addreact, .turn .reacts .addreact:focus { opacity: .7; }
+  .turn .reacts:not(.some) .addreact { position: absolute; right: 2px; bottom: 4px; }
+  @media (pointer: coarse) { .turn .reacts .addreact { opacity: .45; } }
+  #reactPicker { position: fixed; z-index: 50; display: flex; gap: 2px; padding: 4px; background: var(--panel);
+                 border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+  #reactPicker[hidden] { display: none; }
+  #reactPicker button { font-size: 18px; border: 0; background: none; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+  #reactPicker button:hover { background: var(--code); }
   /* Context taken from another Mood: one line, the context beneath on demand. */
   .event.handoff summary { cursor: pointer; list-style: none; }
   .event.handoff .body { text-align: left; font-size: 13.5px; color: var(--ink); background: var(--code); border-radius: 6px;
@@ -1402,6 +1418,8 @@
     markTurn(el, t.mentions || []);
     el.querySelectorAll('a.yarn[data-yarn]').forEach(decorateYarn);
     if (el.querySelector('.body a[href^="http"]:not([class])')) cardsWatch.observe(el);  // a preview, as it nears the screen
+    el.insertAdjacentHTML('beforeend', '<div class="reacts"></div>');
+    renderReacts(el, reactionsNow[t.id] || {});
     if (wikiUpload && viewer && t.sender === viewer) offerUpload(el, t);  // theirs to publish
     return el;
   }
@@ -1429,6 +1447,59 @@
       + `<span class="txt"><b>${esc(c.title)}</b>${c.description ? `<span class="desc">${esc(c.description)}</span>` : ''}`
       + `<small>${esc(c.site)}</small></span></a>`).join('') + '</div>');
   }
+  // --- reactions (services/reactions.py): chips under a message, who on hover;
+  // pressing one adds yours or takes it back. Each look at the Mood brings them all.
+  let reactionsNow = {};
+  const PALETTE = ['👍', '❤️', '😂', '🎉', '🙏', '👀', '🔥', '💯', '🪕', '🎻'];
+  function renderReacts(el, map) {
+    const row = el.querySelector(':scope > .reacts');
+    if (!row) return;
+    const key = JSON.stringify(map);
+    if (row.dataset.key === key) return;
+    row.dataset.key = key;
+    const chips = Object.entries(map).map(([emoji, who]) => {
+      const mine = viewer && who.includes(viewer);
+      const names = who.map(n => n === viewer ? 'you' : shown(n)).join(', ');
+      return `<button type="button" class="chip${mine ? ' mine' : ''}" data-emoji="${esc(emoji)}" title="${esc(names)}"`
+        + `${viewer ? '' : ' disabled'}>${esc(emoji)} <span>${who.length}</span></button>`;
+    }).join('');
+    const add = viewer && !el.classList.contains('deleted')
+      ? '<button type="button" class="addreact" title="React" aria-label="React">🙂</button>' : '';
+    row.innerHTML = chips + add;
+    row.classList.toggle('some', !!chips);
+  }
+  async function react(el, emoji) {
+    try {
+      const r = await fetch(`/api/moods/${encodeURIComponent(current)}/messages/${encodeURIComponent(el.dataset.id)}/react/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify({ emoji }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || r.status);
+      reactionsNow[el.dataset.id] = body.reactions;
+      renderReacts(el, body.reactions);
+    } catch (e) { showError('react: ' + e.message); }
+  }
+  const picker = document.createElement('div');
+  picker.id = 'reactPicker';
+  picker.hidden = true;
+  picker.innerHTML = PALETTE.map(e => `<button type="button" data-emoji="${e}">${e}</button>`).join('');
+  document.body.appendChild(picker);
+  document.addEventListener('click', e => {
+    const chip = e.target.closest('.reacts .chip[data-emoji]');
+    if (chip) { react(chip.closest('.turn'), chip.dataset.emoji); return; }
+    const add = e.target.closest('.reacts .addreact');
+    if (add) {
+      const box = add.getBoundingClientRect();
+      picker._for = add.closest('.turn');
+      picker.hidden = false;
+      picker.style.left = Math.max(8, Math.min(box.left, innerWidth - picker.offsetWidth - 8)) + 'px';
+      picker.style.top = Math.max(8, box.top - picker.offsetHeight - 6) + 'px';
+      return;
+    }
+    const pick = e.target.closest('#reactPicker button[data-emoji]');
+    if (pick && picker._for) react(picker._for, pick.dataset.emoji);
+    picker.hidden = true;
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') picker.hidden = true; });
 
   // --- tool steps: grouped into one collapsed line per run of work ----------
   function workEl(s, container) {
@@ -2475,6 +2546,8 @@
     if (!turnsEl) return;
     if (data.now) changesAt[current] = data.now;
     (data.changes || []).forEach(applyChange);
+    reactionsNow = data.reactions || {};
+    turnsEl.querySelectorAll('.turn[data-id]').forEach(el => renderReacts(el, reactionsNow[el.dataset.id] || {}));
     const items = itemsOf(data);
     if (full) {
       firstId = items.length ? items[0].v.id : null;
