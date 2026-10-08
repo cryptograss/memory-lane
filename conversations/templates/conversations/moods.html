@@ -2048,7 +2048,8 @@
     const at = new Date(v.created_at).getTime() / 1000;
     // From the words that set it going, when they're just before it.
     const asked = container._askedAt && container._askedAt <= at && at - container._askedAt < 6 * 3600 ? container._askedAt : at;
-    Object.assign(b, { _agent: agent, _start: asked, _end: at, _out: 0, _ctx: 0, _seen: new Set(), _how: {}, _ended: false, _final: '' });
+    Object.assign(b, { _agent: agent, _start: asked, _end: at, _out: 0, _ctx: 0, _read: 0, _cached: 0, _calls: 0, _seen: new Set(),
+                       _how: {}, _ended: false, _final: '' });
     b.innerHTML = '<button type="button" class="ahead"></button><div class="abody"></div>';
     container.appendChild(b);
     return b;
@@ -2057,7 +2058,9 @@
     b._end = Math.max(b._end, new Date(v.created_at).getTime() / 1000);
     if (v.out != null) {
       const usage = v.out + ':' + v.ctx;  // one response stored as several rows carries one usage
-      if (!b._seen.has(usage)) { b._seen.add(usage); b._out += v.out; }
+      // Each call to the model reads its whole context again (mostly from the cache): what a turn spent is
+      // all of those reads, and all it wrote -- not just how full its context ended.
+      if (!b._seen.has(usage)) { b._seen.add(usage); b._out += v.out; b._read += v.ctx || 0; b._cached += v.cached || 0; b._calls++; }
       if (v.ctx) b._ctx = v.ctx;
     }
     if (v.model) b._how.model = v.model;
@@ -2066,10 +2069,14 @@
   function drawBlockHead(b) {
     const took = Math.max(0, Math.round(b._end - b._start));
     const how = [b._how.model, b._how.effort].filter(Boolean).join(' · ');
-    const tokens = b._out || b._ctx ? `${kTokens(b._out)} out · ${kTokens(b._ctx)} context` : '';
+    const tokens = b._out || b._ctx ? `${kTokens(b._out)} out · ${kTokens(b._read)} read · ${kTokens(b._ctx)} context` : '';
+    const spent = tokens ? `This turn: ${b._calls} call${b._calls === 1 ? '' : 's'} to the model. Wrote ${b._out.toLocaleString()} tokens; `
+      + `read ${b._read.toLocaleString()} in all (${b._cached.toLocaleString()} from the cache, ${(b._read - b._cached).toLocaleString()} new), `
+      + `each call reading its whole context again. Its context at the end: ${b._ctx.toLocaleString()}.` : '';
     b.querySelector('.ahead').innerHTML = `<span class="caret">${b.classList.contains('folded') ? '▸' : '▾'}</span>`
       + `${icon(b._agent, false)}<b>${esc(b._agent)}</b>`
-      + [took ? elapsed(Date.now() / 1000 - took) : '', how, tokens].filter(Boolean).map(x => ' · ' + esc(x)).join('')
+      + [took ? elapsed(Date.now() / 1000 - took) : '', how].filter(Boolean).map(x => ' · ' + esc(x)).join('')
+      + (tokens ? ` · <span class="spent" title="${esc(spent)}">${esc(tokens)}</span>` : '')
       + (!b._ended && isWorking(b) ? ' · working…' : '')
       + `<span class="preview">${esc(b._final)}</span>`;
     // Its answer, read aloud without unfolding it (shown only while folded).
