@@ -34,6 +34,7 @@ urlpatterns = [
     path('api/settings/', views_settings.api_settings, name='api_settings'),
     path('api/auth/admin/', views_admin.api_admin, name='api_auth_admin'),
     path('api/moods/<slug:slug>/turns/', views_moods.api_mood_turns, name='api_mood_turns'),
+    path('api/moods/<slug:slug>/todo/', views_moods.api_mood_todo, name='api_mood_todo'),
     path('api/moods/<slug:slug>/sessions/', views_moods.api_mood_sessions, name='api_mood_sessions'),
     path('api/moods/<slug:slug>/steps/<str:step_id>/', views_moods.api_mood_step, name='api_mood_step'),
     path('api/moods/<slug:slug>/typing/', views_moods.api_typing, name='api_mood_typing'),

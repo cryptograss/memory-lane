@@ -751,6 +751,17 @@ SECONDS_PER_BLOCK = 12  # since the merge, a slot every 12 s (a missed slot make
 
 
 @require_GET
+def api_mood_todo(request, slug):
+    """The Mood's to-do list, from PickiPedia (services/todo.py): {"page", "edit", "exists", "items", "error"?}.
+    ?fresh=1 asks PickiPedia again now (after an edit)."""
+    from .services import todo
+    mood = Mood.by_slug_or_404(slug)
+    if request.GET.get('fresh'):
+        todo.forget(mood)
+    return JsonResponse(todo.for_mood(mood))
+
+
+@require_GET
 def api_moods_live(request):
     """Each Mood's people of the moment: who has spoken in the last 100 blocks
     (about 20 minutes), who's typing, which agent is working. Cached for

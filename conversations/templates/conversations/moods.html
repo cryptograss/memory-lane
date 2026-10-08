@@ -607,7 +607,40 @@
           color: var(--muted); cursor: pointer; padding: 0 2px; }
   /* A phone, either way up: narrow, or a touch screen this short (a phone on its side
      is as wide as a small laptop, and gets the laptop's layout otherwise). PHONE in the script. */
+  /* The Mood's to-do list (services/todo.py): a tab at the right edge, opening to a column. */
+  #todo { flex: none; display: flex; border-left: 1px solid var(--line); background: var(--panel); min-height: 0; }
+  #todo[hidden] { display: none; }
+  #todoTab { writing-mode: vertical-rl; display: flex; gap: 6px; align-items: center; width: 28px; padding: 14px 0;
+             border: 0; background: none; color: var(--muted); font: inherit; font-size: 12.5px; letter-spacing: .04em; cursor: pointer; }
+  #todoTab:hover { color: var(--accent); }
+  #todoTab .n { writing-mode: horizontal-tb; font-weight: 600; color: var(--accent); }
+  #todo.open #todoTab { display: none; }
+  #todoBody { display: none; width: 300px; overflow-y: auto; padding: 12px 14px; font-size: 13.5px; }
+  #todo.open #todoBody { display: block; }
+  #todoBody .head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  #todoBody .head b { flex: 1; }
+  #todoBody .head a { color: var(--muted); font-size: 12px; }
+  #todoBody .head button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+  #todoBody .note { color: var(--muted); font-size: 12.5px; margin: 0 0 8px; }
+  #todoBody .note:empty { display: none; }
+  #todoBody ul { list-style: none; margin: 0; padding: 0; }
+  #todoBody li { display: flex; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+  #todoBody li .box { color: var(--muted); flex: none; }
+  #todoBody li .meta { color: var(--muted); font-size: 12px; }
+  #todoBody li .meta .you { color: var(--accent); font-weight: 600; }
+  #todoBody li .why { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  #todoBody li a.go { text-decoration: none; margin-left: 4px; }
+  #todoDone { margin-top: 8px; color: var(--muted); }
+  #todoDone summary { cursor: pointer; font-size: 12.5px; }
+  #todoDone li .task { text-decoration: line-through; }
+  #todoDone:not([data-n]) { display: none; }
+
   @media (max-width: 720px), (pointer: coarse) and (max-height: 520px) {
+    /* A phone: the tab rides the right edge; open, the list lies over the Mood. */
+    #todo { position: fixed; right: 0; top: 38%; z-index: 25; border: 1px solid var(--line); border-right: 0;
+            border-radius: 8px 0 0 8px; box-shadow: -2px 2px 10px rgba(0,0,0,.12); }
+    #todo.open { top: 44px; bottom: 0; border-radius: 0; }
+    #todoBody { width: min(320px, 88vw); }
     header { flex-wrap: nowrap; gap: 8px; padding: 6px 12px; }
     header .brand small { display: none; }
     header .preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
@@ -746,6 +779,15 @@
     </form>
     </div>
   </main>
+  <aside id="todo" hidden aria-label="To do">
+    <button type="button" id="todoTab" title="What the people here have to do: a list kept on PickiPedia"><span>To do</span><b class="n"></b></button>
+    <div id="todoBody">
+      <div class="head"><b>To do</b><a id="todoEdit" target="_blank" rel="noopener" title="The list is YAML on PickiPedia: anyone can edit it">edit</a><button type="button" id="todoClose" aria-label="Close the to-do list">✕</button></div>
+      <p class="note" id="todoNote"></p>
+      <ul id="todoList"></ul>
+      <details id="todoDone"><summary></summary><ul></ul></details>
+    </div>
+  </aside>
 </div>
 
 {{ wiki_names|json_script:"wiki-names" }}
@@ -903,6 +945,61 @@
   }
   setInterval(refreshLive, 5000);
   refreshLive();
+
+  // --- the Mood's to-do list: kept on PickiPedia (services/todo.py), shown at the right ---
+  // A tab with how many are open; pressed, the list. Asked for again every minute,
+  // and when the page is looked at again (an edit on PickiPedia, perhaps).
+  const todoEl = document.getElementById('todo');
+  let todoShown = null;  // the list as last drawn, for its Mood
+  function linkOf(link) {
+    if (/^https?:\/\//i.test(link)) return link;
+    if (/^#m-[0-9a-f-]{8,36}$/i.test(link)) return link;
+    if (/^#[\w-]+$/.test(link)) return '/moods/' + link.slice(1) + '/';
+    return link ? `${WIKI}/wiki/${encodeURIComponent(link.replace(/ /g, '_'))}` : '';
+  }
+  function todoItem(it) {
+    const who = it.who.map(n => n.toLowerCase() === viewer ? '<span class="you">you</span>' : esc(shown(n.toLowerCase())));
+    const meta = [it.kind, who.join(', ')].filter(Boolean).join(' · ');
+    const go = it.link ? `<a class="go" href="${esc(linkOf(it.link))}"${/^https?:/i.test(linkOf(it.link)) ? ' target="_blank" rel="noopener"' : ''} title="${esc(it.link)}">↗</a>` : '';
+    return `<li><span class="box">${it.done ? '☑' : '☐'}</span><div><span class="task">${esc(it.task)}</span>${go}`
+      + (meta ? `<div class="meta">${meta}</div>` : '') + (it.note ? `<div class="why">${esc(it.note)}</div>` : '') + '</div></li>';
+  }
+  function renderTodo(t) {
+    todoShown = t;
+    const open = t.items.filter(i => !i.done), done = t.items.filter(i => i.done);
+    todoEl.hidden = !t.exists && !viewer;  // no list yet: there to start one, for whoever can write here
+    todoEl.querySelector('#todoTab .n').textContent = open.length || '';
+    todoEl.querySelector('#todoTab').setAttribute('aria-label', `To do: ${open.length} open`);
+    document.getElementById('todoEdit').href = t.edit;
+    document.getElementById('todoNote').textContent = t.error ? `The list couldn't be read: ${t.error}.`
+      : !t.exists ? 'No list here yet: "edit" starts one on PickiPedia, as YAML between <todo> tags ("- task: ...").'
+      : !t.items.length ? 'Nothing to do.' : '';
+    document.getElementById('todoList').innerHTML = open.map(todoItem).join('');
+    const fold = document.getElementById('todoDone');
+    if (done.length) fold.dataset.n = done.length; else delete fold.dataset.n;
+    fold.querySelector('summary').textContent = `Done (${done.length})`;
+    fold.querySelector('ul').innerHTML = done.map(todoItem).join('');
+  }
+  async function loadTodo(fresh) {
+    const slug = current;
+    if (!slug) return;
+    try {
+      const r = await fetch(`/api/moods/${encodeURIComponent(slug)}/todo/${fresh ? '?fresh=1' : ''}`);
+      if (!r.ok) return;
+      const t = await r.json();
+      if (slug === current) renderTodo(t);
+    } catch (e) {}
+  }
+  function openTodo(open) {
+    todoEl.classList.toggle('open', open);
+    store.set('todoOpen', open);
+  }
+  if (store.get('todoOpen', false) && !matchMedia(PHONE).matches) todoEl.classList.add('open');
+  document.getElementById('todoTab').addEventListener('click', () => openTodo(true));
+  document.getElementById('todoClose').addEventListener('click', () => openTodo(false));
+  document.getElementById('todoEdit').addEventListener('click', () => { todoShown = null; });  // back from editing: ask afresh
+  setInterval(() => loadTodo(), 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) loadTodo(todoShown === null); });
 
   // --- the chain's height: from the explorer now and then, a block every 12 s between ---
   const blockEl = document.getElementById('block');
@@ -2198,6 +2295,7 @@
     tasks = []; renderTasks();
     typingNow = []; renderTyping();
     renderAgents({});
+    loadTodo();
     const saved = drawn.get(slug);
     if (saved) {
       drawn.delete(slug);
