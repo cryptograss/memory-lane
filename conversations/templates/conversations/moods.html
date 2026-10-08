@@ -655,6 +655,9 @@
   .hush { display: flex; flex-wrap: wrap; gap: 8px; max-width: 760px; margin: 0 auto; padding: 6px 16px 0;
           font-size: 12.5px; color: var(--muted); }
   .hush:empty { display: none; }
+  /* An agent's setting someone else just changed: a moment's glow (renderAgents). */
+  @keyframes justset { 0%, 60% { box-shadow: 0 0 0 2px var(--accent); background: var(--accent-soft); } 100% { box-shadow: 0 0 0 0 transparent; } }
+  .hush .justset { animation: justset 4s ease-out; border-radius: 4px; }
   .hush select { font: inherit; font-size: 12.5px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px;
                  background: var(--panel); color: var(--ink); }
   .hush .off { color: var(--accent); }
@@ -2806,7 +2809,20 @@
       p.title = a.title;
     });
   }
+  // The payload's names for an agent's settings, and the keys its menus carry (data-knob).
+  const SHOWN_KNOBS = { listening: 'listening', model: 'model', effort: 'mention_effort', ultracode: 'ultracode',
+                        reads: 'catch_up_tokens', discretion: 'discretion', verbosity: 'verbosity' };
   function renderAgents(agents) {
+    // What someone else changed since the last look (not on first drawing a Mood: nothing to compare).
+    const changed = [];
+    for (const [name, a] of Object.entries(agents)) {
+      const before = agentsNow[name];
+      if (!before) continue;
+      for (const [field, knob] of Object.entries(SHOWN_KNOBS)) {
+        const who = ((a.set_by || {})[knob] || {}).by;
+        if (JSON.stringify(before[field]) !== JSON.stringify(a[field]) && who !== viewer) changed.push([name, knob]);
+      }
+    }
     agentsNow = agents;
     const box = document.getElementById('hush');
     // Redraw the menus only when a setting changed: never under someone's open menu.
@@ -2815,6 +2831,21 @@
     if (box && (key !== agentsShown || !box.childElementCount)) {
       agentsShown = key;
       box.innerHTML = agentRows(agents);
+    }
+    if (box) {
+      // Each setting says who set it, and when, on hover; one someone else just changed glows a moment.
+      box.querySelectorAll('[data-agent][data-knob]').forEach(el => {
+        const set = ((agents[el.dataset.agent] || {}).set_by || {})[el.dataset.knob];
+        const base = el.dataset.title || (el.dataset.title = el.title || el.closest('label')?.title || '');
+        const said = set ? ` · set by ${shown(set.by)}, ${ago(set.at)}` : '';
+        (el.type === 'checkbox' ? el.closest('label') : el).title = base + said;
+      });
+      for (const [name, knob] of changed) {
+        const el = box.querySelector(`[data-agent="${CSS.escape(name)}"][data-knob="${knob}"]`);
+        // Read-only rows are words, not menus: the agent's whole line glows instead.
+        const mark = el ? (el.type === 'checkbox' ? el.closest('label') : el) : box.querySelector(`.agent[data-who="${CSS.escape(name)}"]`);
+        if (mark) { mark.classList.remove('justset'); void mark.offsetWidth; mark.classList.add('justset'); }
+      }
     }
     refreshPies();
   }
