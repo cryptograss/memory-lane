@@ -111,4 +111,7 @@ def refresh(http=None):
                          'delta': (change.get('newlen') or 0) - (change.get('oldlen') or 0),
                          'at': change.get('timestamp', '')})
             added += 1
+            if home_of(change.get('title')):  # its to-do list changed: open pages ask for it again now
+                from .todo import forget
+                forget(mood)
     return added
