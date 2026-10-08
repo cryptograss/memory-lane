@@ -3594,11 +3594,14 @@
       + (devicesAll ? `<a href="#" data-devices="mine">mine</a> · <b>everyone</b>` : `<b>mine</b> · <a href="#" data-devices="all">everyone</a>`)
       + `</div>` : '';
     if (devicesAll) {
-      const n = d.people.reduce((sum, p) => sum + p.devices.length, 0);
+      const n = d.people.reduce((sum, p) => sum + p.devices.filter(v => !v.signed_out_at).length, 0);
       list.innerHTML = which + `<div class="meta">${n} device${n === 1 ? '' : 's'} signed in. To sign someone out: `
         + `<code>magenta.sh kick &lt;name&gt; --all</code>, or one device: click its id to copy the command.</div>` + d.people.map(p =>
           `<div class="devperson"><b>${icon(p.name, true)}${esc(p.name)}</b></div>` + p.devices.map(v => {
             const short = v.id.replace(/-/g, '').slice(0, 8);
+            // Signed out lately (by itself, its owner, or a kick): when, so a "why was I signed out?" has an answer.
+            if (v.signed_out_at) return `<div class="dev revoked"><b>${esc(v.label)}</b> · <span class="tier">${v.tier === 'wiki' ? 'WIKI' : 'KEY'}</span>`
+              + ` · signed out ${esc(ago(v.signed_out_at))}<div class="meta">signed in ${esc(ago(v.signed_in_at))} · last used ${esc(ago(v.last_used_at))}</div></div>`;
             return `<div class="dev"><b>${esc(v.label)}</b> · <span class="tier">${v.tier === 'wiki' ? 'WIKI' : 'KEY'}</span>`
             + (v.this ? ' · this device' : '')
             + (p.name === d.name ? ` <button type="button" data-revoke="${esc(v.id)}" data-this="${v.this ? 1 : ''}">revoke</button>`
@@ -3611,7 +3614,7 @@
     list.innerHTML = which + `<div class="meta">A device unused for ${d.idle_days} days times out; bring it back with `
       + `<code>magenta.sh renew &lt;its name&gt;</code>.</div>` + d.devices.map(v => {
         const state = v.state === 'live' ? (v.this ? 'this device' : 'signed in')
-          : v.state === 'timed out' ? 'timed out' : 'revoked';
+          : v.state === 'timed out' ? 'timed out' : 'signed out' + (v.signed_out_at ? ' ' + ago(v.signed_out_at) : '');
         const out = v.times_out_at ? ` · times out ${esc(new Date(v.times_out_at).toLocaleDateString())}` : '';
         return `<div class="dev ${v.state === 'revoked' ? 'revoked' : v.state === 'timed out' ? 'timed' : ''}">`
           + `<b>${esc(v.label)}</b> · ${esc(state)}`

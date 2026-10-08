@@ -450,7 +450,11 @@ def _device_payload(device, this):
     return {'id': str(device.id), 'label': device.label or '(unnamed)', 'signed_in_at': device.created_at.isoformat(),
             'last_used_at': used.isoformat(), 'state': state,
             'times_out_at': (used + mood_auth.DEVICE_IDLE_LIMIT).isoformat() if state == 'live' else None,
+            'signed_out_at': device.revoked_at.isoformat() if device.revoked_at else None,
             'this': this}
+
+
+SIGNED_OUT_SHOWN = timedelta(days=14)
 
 
 @require_GET
@@ -458,8 +462,10 @@ def api_devices(request):
     """The signed-in person's devices: when each signed in, last wrote, and times out.
 
     ?all=1, for an admin (settings.MOOD_ADMINS) on an SSH-key device: everyone's
-    live devices, either tier, by person. Seeing only: signing someone else
-    out stays a signed admin action (magenta.sh kick), never a cookie's.
+    live devices, either tier, by person -- and those signed out in the last
+    SIGNED_OUT_SHOWN, with when, so "why was I signed out?" can be answered.
+    Seeing only: signing someone else out stays a signed admin action
+    (magenta.sh kick), never a cookie's.
     """
     from .models import Device
     device = mood_auth.device_for(request)
@@ -471,9 +477,11 @@ def api_devices(request):
             return refused
         if device.entity_id not in getattr(settings, 'MOOD_ADMINS', ()):
             return JsonResponse({'error': "only an admin can see everyone's devices"}, status=403)
+        from django.db.models import Q
         people = {}
-        for d in Device.objects.filter(revoked_at__isnull=True).order_by('entity_id', '-created_at'):
-            if mood_auth.device_state(d) == 'live':
+        recent = Q(revoked_at__isnull=True) | Q(revoked_at__gte=timezone.now() - SIGNED_OUT_SHOWN)
+        for d in Device.objects.filter(recent).order_by('entity_id', 'revoked_at', '-created_at'):
+            if d.revoked_at or mood_auth.device_state(d) == 'live':
                 people.setdefault(d.entity_id, []).append(
                     {**_device_payload(d, d.pk == device.pk), 'tier': d.tier})
         return JsonResponse({'name': device.entity_id, 'idle_days': mood_auth.DEVICE_IDLE_LIMIT.days,
