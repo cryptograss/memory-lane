@@ -1464,6 +1464,22 @@ class Media(models.Model):
         return f'/moods/media/{self.sha256}.{self.EXTENSIONS[self.mime]}'
 
 
+class MessageChange(models.Model):
+    """An edit to something said in a Mood, or its deletion: who, and when --
+    never what it said before (services/retract.py). The newest one stands."""
+
+    message = models.OneToOneField(Message, models.CASCADE, primary_key=True, related_name='change')
+    mood = models.ForeignKey('Mood', models.CASCADE, related_name='message_changes')
+    kind = models.CharField(max_length=10)  # 'edited' or 'deleted'
+    by = models.CharField(max_length=50)
+    at = models.DateTimeField(auto_now=True, db_index=True)
+    # Where it had already gone that can't be called back: agents a wake carried it to.
+    reached = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        db_table = 'message_changes'
+
+
 class Setting(models.Model):
     """
     One change to a knob: what was set, for which agent in which Mood, by whom.

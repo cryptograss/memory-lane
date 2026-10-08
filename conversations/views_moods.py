@@ -51,6 +51,8 @@ def moods_page(request, slug=None):
         'wiki_signin': wiki_auth.enabled(),
         # "→ PickiPedia" on a picture sent here, if uploading as its sharer is set up (services/wiki_upload.py).
         'wiki_upload': wiki_upload.enabled(),
+        # An admin signed in with their SSH key may delete anyone's message (services/retract.py).
+        'viewer_admin': bool(device) and device.tier == 'key' and device.entity_id in getattr(settings, 'MOOD_ADMINS', ()),
         # PickiPedia names, shown for the names here (from hunter's inventory).
         'wiki_names': wiki_auth.names(),
         # Notifications with magenta closed (services/push.py): what browsers subscribe with. '' if off.
@@ -153,8 +155,26 @@ def api_mood_turns(request, slug):
     first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out + compactions_out
                  + events_out], default=None)
     agents = agents_in(mood)
+    # Edited or deleted (services/retract.py): shown as they stand now.
+    from django.utils import timezone
+    from .models import MessageChange
+    from .services import retract
+    changed = {str(c.message_id): c for c in MessageChange.objects.filter(
+        mood=mood, message_id__in=[t['id'] for t in turns_out])}
+    turns_out = [retract.mark(t, changed.get(t['id'])) for t in turns_out]
+    changes = []
+    since = parse_datetime(request.GET.get('changes_since') or '') if request.GET.get('changes_since') else None
+    if since is not None:  # what changed since the page last asked, as it stands now
+        for c in retract.changes_since(mood, since):
+            msg = Message.objects.filter(id=c['id']).select_related('sender').first()
+            text = prose(msg.content) if msg else ''
+            changes.append({**c, 'turn': retract.mark(turn_payload(msg, text, names), retract.change_of(msg))
+                            if msg and text else None})
     return JsonResponse({
         'mood': mood_payload(mood),
+        # What was edited or deleted since ?changes_since=, as it stands now; and the time to ask from next.
+        'changes': changes,
+        'now': timezone.now().isoformat(),
         # Prose only: the poller reads an agent turn here as an answer, so a
         # tool call must never appear in this list.
         'turns': turns_out,

@@ -350,9 +350,21 @@
   /* Something that happened around the conversation: a server redeployed. */
   a.permalink { color: inherit; text-decoration: none; }
   /* Replies: ↩ on a message starts one; a reply shows what it answers above it. */
-  .turn .replybtn { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 4px; opacity: 0; }
-  .turn:hover .replybtn, .turn .replybtn:focus { opacity: 1; }
-  @media (pointer: coarse) { .turn .replybtn { opacity: .6; } }
+  .turn .replybtn, .turn .editbtn, .turn .delbtn { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 4px; opacity: 0; }
+  .turn:hover .replybtn, .turn .replybtn:focus, .turn:hover .editbtn, .turn .editbtn:focus,
+  .turn:hover .delbtn, .turn .delbtn:focus { opacity: 1; }
+  @media (pointer: coarse) { .turn .replybtn, .turn .editbtn, .turn .delbtn { opacity: .6; } }
+  /* Edited and deleted (services/retract.py). */
+  .turn .edited { color: var(--muted); font-size: 11.5px; margin-left: 4px; }
+  /* A follow-on message has no heading to hold ✎ 🗑: they sit at its top right, as its # does at the side. */
+  .turn.cont > .acts { position: absolute; right: 2px; top: 0; z-index: 2; background: var(--bg); border-radius: 4px; }
+  .turn.cont:hover > .acts .editbtn, .turn.cont:hover > .acts .delbtn { opacity: 1; }
+  .turn .body.gone { color: var(--muted); font-style: italic; font-size: 13px; }
+  .turn .editbox { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+                   background: var(--panel); color: var(--ink); resize: vertical; }
+  .turn .editbar { margin-top: 4px; }
+  .turn .editbar button { font: inherit; font-size: 12.5px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 5px;
+                          background: var(--panel); color: var(--ink); cursor: pointer; }
   .turn a.replyto { display: block; margin: 2px 0 4px; padding-left: 8px; border-left: 2px solid var(--line); color: var(--muted);
     font-size: 12.5px; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .turn a.replyto:hover { border-left-color: var(--accent); color: var(--ink); }
@@ -814,6 +826,7 @@
   const keyHolder = !!viewer && viewerTier === 'key';
   const wikiSignin = {{ wiki_signin|yesno:"true,false" }};
   const wikiUpload = {{ wiki_upload|yesno:"true,false" }};  // "→ PickiPedia" on pictures (services/wiki_upload.py)
+  const viewerAdmin = {{ viewer_admin|yesno:"true,false" }};  // may delete anyone's message (services/retract.py)
   // Our VAPID key's public half, for pushes with magenta closed (services/push.py); '' if push is off.
   const PUSH_KEY = "{{ push_key|escapejs }}";
   // PickiPedia names for the names here (hunter's inventory); shown wherever a person is named.
@@ -1344,17 +1357,28 @@
     const named = page ? `<a href="${esc(page)}" target="_blank" rel="noopener" title="${esc(shown(t.sender))} on PickiPedia">${esc(shown(t.sender))}</a>` : esc(shown(t.sender));
     const tier = t.tier === 'wiki' ? '<span class="tier wiki" title="Signed in with PickiPedia: chats and mentions people; @agents from here wake nobody">wiki</span>' : '';
     // ↩ for anyone signed in. A reply addresses a person, never an agent (only an @mention wakes one).
-    const replyBtn = viewer ? `<button type="button" class="replybtn" data-reply="${esc(t.id)}" title="Reply" aria-label="Reply">↩</button>` : '';
+    const replyBtn = viewer && !t.deleted ? `<button type="button" class="replybtn" data-reply="${esc(t.id)}" title="Reply" aria-label="Reply">↩</button>` : '';
+    // ✎ what you wrote here yourself; 🗑 what you wrote, or anything as an admin (services/retract.py).
+    const editBtn = viewer && !t.deleted && t.sender === viewer && t.via === 'web' && !t.attested
+      ? `<button type="button" class="editbtn" data-edit="${esc(t.id)}" title="Edit what you said" aria-label="Edit">✎</button>` : '';
+    const delBtn = viewer && !t.deleted && (t.sender === viewer || viewerAdmin)
+      ? `<button type="button" class="delbtn" data-delete="${esc(t.id)}" title="Delete it: its words are taken out of the record" aria-label="Delete">🗑</button>` : '';
+    const edited = t.edited ? `<span class="edited" title="edited ${esc(stamp(t.edited))}">(edited)</span>` : '';
     const answers = t.reply ? `<a class="replyto" href="#m-${esc(t.reply.id)}" data-reveal="${esc(t.reply.id)}" title="Go to the message this replies to">`
       + `↩ ${icon(t.reply.sender, human[t.reply.sender] !== false)}<b>${esc(shown(t.reply.sender))}</b> ${esc(t.reply.snippet || '(a message)')}</a>` : '';
-    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${how(t)}${signed}${replyBtn}</div>`
+    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${cont ? '' : edited}${how(t)}${signed}${replyBtn}${cont ? '' : editBtn + delBtn}</div>`
+      + (cont && (edited || editBtn || delBtn) ? `<span class="acts">${edited}${editBtn}${delBtn}</span>` : '')
       + answers
       + `<a class="permalink mini" href="#m-${esc(t.id)}" title="${esc(stamp(t.created_at))} · this message's link: click to copy">#</a>`
-      + (voiceOn && viewer ? speakButton(t, true) : '') + `<div class="body">${t.html}</div>`;
+      + (voiceOn && viewer && !t.deleted ? speakButton(t, true) : '')
+      + (t.deleted ? `<div class="body gone">message deleted by ${esc(shown(t.deleted.by))} · ${esc(stamp(t.deleted.at))}</div>`
+                   : `<div class="body">${t.html}</div>`);
+    if (t.deleted) el.classList.add('deleted');
+    el._text = t.text;
     // On a touch screen ▶ floats at the message's right, kept in sight while any of it is (.dock).
     // (A follow-on message has its own, the mini, kept in sight the same way.)
-    if (voiceOn && viewer && !COARSE) el.querySelector('.who').insertAdjacentHTML('beforeend', speakButton(t, false));
-    else if (voiceOn && viewer && !cont) el.insertAdjacentHTML('afterbegin', speakButton(t, false).replace('class="speak', 'class="speak dock'));
+    if (voiceOn && viewer && !t.deleted && !COARSE) el.querySelector('.who').insertAdjacentHTML('beforeend', speakButton(t, false));
+    else if (voiceOn && viewer && !t.deleted && !cont) el.insertAdjacentHTML('afterbegin', speakButton(t, false).replace('class="speak', 'class="speak dock'));
     if (voiceOn && viewer && (t.voices || []).length) {  // several voice blocks: a ▶ for each, by its voice
       el.insertAdjacentHTML('beforeend', '<div class="voices">' + t.voices.map((v, i) =>
         `<button type="button" class="speak part" data-id="${esc(t.id)}" data-part="${i}" data-label="▶ ${esc(v)}" title="Read aloud: part ${i + 1}">▶ ${esc(v)}</button>`).join('') + '</div>');
@@ -2382,8 +2406,10 @@
   }
   let pollingGen = null;
   async function pollOnce(full, mine) {
+    const since = changesAt[current];
     const url = '/api/moods/' + encodeURIComponent(current) + '/turns/'
-      + (lastId && !full ? '?after=' + lastId : '?limit=' + FIRST_PAGE);
+      + (lastId && !full ? '?after=' + lastId : '?limit=' + FIRST_PAGE)
+      + (since && !full ? '&changes_since=' + encodeURIComponent(since) : '');
     let data;
     try {
       const r = await fetch(url);
@@ -2414,6 +2440,8 @@
     renderTyping();
     const turnsEl = document.getElementById('turns');
     if (!turnsEl) return;
+    if (data.now) changesAt[current] = data.now;
+    (data.changes || []).forEach(applyChange);
     const items = itemsOf(data);
     if (full) {
       firstId = items.length ? items[0].v.id : null;
@@ -2446,6 +2474,57 @@
   // --- back to the newest -----------------------------------------------------
   const toBottom = document.getElementById('toBottom');
   let newBelow = 0;  // turns that arrived while scrolled up
+  // --- edited and deleted (services/retract.py) --------------------------------
+  // Each poll asks what changed since the last (per Mood: a Mood left and come
+  // back to is asked from when it was last looked at), and redraws those messages.
+  const changesAt = {};
+  function applyChange(c) {
+    const old = document.getElementById('m-' + c.id);
+    if (!old || !c.turn) return;
+    const keep = prev; prev = null;
+    const fresh = turnEl(c.turn, false);
+    prev = keep;
+    if (old.classList.contains('cont')) fresh.classList.add('cont');
+    old.replaceWith(fresh);
+  }
+  document.addEventListener('click', async e => {
+    const edit = e.target.closest('.turn .editbtn[data-edit]');
+    const del = e.target.closest('.turn .delbtn[data-delete]');
+    if (!edit && !del) return;
+    const el = (edit || del).closest('.turn');
+    const id = (edit || del).dataset.edit || (del && del.dataset.delete);
+    const call = (what, body) => fetch(`/api/moods/${encodeURIComponent(current)}/messages/${encodeURIComponent(id)}/${what}/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify(body || {}) })
+      .then(async r => { const b = await r.json().catch(() => ({})); if (!r.ok) throw new Error(b.error || r.status); return b; });
+    const told = done => {
+      const reached = done.reached || [];
+      const note = done.kind === 'deleted' ? 'Deleted: its words are out of the record' : 'Edited';
+      showNote(reached.length
+        ? `${note}. It had already been carried to ${reached.map(shown).join(', ')} in a wake: the record's copies are scrubbed, but that session saw it.`
+        : `${note}.`, 9000);
+    };
+    if (del) {
+      if (!confirm('Delete this message for everyone? Its words are taken out of the record; a line says it was deleted.')) return;
+      try { told(await call('delete')); await poll(false); } catch (err) { showError('delete: ' + err.message); }
+      return;
+    }
+    // ✎: the message's words in a box where they were; Save or Cancel (Esc).
+    const body = el.querySelector('.body');
+    if (!body || body.querySelector('textarea')) return;
+    const before = body.innerHTML;
+    body.innerHTML = '<textarea class="editbox" rows="3"></textarea><div class="editbar"><button type="button" class="editsave">Save</button> <button type="button" class="editcancel">Cancel</button></div>';
+    const box = body.querySelector('textarea');
+    box.value = el._text || '';
+    box.style.height = Math.min(400, Math.max(60, box.scrollHeight + 4)) + 'px';
+    box.focus();
+    const cancel = () => { body.innerHTML = before; };
+    body.querySelector('.editcancel').addEventListener('click', cancel);
+    box.addEventListener('keydown', k => { if (k.key === 'Escape') { k.preventDefault(); cancel(); } });
+    body.querySelector('.editsave').addEventListener('click', async () => {
+      if (box.value.trim() === (el._text || '').trim()) { cancel(); return; }
+      try { told(await call('edit', { text: box.value })); await poll(false); } catch (err) { showError('edit: ' + err.message); }
+    });
+  });
   function renderToBottom() {
     const far = main.scrollHeight - main.scrollTop - main.clientHeight > 400;
     if (!far) newBelow = 0;
@@ -2863,6 +2942,12 @@
   function showError(message) {
     composer.querySelectorAll('.err, .note').forEach(el => el.remove());
     composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(message)}</span>`);
+  }
+  function showNote(message, ms) {  // a word under the box, gone after a while
+    composer.querySelectorAll('.err, .note').forEach(el => el.remove());
+    composer.insertAdjacentHTML('beforeend', `<span class="note">${esc(message)}</span>`);
+    const note = composer.querySelector('.note:last-of-type');
+    setTimeout(() => note && note.remove(), ms || 8000);
   }
   const fileInput = document.getElementById('file');
   async function upload(file) {
