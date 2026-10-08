@@ -373,15 +373,27 @@
   /* Something that happened around the conversation: a server redeployed. */
   a.permalink { color: inherit; text-decoration: none; }
   /* Replies: ↩ on a message starts one; a reply shows what it answers above it. */
-  .turn .replybtn, .turn .editbtn, .turn .delbtn { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 4px; opacity: 0; }
-  .turn:hover .replybtn, .turn .replybtn:focus, .turn:hover .editbtn, .turn .editbtn:focus,
-  .turn:hover .delbtn, .turn .delbtn:focus { opacity: 1; }
-  @media (pointer: coarse) { .turn .replybtn, .turn .editbtn, .turn .delbtn { opacity: .6; } }
+  /* ↩ 🙂 ⋯ in one row: the heading's, or a follow-on message's top right. Editing and
+     deleting are behind ⋯, never a stray tap away from a reply or a reaction. */
+  .turn .replybtn, .turn .addreact, .turn .morebtn { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 4px; opacity: 0; }
+  .turn:hover .replybtn, .turn .replybtn:focus, .turn:hover .addreact, .turn .addreact:focus,
+  .turn:hover .morebtn, .turn .morebtn:focus { opacity: 1; }
+  @media (pointer: coarse) { .turn .replybtn, .turn .addreact, .turn .morebtn { opacity: .6; } }
+  #msgMenu { position: fixed; z-index: 50; display: flex; flex-direction: column; min-width: 150px; padding: 4px; background: var(--panel);
+             border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+  #msgMenu[hidden] { display: none; }
+  #msgMenu button { font: inherit; font-size: 14px; text-align: left; border: 0; background: none; color: var(--ink); cursor: pointer;
+                    padding: 8px 10px; border-radius: 6px; }
+  #msgMenu button:hover, #msgMenu button:focus { background: var(--code); }
+  #msgMenu button.danger { color: #c0392b; }
+  #msgMenu hr { border: 0; border-top: 1px solid var(--line); margin: 3px 4px; }
   /* Edited and deleted (services/retract.py). */
   .turn .edited { color: var(--muted); font-size: 11.5px; margin-left: 4px; }
   /* A follow-on message has no heading to hold ✎ 🗑: they sit at its top right, as its # does at the side. */
   .turn.cont > .acts { position: absolute; right: 2px; top: 0; z-index: 2; background: var(--bg); border-radius: 4px; }
-  .turn.cont:hover > .acts .editbtn, .turn.cont:hover > .acts .delbtn { opacity: 1; }
+  .turn.cont:hover > .acts button { opacity: 1; }
+  /* On a touch screen ▶ floats at the top right of a follow-on message: the row floats beside it, not under it. */
+  @media (pointer: coarse) { .turn.cont > .acts { position: static; float: right; margin: 6px 0 4px 4px; background: none; } }
   .turn .body.gone { color: var(--muted); font-style: italic; font-size: 13px; }
   .turn .editbox { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
                    background: var(--panel); color: var(--ink); resize: vertical; }
@@ -455,17 +467,13 @@
   .turn .card .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; }
   .turn .card .desc { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .turn .card small { color: var(--muted); font-size: 11.5px; }
-  /* Reactions (services/reactions.py): chips under a message; 🙂 to add one, on hover. */
+  /* Reactions (services/reactions.py): chips under a message; 🙂 beside ↩ adds one. */
   .turn .reacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; min-height: 0; }
   .turn .reacts:not(.some) { margin-top: 0; }
   .turn .reacts .chip { font: inherit; font-size: 13px; line-height: 1.2; padding: 1px 7px; border: 1px solid var(--line);
                         border-radius: 12px; background: var(--panel); color: var(--ink); cursor: pointer; }
   .turn .reacts .chip span { font-size: 11.5px; color: var(--muted); }
   .turn .reacts .chip.mine { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
-  .turn .reacts .addreact { font-size: 13px; padding: 0 4px; border: 0; background: none; cursor: pointer; opacity: 0; }
-  .turn:hover .reacts .addreact, .turn .reacts .addreact:focus { opacity: .7; }
-  .turn .reacts:not(.some) .addreact { position: absolute; right: 2px; bottom: 4px; }
-  @media (pointer: coarse) { .turn .reacts .addreact { opacity: .45; } }
   #reactPicker { position: fixed; z-index: 50; display: flex; gap: 2px; padding: 4px; background: var(--panel);
                  border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
   #reactPicker[hidden] { display: none; }
@@ -1414,10 +1422,12 @@
     // ✎ what you wrote here yourself; 🗑 what you wrote, or anything as an admin (services/retract.py).
     // As services/retract.py allows: your own, edited within a day, deleted within a week; an admin's, any.
     const age = Date.now() - new Date(t.created_at).getTime();
-    const editBtn = viewer && !t.deleted && t.sender === viewer && t.via === 'web' && !t.attested && age < 864e5
-      ? `<button type="button" class="editbtn" data-edit="${esc(t.id)}" title="Edit what you said" aria-label="Edit">✎</button>` : '';
-    const delBtn = viewer && !t.deleted && ((t.sender === viewer && age < 7 * 864e5) || viewerAdmin)
-      ? `<button type="button" class="delbtn" data-delete="${esc(t.id)}" title="Delete it: its words are taken out of the record" aria-label="Delete">🗑</button>` : '';
+    const mayEdit = viewer && !t.deleted && t.sender === viewer && t.via === 'web' && !t.attested && age < 864e5;
+    const mayDelete = viewer && !t.deleted && ((t.sender === viewer && age < 7 * 864e5) || viewerAdmin);
+    const moreBtn = mayEdit || mayDelete
+      ? `<button type="button" class="morebtn" data-more="${esc(t.id)}" data-edit="${mayEdit ? 1 : ''}" data-delete="${mayDelete ? 1 : ''}" `
+        + `title="${mayEdit ? 'Edit or delete' : 'Delete'}" aria-label="More" aria-haspopup="menu">⋯</button>` : '';
+    const reactBtn = viewer && !t.deleted ? '<button type="button" class="addreact" title="React" aria-label="React">🙂</button>' : '';
     // For an admin, each mark opens what it said before (the recovery key, in this tab only, below).
     const versions = viewerAdmin ? ` data-versions="${esc(t.id)}" role="button" tabindex="0"` : '';
     const seeThem = viewerAdmin ? ': click for what it said before (needs the recovery key)' : '';
@@ -1425,11 +1435,12 @@
       : t.restored ? `<span class="edited" title="put back ${esc(stamp(t.restored))}, with the recovery key${seeThem}"${versions}>(restored)</span>` : '';
     const answers = t.reply ? `<a class="replyto" href="#m-${esc(t.reply.id)}" data-reveal="${esc(t.reply.id)}" title="Go to the message this replies to">`
       + `↩ ${icon(t.reply.sender, human[t.reply.sender] !== false)}<b>${esc(shown(t.reply.sender))}</b> ${esc(t.reply.snippet || '(a message)')}</a>` : '';
-    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${cont ? '' : edited}${how(t)}${signed}${replyBtn}${cont ? '' : editBtn + delBtn}</div>`
-      + (cont && (edited || editBtn || delBtn) ? `<span class="acts">${edited}${editBtn}${delBtn}</span>` : '')
+    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${cont ? '' : edited}${how(t)}${signed}${replyBtn}${cont ? '' : reactBtn + moreBtn}</div>`
       + answers
       + `<a class="permalink mini" href="#m-${esc(t.id)}" title="${esc(stamp(t.created_at))} · this message's link: click to copy">#</a>`
       + (voiceOn && viewer && !t.deleted ? speakButton(t, true) : '')
+      // After ▶: on a touch screen both float right, ▶ at the edge where it always is, 🙂 ⋯ beside it.
+      + (cont && (edited || reactBtn || moreBtn) ? `<span class="acts">${edited}${reactBtn}${moreBtn}</span>` : '')
       + (t.deleted ? `<div class="body gone"${versions}${seeThem ? ` title="${esc(seeThem.slice(2))}"` : ''}>message deleted by ${esc(shown(t.deleted.by))} · ${esc(stamp(t.deleted.at))}</div>`
                    : `<div class="body">${t.html}</div>`);
     if (t.deleted) el.classList.add('deleted');
@@ -1499,9 +1510,7 @@
       return `<button type="button" class="chip${mine ? ' mine' : ''}" data-emoji="${esc(emoji)}" title="${esc(names)}"`
         + `${viewer ? '' : ' disabled'}>${esc(emoji)} <span>${who.length}</span></button>`;
     }).join('');
-    const add = viewer && !el.classList.contains('deleted')
-      ? '<button type="button" class="addreact" title="React" aria-label="React">🙂</button>' : '';
-    row.innerHTML = chips + add;
+    row.innerHTML = chips;
     row.classList.toggle('some', !!chips);
   }
   async function react(el, emoji) {
@@ -1522,7 +1531,7 @@
   document.addEventListener('click', e => {
     const chip = e.target.closest('.reacts .chip[data-emoji]');
     if (chip) { react(chip.closest('.turn'), chip.dataset.emoji); return; }
-    const add = e.target.closest('.reacts .addreact');
+    const add = e.target.closest('.turn .addreact');
     if (add) {
       const box = add.getBoundingClientRect();
       picker._for = add.closest('.turn');
@@ -2626,34 +2635,66 @@
   function applyChange(c) {
     const old = document.getElementById('m-' + c.id);
     if (!old || !c.turn) return;
-    const keep = prev; prev = null;
+    // Drawn as it was drawn: a follow-on message stays one, its "(edited)" and 🙂 ⋯ where a follow-on keeps them.
+    const keep = prev;
+    prev = old.classList.contains('cont') ? { sender: c.turn.sender, at: new Date(c.turn.created_at).getTime() } : null;
     const fresh = turnEl(c.turn, false);
     prev = keep;
-    if (old.classList.contains('cont')) fresh.classList.add('cont');
     old.replaceWith(fresh);
   }
-  document.addEventListener('click', async e => {
-    const edit = e.target.closest('.turn .editbtn[data-edit]');
-    const del = e.target.closest('.turn .delbtn[data-delete]');
-    if (!edit && !del) return;
-    const el = (edit || del).closest('.turn');
-    const id = (edit || del).dataset.edit || (del && del.dataset.delete);
-    const call = (what, body) => fetch(`/api/moods/${encodeURIComponent(current)}/messages/${encodeURIComponent(id)}/${what}/`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify(body || {}) })
-      .then(async r => { const b = await r.json().catch(() => ({})); if (!r.ok) throw new Error(b.error || r.status); return b; });
-    const told = done => {
-      const reached = done.reached || [];
-      const note = done.kind === 'deleted' ? 'Deleted: its words are out of the record' : 'Edited';
-      showNote(reached.length
-        ? `${note}. It had already been carried to ${reached.map(shown).join(', ')} in a wake: the record's copies are scrubbed, but that session saw it.`
-        : `${note}.`, 9000);
-    };
-    if (del) {
-      if (!confirm('Delete this message for everyone? Its words are taken out of the record; a line says it was deleted.')) return;
-      try { told(await call('delete')); await poll(false); } catch (err) { showError('delete: ' + err.message); }
+  // ⋯ on a message: a small menu, Edit (yours, within a day) and Delete (yours within a
+  // week, or anyone's as an admin), as services/retract.py allows.
+  const msgMenu = document.createElement('div');
+  msgMenu.id = 'msgMenu';
+  msgMenu.hidden = true;
+  msgMenu.setAttribute('role', 'menu');
+  document.body.appendChild(msgMenu);
+  function closeMsgMenu() { msgMenu.hidden = true; msgMenu._for = null; }
+  document.addEventListener('click', e => {
+    const more = e.target.closest('.turn .morebtn[data-more]');
+    if (more) {
+      if (msgMenu._for === more) { closeMsgMenu(); return; }
+      msgMenu.innerHTML = (more.dataset.edit ? '<button type="button" role="menuitem" data-act="edit">✎ Edit</button>' : '')
+        + (more.dataset.edit && more.dataset.delete ? '<hr>' : '')
+        + (more.dataset.delete ? '<button type="button" role="menuitem" data-act="delete" class="danger">🗑 Delete…</button>' : '');
+      msgMenu._for = more;
+      msgMenu.hidden = false;
+      const box = more.getBoundingClientRect();
+      msgMenu.style.left = Math.max(8, Math.min(box.right - msgMenu.offsetWidth, innerWidth - msgMenu.offsetWidth - 8)) + 'px';
+      const below = box.bottom + 4;
+      msgMenu.style.top = (below + msgMenu.offsetHeight > innerHeight - 8 ? Math.max(8, box.top - msgMenu.offsetHeight - 4) : below) + 'px';
+      msgMenu.querySelector('button').focus();
       return;
     }
-    // ✎: the message's words in a box where they were; Save or Cancel (Esc).
+    const act = e.target.closest('#msgMenu button[data-act]');
+    const from = msgMenu._for;
+    if (!msgMenu.hidden && !act) { closeMsgMenu(); return; }
+    if (!act || !from) return;
+    closeMsgMenu();
+    const el = from.closest('.turn');
+    if (act.dataset.act === 'edit') editMessage(el, from.dataset.more);
+    else deleteMessage(from.dataset.more);
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !msgMenu.hidden) closeMsgMenu(); });
+  main.addEventListener('scroll', () => { if (!msgMenu.hidden) closeMsgMenu(); }, { passive: true });
+  function changeMessage(id, what, body) {
+    return fetch(`/api/moods/${encodeURIComponent(current)}/messages/${encodeURIComponent(id)}/${what}/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify(body || {}) })
+      .then(async r => { const b = await r.json().catch(() => ({})); if (!r.ok) throw new Error(b.error || r.status); return b; });
+  }
+  function toldChanged(done) {
+    const reached = done.reached || [];
+    const note = done.kind === 'deleted' ? 'Deleted: its words are out of the record' : 'Edited';
+    showNote(reached.length
+      ? `${note}. It had already been carried to ${reached.map(shown).join(', ')} in a wake: the record's copies are scrubbed, but that session saw it.`
+      : `${note}.`, 9000);
+  }
+  async function deleteMessage(id) {
+    if (!confirm('Delete this message for everyone? Its words are taken out of the record; a line says it was deleted.')) return;
+    try { toldChanged(await changeMessage(id, 'delete')); await poll(false); } catch (err) { showError('delete: ' + err.message); }
+  }
+  // Edit: the message's words in a box where they were; Save or Cancel (Esc).
+  function editMessage(el, id) {
     const body = el.querySelector('.body');
     if (!body || body.querySelector('textarea')) return;
     const before = body.innerHTML;
@@ -2667,9 +2708,9 @@
     box.addEventListener('keydown', k => { if (k.key === 'Escape') { k.preventDefault(); cancel(); } });
     body.querySelector('.editsave').addEventListener('click', async () => {
       if (box.value.trim() === (el._text || '').trim()) { cancel(); return; }
-      try { told(await call('edit', { text: box.value })); await poll(false); } catch (err) { showError('edit: ' + err.message); }
+      try { toldChanged(await changeMessage(id, 'edit', { text: box.value })); await poll(false); } catch (err) { showError('edit: ' + err.message); }
     });
-  });
+  }
   function renderToBottom() {
     const far = main.scrollHeight - main.scrollTop - main.clientHeight > 400;
     if (!far) newBelow = 0;
