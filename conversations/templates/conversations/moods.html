@@ -492,12 +492,21 @@
                       max-height: 60vh; overflow-y: auto; }
   #activity, #composer { max-width: 760px; margin: 0 auto; }  /* the reading column's width */
   #composer { display: none; position: relative; padding: 10px 16px 14px; }
-  body.writer #composer { display: flex; gap: 8px; align-items: flex-end; }
+  body.writer #composer { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
   #composer textarea { flex: 1; font-family: inherit; line-height: inherit; min-height: 44px; max-height: 40vh; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
   #composer button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
   #composer button:disabled { opacity: .5; cursor: default; }
+  /* A word from the page (an error, a note) goes on its own line under the box: beside it, a
+     long one squeezed the box to a sliver on a phone, and you couldn't type to clear it. */
+  #composer textarea { min-width: 0; }
+  #composer .err, #composer .note { flex: 0 0 100%; order: 10; margin-top: -4px; }
   #composer .err { color: var(--accent); font-size: 12px; }
-  #composer .note { color: var(--muted); font-size: 12px; align-self: center; }
+  /* Not signed in here: said where the box would be, with the way back in, rather than the box just gone. */
+  #signedOut { max-width: 760px; margin: 0 auto; padding: 10px 16px 14px; font-size: 13.5px; color: var(--muted); }
+  #signedOut[hidden] { display: none; }
+  #signedOut b { color: var(--ink); }
+  #signedOut a { color: var(--accent); font-weight: 600; }
+  #composer .note { color: var(--muted); font-size: 12px; }
   #activity { display: none; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--muted); }
   #activity.on { display: flex; }
   #activity .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--agent); animation: pulse 1.2s ease-in-out infinite; }
@@ -855,6 +864,7 @@
       <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
       <button type="submit" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z" fill="currentColor"/></svg></button>
     </form>
+    <div id="signedOut" hidden></div>
     </div>
   </main>
   <aside id="todo" hidden aria-label="To do">
@@ -3162,6 +3172,8 @@
     composer.querySelectorAll('.err, .note').forEach(el => el.remove());
     composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(message)}</span>`);
   }
+  // What's said next makes an old error old news.
+  sayBox.addEventListener('input', () => { const err = composer.querySelector('.err'); if (err) err.remove(); });
   function showNote(message, ms) {  // a word under the box, gone after a while
     composer.querySelectorAll('.err, .note').forEach(el => el.remove());
     composer.insertAdjacentHTML('beforeend', `<span class="note">${esc(message)}</span>`);
@@ -3603,6 +3615,7 @@
   const userMenu = document.getElementById('userMenu');
   if (viewer) {
     document.body.classList.add('writer');
+    try { localStorage.setItem('moods.signedInAs', viewer); } catch (e) {}
     userBtn.textContent = shown(viewer) + ' ▾';
     auth.innerHTML = keyHolder ? `signed in as <b>${esc(shown(viewer))}</b>`
       : `signed in as <b>${esc(shown(viewer))}</b> with PickiPedia: you can chat and mention people. To wake agents `
@@ -3615,6 +3628,14 @@
       location.reload();
     });
   } else {
+    // In place of the box: you're reading, not signed in on this browser -- and if it was, as whom, and how back in.
+    const was = localStorage.getItem('moods.signedInAs');
+    const signedOut = document.getElementById('signedOut');
+    signedOut.innerHTML = (was ? `<b>This browser isn't signed in as ${esc(shown(was))} any more</b>, so there's no box to write in. `
+                               : `<b>Reading only:</b> this browser isn't signed in. `)
+      + (wikiSignin ? '<a href="/moods/auth/wiki/">Sign in with PickiPedia</a>, or open' : 'Open')
+      + ' the menu at the top right for an SSH-key sign-in or a sign-in link. (A phone\'s home-screen app and its browser sign in separately.)';
+    signedOut.hidden = false;
     userBtn.textContent = 'read-only ▾';
     auth.innerHTML = (wikiSignin ? '<a class="wikiin" href="/moods/auth/wiki/">Sign in with PickiPedia</a> to chat.<br>' : '')
       + 'To wake agents and run Moods, run <code>magenta.sh login</code> on a machine with your SSH key.'
@@ -3647,11 +3668,14 @@
       + (devicesAll ? `<a href="#" data-devices="mine">mine</a> · <b>everyone</b>` : `<b>mine</b> · <a href="#" data-devices="all">everyone</a>`)
       + `</div>` : '';
     if (devicesAll) {
-      const n = d.people.reduce((sum, p) => sum + p.devices.length, 0);
+      const n = d.people.reduce((sum, p) => sum + p.devices.filter(v => !v.signed_out_at).length, 0);
       list.innerHTML = which + `<div class="meta">${n} device${n === 1 ? '' : 's'} signed in. To sign someone out: `
         + `<code>magenta.sh kick &lt;name&gt; --all</code>, or one device: click its id to copy the command.</div>` + d.people.map(p =>
           `<div class="devperson"><b>${icon(p.name, true)}${esc(p.name)}</b></div>` + p.devices.map(v => {
             const short = v.id.replace(/-/g, '').slice(0, 8);
+            // Signed out lately (by itself, its owner, or a kick): when, so a "why was I signed out?" has an answer.
+            if (v.signed_out_at) return `<div class="dev revoked"><b>${esc(v.label)}</b> · <span class="tier">${v.tier === 'wiki' ? 'WIKI' : 'KEY'}</span>`
+              + ` · signed out ${esc(ago(v.signed_out_at))}<div class="meta">signed in ${esc(ago(v.signed_in_at))} · last used ${esc(ago(v.last_used_at))}</div></div>`;
             return `<div class="dev"><b>${esc(v.label)}</b> · <span class="tier">${v.tier === 'wiki' ? 'WIKI' : 'KEY'}</span>`
             + (v.this ? ' · this device' : '')
             + (p.name === d.name ? ` <button type="button" data-revoke="${esc(v.id)}" data-this="${v.this ? 1 : ''}">revoke</button>`
@@ -3664,7 +3688,7 @@
     list.innerHTML = which + `<div class="meta">A device unused for ${d.idle_days} days times out; bring it back with `
       + `<code>magenta.sh renew &lt;its name&gt;</code>.</div>` + d.devices.map(v => {
         const state = v.state === 'live' ? (v.this ? 'this device' : 'signed in')
-          : v.state === 'timed out' ? 'timed out' : 'revoked';
+          : v.state === 'timed out' ? 'timed out' : 'signed out' + (v.signed_out_at ? ' ' + ago(v.signed_out_at) : '');
         const out = v.times_out_at ? ` · times out ${esc(new Date(v.times_out_at).toLocaleDateString())}` : '';
         return `<div class="dev ${v.state === 'revoked' ? 'revoked' : v.state === 'timed out' ? 'timed' : ''}">`
           + `<b>${esc(v.label)}</b> · ${esc(state)}`

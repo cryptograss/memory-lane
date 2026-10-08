@@ -428,8 +428,13 @@ class EveryonesDevicesTest(TestCase):
         self.assertTrue(laptop.get('/api/auth/devices/').json()['admin'])
         people = {p['name']: p['devices'] for p in laptop.get('/api/auth/devices/?all=1').json()['people']}
         self.assertEqual([(d['label'], d['tier'], d['this']) for d in people['justin']], [('laptop', 'key', True)])
-        self.assertEqual([(d['label'], d['tier']) for d in people['skyler']],
-                         [('PickiPedia sign-in (SkymanJenkins, Android)', 'wiki')])  # the revoked one isn't listed
+        self.assertEqual([(d['label'], d['tier'], bool(d['signed_out_at'])) for d in people['skyler']],
+                         [('PickiPedia sign-in (SkymanJenkins, Android)', 'wiki', False),
+                          ('old laptop', 'key', True)])  # signed out lately: listed, with when
+        long_gone = self.client_for(self.skyler, 'older laptop')[1]
+        Device.objects.filter(pk=long_gone.pk).update(revoked_at=timezone.now() - timedelta(days=30))
+        people = {p['name']: p['devices'] for p in laptop.get('/api/auth/devices/?all=1').json()['people']}
+        self.assertNotIn('older laptop', [d['label'] for d in people['skyler']])  # long ago: not
 
         # Seeing isn't signing out: someone else's device is still revoked only by a signed kick.
         revoke = laptop.post(f'/api/auth/devices/{sky_phone.pk}/revoke/')
