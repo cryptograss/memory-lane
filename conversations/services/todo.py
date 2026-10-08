@@ -24,6 +24,15 @@ them to it (poller rules_block) -- adding what they leave someone to do,
 and ticking off what's been done.
 
 A renamed Mood's list is found under its old name too, until it's moved.
+
+**Merges tick themselves.** An open item whose link is a GitHub pull
+request shows as done once GitHub says it was merged ('merged': true) --
+whatever the page says, so nobody has to tick a merge by hand. The page
+itself is left as it was; an agent tidies it when it next touches the list.
+GitHub is asked once per repository every few minutes (its recently closed
+pull requests), and a pull request not among them on its own, so sixty
+unsigned requests an hour go a long way; settings.GITHUB_TOKEN, if set,
+lifts that ceiling.
 """
 
 import re
@@ -112,11 +121,70 @@ def for_mood(mood, http=None):
             items = parse(text)
         except Unreadable as e:
             error = str(e)
+    items = with_merges(items, http)
     page = f"{pickipedia_url()}/wiki/{quote(title.replace(' ', '_'))}"
     found = {'page': page, 'edit': f'{page}?action=edit', 'exists': text is not None, 'items': items,
              **({'error': error} if error else {})}
     cache.set(key, found, 15 if error else FOR)
     return found
+
+
+# --- merges, from GitHub ------------------------------------------------------------
+
+_PULL = re.compile(r'^https://github\.com/([\w.-]+)/([\w.-]+)/pull/(\d+)(?:[/#?].*)?$', re.I)
+CLOSED_FOR = 300       # seconds a repository's recently closed pull requests are kept
+OPEN_FOR = 600         # seconds a pull request on its own, still open, is kept
+MERGED_FOR = 86400     # seconds one merged is kept: merged is merged
+
+
+def _github(path, http, **params):
+    from django.conf import settings
+    token = getattr(settings, 'GITHUB_TOKEN', '')
+    headers = {'Accept': 'application/vnd.github+json', 'User-Agent': 'memory-lane (magenta; todo)',
+               **({'Authorization': f'Bearer {token}'} if token else {})}
+    response = http.get(f'https://api.github.com{path}', params=params, headers=headers, timeout=6)
+    return response.json() if response.status_code == 200 else None
+
+
+def _recently_merged(owner, repo, http):
+    """{number} of a repository's recently closed pull requests that were merged; None if GitHub won't say."""
+    key = f'todo:merged:{owner}/{repo}'.lower()
+    found = cache.get(key)
+    if found is None:
+        listed = _github(f'/repos/{owner}/{repo}/pulls', http, state='closed', sort='updated', direction='desc',
+                         per_page=100)
+        found = {p['number'] for p in listed if p.get('merged_at')} if isinstance(listed, list) else 'unknown'
+        cache.set(key, found, CLOSED_FOR)
+    return None if found == 'unknown' else found
+
+
+def _merged(owner, repo, number, http):
+    """Whether GitHub says this pull request was merged (False if it won't say)."""
+    recent = _recently_merged(owner, repo, http)
+    if recent and number in recent:
+        return True
+    key = f'todo:pull:{owner}/{repo}#{number}'.lower()
+    found = cache.get(key)
+    if found is None:
+        pull = _github(f'/repos/{owner}/{repo}/pulls/{number}', http)
+        found = bool(pull and pull.get('merged_at'))
+        cache.set(key, found, MERGED_FOR if found else OPEN_FOR)
+    return found
+
+
+def with_merges(items, http):
+    """The items, an open one linking a GitHub pull request that's been merged marked done ('merged': True)."""
+    out = []
+    for item in items:
+        match = _PULL.match(item.get('link') or '')
+        if match and not item['done']:
+            try:
+                if _merged(match.group(1), match.group(2), int(match.group(3)), http):
+                    item = {**item, 'done': True, 'merged': True}
+            except Exception:  # noqa: BLE001 -- GitHub unreachable: the item stands as written
+                pass
+        out.append(item)
+    return out
 
 
 def forget(mood):

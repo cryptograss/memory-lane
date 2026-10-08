@@ -241,6 +241,9 @@ PICKIPEDIA_UPLOAD_CLIENT_ID = os.getenv('PICKIPEDIA_UPLOAD_CLIENT_ID', '')
 PICKIPEDIA_UPLOAD_CLIENT_SECRET = os.getenv('PICKIPEDIA_UPLOAD_CLIENT_SECRET', '')
 # Each person's PickiPedia name, from hunter's inventory: "<name> <WikiName>" lines.
 MOOD_WIKI_NAMES = os.getenv('MOOD_WIKI_NAMES', '')
+# A Mood's to-do list asks GitHub which pull requests are merged (conversations/services/todo.py):
+# unsigned, sixty requests an hour; a read-only token, if set, lifts that.
+GITHUB_TOKEN = os.getenv('GITHUB_TOKEN', '')
 
 # Who may kick, ban, scram (AZ5) and lift, with their SSH key
 # (conversations/views_admin.py): "justin,skyler". Unset, nobody can.
