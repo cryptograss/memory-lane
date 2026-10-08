@@ -132,6 +132,29 @@
   #readBar button { font: inherit; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--ink);
                     padding: 2px 9px; cursor: pointer; }
   #userMenu .readall select { font: inherit; }
+  /* What was taken back, opened with the recovery key in this tab (services/sealing.py). */
+  #sealsBox { position: fixed; z-index: 30; top: 44px; right: 12px; width: min(560px, 94vw); max-height: 80vh; overflow-y: auto;
+              background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+              box-shadow: 0 8px 24px rgba(0,0,0,.18); font-size: 13.5px; }
+  #sealsBox[hidden] { display: none; }
+  #sealsBox .head { display: flex; justify-content: space-between; margin-bottom: 6px; }
+  #sealsBox button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel);
+                     color: var(--ink); cursor: pointer; padding: 2px 8px; }
+  #sealKey { color: var(--muted); font-size: 12.5px; margin-bottom: 8px; }
+  #sealKey .ask { display: flex; gap: 6px; margin-top: 6px; }
+  #sealKey input { flex: 1; font: 12px ui-monospace, monospace; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px;
+                   background: var(--bg); color: var(--ink); }
+  #sealsBox .ver { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+  #sealsBox .ver.now { border-style: dashed; }
+  #sealsBox .ver .meta, #sealsBox .step, #sealsBox .row .meta { color: var(--muted); font-size: 12px; }
+  #sealsBox .ver .said { white-space: pre-wrap; overflow-wrap: anywhere; margin: 3px 0; }
+  #sealsBox .ver img { max-width: 100%; max-height: 200px; border-radius: 6px; display: block; margin: 4px 0; }
+  #sealsBox .ver audio { width: 100%; margin: 4px 0; }
+  #sealsBox .step { padding: 3px 0 3px 12px; }
+  #sealsBox .row { border-top: 1px solid var(--line); padding: 6px 0; display: flex; gap: 8px; align-items: baseline; }
+  #sealsBox .row .what { flex: 1; }
+  .turn [data-versions] { cursor: pointer; }
+  .turn [data-versions]:hover { text-decoration: underline; }
   #devicesBox { position: fixed; z-index: 30; top: 44px; right: 12px; width: min(460px, 94vw); max-height: 75vh; overflow-y: auto;
                 background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.18);
                 padding: 10px 14px; font-size: 13px; }
@@ -739,6 +762,7 @@
       <label class="readall" id="readAllLabel" hidden title="Each new message read aloud as it arrives, in its speaker's voice, the narrator saying who speaks and when an agent starts thinking. Your own messages aren't read.">read aloud as they come <select id="readAll"><option value="off">off</option><option value="here">this Mood</option><option value="everywhere">every Mood</option></select></label>
       <a href="#" id="voicesLink" hidden>voices</a>
       <a href="#" id="devicesLink" hidden>your devices</a>
+      <a href="#" id="takenBackLink" hidden title="Who edited or deleted what in this Mood, and when; with the recovery key, what it said before">taken back here</a>
       <a class="settings" href="/moods/settings/" title="How each agent carries itself in each Mood">settings</a>
       <a href="#" id="signout" hidden>sign out</a>
     </div>
@@ -753,6 +777,11 @@
 <div id="devicesBox" hidden role="dialog" aria-label="Your devices">
   <div class="head"><b id="devicesTitle">Your devices</b> <button type="button" id="devicesClose">close</button></div>
   <div id="devicesList"></div>
+</div>
+<div id="sealsBox" hidden role="dialog" aria-label="What was taken back">
+  <div class="head"><b id="sealsTitle">What it said before</b> <button type="button" id="sealsClose">close</button></div>
+  <div id="sealKey"></div>
+  <div id="sealsList"></div>
 </div>
 <form id="uploadBox" hidden>
   <b>Put this picture on PickiPedia</b>
@@ -1383,11 +1412,17 @@
     // ↩ for anyone signed in. A reply addresses a person, never an agent (only an @mention wakes one).
     const replyBtn = viewer && !t.deleted ? `<button type="button" class="replybtn" data-reply="${esc(t.id)}" title="Reply" aria-label="Reply">↩</button>` : '';
     // ✎ what you wrote here yourself; 🗑 what you wrote, or anything as an admin (services/retract.py).
-    const editBtn = viewer && !t.deleted && t.sender === viewer && t.via === 'web' && !t.attested
+    // As services/retract.py allows: your own, edited within a day, deleted within a week; an admin's, any.
+    const age = Date.now() - new Date(t.created_at).getTime();
+    const editBtn = viewer && !t.deleted && t.sender === viewer && t.via === 'web' && !t.attested && age < 864e5
       ? `<button type="button" class="editbtn" data-edit="${esc(t.id)}" title="Edit what you said" aria-label="Edit">✎</button>` : '';
-    const delBtn = viewer && !t.deleted && (t.sender === viewer || viewerAdmin)
+    const delBtn = viewer && !t.deleted && ((t.sender === viewer && age < 7 * 864e5) || viewerAdmin)
       ? `<button type="button" class="delbtn" data-delete="${esc(t.id)}" title="Delete it: its words are taken out of the record" aria-label="Delete">🗑</button>` : '';
-    const edited = t.edited ? `<span class="edited" title="edited ${esc(stamp(t.edited))}">(edited)</span>` : '';
+    // For an admin, each mark opens what it said before (the recovery key, in this tab only, below).
+    const versions = viewerAdmin ? ` data-versions="${esc(t.id)}" role="button" tabindex="0"` : '';
+    const seeThem = viewerAdmin ? ': click for what it said before (needs the recovery key)' : '';
+    const edited = t.edited ? `<span class="edited" title="edited ${esc(stamp(t.edited))}${seeThem}"${versions}>(edited)</span>`
+      : t.restored ? `<span class="edited" title="put back ${esc(stamp(t.restored))}, with the recovery key${seeThem}"${versions}>(restored)</span>` : '';
     const answers = t.reply ? `<a class="replyto" href="#m-${esc(t.reply.id)}" data-reveal="${esc(t.reply.id)}" title="Go to the message this replies to">`
       + `↩ ${icon(t.reply.sender, human[t.reply.sender] !== false)}<b>${esc(shown(t.reply.sender))}</b> ${esc(t.reply.snippet || '(a message)')}</a>` : '';
     el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${cont ? '' : edited}${how(t)}${signed}${replyBtn}${cont ? '' : editBtn + delBtn}</div>`
@@ -1395,10 +1430,11 @@
       + answers
       + `<a class="permalink mini" href="#m-${esc(t.id)}" title="${esc(stamp(t.created_at))} · this message's link: click to copy">#</a>`
       + (voiceOn && viewer && !t.deleted ? speakButton(t, true) : '')
-      + (t.deleted ? `<div class="body gone">message deleted by ${esc(shown(t.deleted.by))} · ${esc(stamp(t.deleted.at))}</div>`
+      + (t.deleted ? `<div class="body gone"${versions}${seeThem ? ` title="${esc(seeThem.slice(2))}"` : ''}>message deleted by ${esc(shown(t.deleted.by))} · ${esc(stamp(t.deleted.at))}</div>`
                    : `<div class="body">${t.html}</div>`);
     if (t.deleted) el.classList.add('deleted');
     el._text = t.text;
+    el.dataset.sender = t.sender;
     // On a touch screen ▶ floats at the message's right, kept in sight while any of it is (.dock).
     // (A follow-on message has its own, the mini, kept in sight the same way.)
     if (voiceOn && viewer && !t.deleted && !COARSE) el.querySelector('.who').insertAdjacentHTML('beforeend', speakButton(t, false));
@@ -1662,6 +1698,9 @@
         'unbanned': `${by} let ${who} sign in again`,
         'az5': `☢ ${who} pressed AZ5: everyone signed out, Moods locked`,
         'lifted': `${who} lifted AZ5: Moods open again`,
+        // Taking back (services/retract.py): an admin's, of someone else's words; or a burst of them.
+        'took-back': `🗑 ${by} took back ${who}'s words · ${esc(e.label || '')}`,
+        'taking-back-a-lot': `⚠ ${who} is taking back a lot · ${esc(e.label || '')}`,
       }[e.kind] || `${who} · ${esc(e.kind || '')}`) + ` · ${esc(stamp(e.created_at))}`;
       container.appendChild(el);
       prev = null;
@@ -3577,6 +3616,192 @@
     const r = await fetch(`/api/auth/devices/${b.dataset.revoke}/revoke/`, { method: 'POST', headers: { 'X-CSRFToken': csrf() } });
     if (r.ok && b.dataset.this) { location.reload(); return; }
     showDevices();
+  });
+
+  // --- the recovery key, in this tab only (services/sealing.py, retract.py) -----
+  // What an edit or deletion took out is sealed to the recovery key. An admin
+  // holding its private half can read it here: pasted in, it becomes a
+  // WebCrypto key nothing can read back out, held in this tab's memory for
+  // KEY_IDLE after its last use, never stored and never sent. The seals come
+  // from the server; they're opened here (X25519, HKDF-SHA256, AES-256-GCM,
+  // as sealing.py seals). "Put this back" sends the opened words back, and the
+  // server takes them only if they're the very bytes sealed. A page holding
+  // the key is only as safe as the page: after a break-in, use manage.py unseal.
+  const sealsBox = document.getElementById('sealsBox');
+  const sealKeyEl = document.getElementById('sealKey'), sealsList = document.getElementById('sealsList');
+  const KEY_IDLE = 15 * 60e3;
+  const seals = { key: null, mine: null, idle: null, public: '', showing: null };
+  const SEAL_INFO = new TextEncoder().encode('magenta sealed words v1');
+  // PKCS#8 around an X25519 private key's 32 bytes: the form every browser imports one in.
+  const X25519_PKCS8 = Uint8Array.from([0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20]);
+  const unb64 = t => Uint8Array.from(atob(t.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - t.length % 4) % 4)), c => c.charCodeAt(0));
+  const joined = (...parts) => {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    parts.reduce((at, p) => (out.set(p, at), at + p.length), 0);
+    return out;
+  };
+  function forgetSealKey() {
+    clearTimeout(seals.idle);
+    seals.key = seals.mine = null;
+    renderSealKey();
+  }
+  function keepSealKey() { clearTimeout(seals.idle); seals.idle = setTimeout(forgetSealKey, KEY_IDLE); }
+  async function holdSealKey(text) {
+    text = (text || '').trim();
+    if (!window.crypto || !crypto.subtle) throw new Error('opening seals needs the page over https');
+    if (!text.startsWith('mgrkey1.')) throw new Error('the recovery private key starts mgrkey1.');
+    const raw = unb64(text.slice('mgrkey1.'.length));
+    if (raw.length !== 32) throw new Error("that isn't the whole key: copy all of it");
+    const pkcs8 = joined(X25519_PKCS8, raw);
+    raw.fill(0);
+    try {
+      // Imported once readable, to learn its public half and check it's this server's key; then for good, unreadable.
+      const probe = await crypto.subtle.importKey('pkcs8', pkcs8, { name: 'X25519' }, true, ['deriveBits']);
+      const x = (await crypto.subtle.exportKey('jwk', probe)).x;
+      const expected = seals.public ? unb64(seals.public.slice('mgrpub1.'.length)) : null;
+      const mine = x ? unb64(x) : expected;
+      if (expected && mine.join() !== expected.join()) throw new Error("that's a recovery key, but not this server's");
+      seals.key = await crypto.subtle.importKey('pkcs8', pkcs8, { name: 'X25519' }, false, ['deriveBits']);
+      seals.mine = mine;
+    } catch (err) {
+      if (err.name === 'NotSupportedError') throw new Error("this browser can't open seals: it needs X25519 (Chrome 133+, Firefox 130+, Safari 17+)");
+      throw err;
+    } finally {
+      pkcs8.fill(0);
+    }
+    keepSealKey();
+  }
+  async function openSeal(sealed) {
+    if (!sealed.startsWith('mgs1.')) throw new Error('not a seal this page knows');
+    const raw = unb64(sealed.slice('mgs1.'.length));
+    const ephemeral = raw.slice(0, 32), nonce = raw.slice(32, 44), box = raw.slice(44);
+    const theirs = await crypto.subtle.importKey('raw', ephemeral, { name: 'X25519' }, false, []);
+    const shared = await crypto.subtle.deriveBits({ name: 'X25519', public: theirs }, seals.key, 256);
+    const hkdf = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']);
+    const aes = await crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: joined(ephemeral, seals.mine), info: SEAL_INFO },
+                                              hkdf, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+    keepSealKey();
+    try { return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, aes, box)); }
+    catch (err) { throw new Error("the key doesn't open this one"); }
+  }
+  function renderSealKey() {
+    if (seals.key) {
+      sealKeyEl.innerHTML = '🔑 The recovery key is held in this tab only, for 15 minutes after its last use. <button type="button" id="sealForget">forget it now</button>';
+      return;
+    }
+    sealKeyEl.innerHTML = 'To read what was said before, paste the recovery private key (<code>mgrkey1.…</code>). '
+      + 'It stays in this tab, never sent or stored. Better not on a shared or untrusted computer: a key in a web page is only as safe as the page.'
+      + '<span class="ask"><input id="sealKeyIn" type="password" autocomplete="off" spellcheck="false" placeholder="mgrkey1.…" aria-label="Recovery private key">'
+      + '<button type="button" id="sealOpen">Open</button></span>';
+  }
+  sealsBox.addEventListener('click', async e => {
+    if (e.target.id === 'sealForget') { forgetSealKey(); if (seals.showing) seals.showing(); return; }
+    if (e.target.id === 'sealOpen') {
+      const box = document.getElementById('sealKeyIn');
+      const text = box.value;
+      box.value = '';
+      try { await holdSealKey(text); } catch (err) { showError('recovery key: ' + err.message); return; }
+      renderSealKey();
+      if (seals.showing) seals.showing();
+      return;
+    }
+    const v = e.target.closest('[data-versions]');
+    if (v) { showVersions(v.dataset.versions); return; }
+    const back = e.target.closest('[data-putback]');
+    if (back) { putBack(back); return; }
+    const go = e.target.closest('a[data-reveal]');
+    if (go && !e.ctrlKey && !e.metaKey) { e.preventDefault(); reveal(go.dataset.reveal); }
+  });
+  sealsBox.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.id === 'sealKeyIn') { e.preventDefault(); document.getElementById('sealOpen').click(); }
+  });
+  document.getElementById('sealsClose').addEventListener('click', () => { sealsBox.hidden = true; seals.showing = null; sealsList.innerHTML = ''; });
+  // A sealed copy's words: a string, or a message's blocks. Its pictures show below it, not as their markup.
+  function sealedText(content) {
+    const text = typeof content === 'string' ? content
+      : Array.isArray(content) ? content.map(b => typeof b === 'string' ? b : (b && b.text) || '').join('\n')
+      : (content && content.text) || JSON.stringify(content);
+    return text.replace(/!\[[^\]]*\]\(\/(?:moods|motions)\/media\/[0-9a-f]{64}\.\w+\)/g, '[picture]');
+  }
+  const SEALED_MEDIA = /^(image\/(png|jpeg|gif|webp)|audio\/[\w.+-]+)$/;
+  function sealedMedia(media) {
+    return (media || []).filter(m => SEALED_MEDIA.test(m.mime)).map(m => m.mime.startsWith('image/')
+      ? `<img alt="" src="data:${m.mime};base64,${esc(m.data)}">` : `<audio controls src="data:${m.mime};base64,${esc(m.data)}"></audio>`).join('');
+  }
+  const TOOK = { edited: 'edited', deleted: 'deleted', replaced: 'put back an earlier version' };
+  async function showVersions(id) {
+    userMenu.hidden = true;
+    sealsBox.hidden = false;
+    seals.showing = () => showVersions(id);
+    const el = document.getElementById('m-' + id);
+    const whose = el && el.dataset.sender ? `${shown(el.dataset.sender)}'s message` : 'a message';
+    document.getElementById('sealsTitle').textContent = `What ${whose} said before`;
+    sealsList.textContent = 'Loading…';
+    const r = await fetch(`/api/moods/${encodeURIComponent(current)}/messages/${encodeURIComponent(id)}/sealed/`);
+    const got = await r.json().catch(() => ({}));
+    if (!r.ok) { sealsList.textContent = got.error || `couldn't fetch them (${r.status})`; return; }
+    seals.public = got.public || '';
+    renderSealKey();
+    const copies = got.copies || [];
+    if (!copies.length) { sealsList.textContent = 'Nothing sealed for this message: it was changed before taking back kept a copy.'; return; }
+    const steps = copies.map(c => `<div class="step">↓ ${esc(TOOK[c.kind] || c.kind)} by <b>${esc(shown(c.by))}</b> · ${esc(stamp(c.at))}</div>`);
+    const now = el ? (el.classList.contains('deleted') ? '<i>deleted</i>' : esc(el._text || '')) : '<i>not on this page</i>';
+    const nowHtml = `<div class="ver now"><div class="meta">Now</div><div class="said">${now}</div></div>`;
+    if (!seals.key) {
+      sealsList.innerHTML = copies.map((c, i) => `<div class="ver"><div class="meta">${i ? 'Then' : 'As first said'}</div><div class="said"><i>sealed</i></div></div>${steps[i]}`).join('') + nowHtml;
+      return;
+    }
+    const opened = await Promise.all(copies.map(c => openSeal(c.sealed).then(bytes => ({ bytes, said: JSON.parse(new TextDecoder().decode(bytes)) }),
+                                                                            err => ({ error: err.message }))));
+    sealsList.innerHTML = copies.map((c, i) => {
+      const o = opened[i];
+      const body = o.error ? `<i>${esc(o.error)}</i>` : esc(sealedText(o.said.content));
+      const button = o.error ? '' : `<button type="button" data-putback="${esc(c.copy)}" data-message="${esc(id)}">Put this back</button>`;
+      return `<div class="ver"><div class="meta">${i ? 'Then' : 'As first said'}</div><div class="said">${body}</div>${o.error ? '' : sealedMedia(o.said.media)}${button}</div>${steps[i]}`;
+    }).join('') + nowHtml;
+    sealsList._opened = Object.fromEntries(copies.map((c, i) => [c.copy, opened[i].bytes]));
+  }
+  async function putBack(button) {
+    const bytes = (sealsList._opened || {})[button.dataset.putback];
+    if (!bytes) return;
+    if (!confirm('Put this version back, for everyone? If it was taken back because it held a secret, the secret comes back with it. '
+                 + 'What it says now is sealed first, so this can be undone the same way.')) return;
+    button.disabled = true;
+    const r = await fetch(`/api/moods/${encodeURIComponent(current)}/messages/${encodeURIComponent(button.dataset.message)}/restore/?copy=${encodeURIComponent(button.dataset.putback)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-CSRFToken': csrf() }, body: bytes });
+    const got = await r.json().catch(() => ({}));
+    if (!r.ok) { button.disabled = false; showError('put back: ' + (got.error || r.status)); return; }
+    showNote('Put back, as it was.', 6000);
+    await poll(false);
+    showVersions(button.dataset.message);
+  }
+  // Everything taken back in this Mood, newest first: who, whose, when (no key needed to see that much).
+  async function showTakenBack() {
+    userMenu.hidden = true;
+    sealsBox.hidden = false;
+    seals.showing = showTakenBack;
+    document.getElementById('sealsTitle').textContent = `Taken back in #${current}`;
+    renderSealKey();
+    sealsList.textContent = 'Loading…';
+    const r = await fetch(`/api/moods/${encodeURIComponent(current)}/taken-back/`);
+    const got = await r.json().catch(() => ({}));
+    if (!r.ok) { sealsList.textContent = got.error || `couldn't fetch them (${r.status})`; return; }
+    const copies = got.copies || [];
+    sealsList.innerHTML = copies.length ? copies.map(c => `<div class="row"><span class="what"><b>${esc(shown(c.by))}</b> ${esc(TOOK[c.kind] || c.kind)} `
+        + (c.sender && c.sender !== c.by ? `${esc(shown(c.sender))}'s message` : c.sender ? 'their own message' : 'a message')
+        + ` <a href="#m-${esc(c.message)}" data-reveal="${esc(c.message)}">→</a><div class="meta">${esc(stamp(c.at))}</div></span>`
+        + `<button type="button" data-versions="${esc(c.message)}">what it said</button></div>`).join('')
+      : 'Nothing has been edited or deleted here.';
+  }
+  document.getElementById('takenBackLink').hidden = !viewerAdmin;
+  document.getElementById('takenBackLink').addEventListener('click', e => { e.preventDefault(); showTakenBack(); });
+  document.addEventListener('click', e => {
+    const v = viewerAdmin && e.target.closest('.turn [data-versions]');
+    if (v) showVersions(v.dataset.versions);
+  });
+  document.addEventListener('keydown', e => {
+    const v = viewerAdmin && (e.key === 'Enter' || e.key === ' ') && e.target.closest && e.target.closest('.turn [data-versions]');
+    if (v) { e.preventDefault(); showVersions(v.dataset.versions); }
   });
 
   userBtn.addEventListener('click', e => {

@@ -259,7 +259,8 @@ def _retract(request, slug, message_id, edit):
         return JsonResponse({'error': 'slow down'}, status=429)
     if edit:
         if not retract.may_edit(message, device):
-            return JsonResponse({'error': 'only what you wrote here yourself can be edited'}, status=403)
+            return JsonResponse({'error': 'only what you wrote here yourself, within a day of writing it, can be edited'},
+                                status=403)
         try:
             text = json.loads(request.body).get('text', '')
         except (ValueError, AttributeError):
@@ -274,12 +275,18 @@ def _retract(request, slug, message_id, edit):
             agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
             if [n for n in addressed_in(text, known_names(), by=device.entity_id) if n in agents]:
                 return JsonResponse({'error': "signed in with PickiPedia, you can't address agents"}, status=403)
-        done = retract.edit(message, text, device.entity_id)
+        try:
+            done = retract.edit(message, text, device.entity_id)
+        except retract.Refused as e:
+            return JsonResponse({'error': str(e)}, status=e.status)
     else:
         if not retract.may_delete(message, device):
-            return JsonResponse({'error': 'only what you wrote can be deleted (or anything, by an admin with their SSH key)'},
-                                status=403)
-        done = retract.delete(message, device.entity_id)
+            return JsonResponse({'error': 'only what you wrote, within a week of writing it, can be deleted '
+                                          '(or anything, by an admin with their SSH key)'}, status=403)
+        try:
+            done = retract.delete(message, device.entity_id)
+        except retract.Refused as e:
+            return JsonResponse({'error': str(e)}, status=e.status)
     return JsonResponse({'id': str(message.id), 'kind': 'edited' if edit else 'deleted', **done})
 
 
@@ -307,6 +314,68 @@ def api_react(request, slug, message_id):
         return JsonResponse({'error': 'slow down'}, status=429)
     on = reactions.toggle(message, device.entity_id, emoji)
     return JsonResponse({'on': on, 'reactions': reactions.in_mood(message.mood, [message.id]).get(str(message.id), {})})
+
+
+# What was taken back, for an admin's page to open with the recovery key
+# (services/retract.py). Sealed, it's nothing to anyone without the key's
+# private half; that stays in the browser, and only what it opened comes back.
+
+def _admin_in(request, slug):
+    """(device, mood), or a JsonResponse saying why not."""
+    from .services import retract
+    device = mood_auth.device_for(request)
+    if not retract.is_admin(device):
+        return None, JsonResponse({'error': 'only an admin signed in with their SSH key'}, status=403)
+    mood = Mood.by_slug(slug)
+    if mood is None:
+        return None, JsonResponse({'error': 'no such Mood'}, status=404)
+    return (device, mood), None
+
+
+@require_GET
+def api_message_sealed(request, slug, message_id):
+    """{'copies': [{'copy', 'kind', 'by', 'at', 'sealed'}], 'public'}: what a message said before each change, sealed."""
+    from .services import retract
+    found, refused = _admin_in(request, slug)
+    if refused:
+        return refused
+    message = Message.objects.filter(id=_uuid_or_none(message_id), mood=found[1]).first()
+    if message is None:
+        return JsonResponse({'error': 'no such message in this Mood'}, status=404)
+    return JsonResponse({'copies': retract.copies_of(message.pk),
+                         'public': getattr(settings, 'MOOD_RECOVERY_PUBLIC_KEY', '')})
+
+
+@require_GET
+def api_mood_taken_back(request, slug):
+    """{'copies': [{'copy', 'message', 'sender', 'kind', 'by', 'at'}]}: who took back what here, newest first."""
+    from .services import retract
+    found, refused = _admin_in(request, slug)
+    if refused:
+        return refused
+    return JsonResponse({'copies': retract.taken_back_in(found[1])})
+
+
+@require_POST
+def api_message_restore(request, slug, message_id):
+    """?copy=N, and the bytes that copy opened to: put the message back as it had it."""
+    from .services import retract
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    found, refused = _admin_in(request, slug)
+    if refused:
+        return refused
+    from .models import SealedCopy
+    copy = SealedCopy.objects.filter(id=request.GET.get('copy') if (request.GET.get('copy') or '').isdigit() else None,
+                                     message_id=_uuid_or_none(message_id), mood_slug=found[1].slug).first()
+    if copy is None:
+        return JsonResponse({'error': 'no such sealed copy of this message'}, status=404)
+    try:
+        retract.put_back(copy, retract.opened(copy, request.body), found[0].entity_id)
+    except retract.Refused as e:
+        return JsonResponse({'error': str(e)}, status=e.status)
+    return JsonResponse({'id': str(copy.message_id), 'kind': 'restored', 'copy': copy.id})
 
 
 @require_GET

@@ -241,6 +241,10 @@ PICKIPEDIA_UPLOAD_CLIENT_ID = os.getenv('PICKIPEDIA_UPLOAD_CLIENT_ID', '')
 PICKIPEDIA_UPLOAD_CLIENT_SECRET = os.getenv('PICKIPEDIA_UPLOAD_CLIENT_SECRET', '')
 # Each person's PickiPedia name, from hunter's inventory: "<name> <WikiName>" lines.
 MOOD_WIKI_NAMES = os.getenv('MOOD_WIKI_NAMES', '')
+# Editing and deleting (conversations/services/retract.py): what's taken back is sealed to this
+# public key first (services/sealing.py; scripts/recovery_key.py makes a pair). Its private half
+# is kept offline, never here. Unset: nothing can be taken back at all.
+MOOD_RECOVERY_PUBLIC_KEY = os.getenv('MOOD_RECOVERY_PUBLIC_KEY', '')
 # A Mood's to-do list asks GitHub which pull requests are merged (conversations/services/todo.py):
 # unsigned, sixty requests an hour; a read-only token, if set, lifts that.
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN', '')
