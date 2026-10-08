@@ -183,6 +183,37 @@ class GuardedTest(TestCase):
         with self.assertRaises(sealing.SealingError):
             sealing.unseal(copy.sealed, sealing.new_pair()[0])  # another key opens nothing
 
+    def test_put_back_as_it_was_before_the_first_takeback_and_all_of_someones_at_once(self):
+        from io import StringIO
+        from django.core.management import call_command
+        first = self.post(self.skyler, 'the original words')
+        second = self.post(self.skyler, 'another of hers')
+        thief = self.client_for(self.skyler)  # her account, captured
+        self.act(thief, first, 'edit', {'text': 'A'})
+        self.act(thief, first, 'edit', {'text': 'B'})
+        self.act(thief, second, 'delete')
+        listed = StringIO()
+        call_command('unseal', '--list', '--by', 'skyler', stdout=listed)
+        self.assertEqual(len(listed.getvalue().strip().splitlines()), 3)
+        with mock.patch('sys.stdin', StringIO(PRIVATE + '\n')):
+            call_command('unseal', '--restore', '--by', 'skyler', '--since', '2000-01-01', stdout=StringIO())
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual((first.content, second.content), ('the original words', 'another of hers'))  # not 'A'
+
+    def test_a_chosen_copy(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from conversations.models import SealedCopy
+        mine = self.post(self.justin, 'one')
+        self.act(self.justin_key, mine, 'edit', {'text': 'two'})
+        self.act(self.justin_key, mine, 'edit', {'text': 'three'})
+        later = SealedCopy.objects.filter(message_id=mine.id).order_by('at', 'id').last()
+        with mock.patch('sys.stdin', StringIO(PRIVATE + '\n')):
+            call_command('unseal', str(mine.id), '--restore', '--copy', str(later.id), stdout=StringIO())
+        mine.refresh_from_db()
+        self.assertEqual(mine.content, 'two')
+
     def test_without_a_recovery_key_nothing_can_be_taken_back(self):
         mine = self.post(self.justin, 'stays')
         with override_settings(MOOD_RECOVERY_PUBLIC_KEY=''):
