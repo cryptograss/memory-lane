@@ -232,6 +232,57 @@ def api_say(request, slug):
     return JsonResponse({'id': str(message.id), **({'note': note} if note else {})}, status=201)
 
 
+@require_POST
+def api_message_edit(request, slug, message_id):
+    """{"text"}: replace what you said (services/retract.py). Yours, from the web; never a signed statement."""
+    return _retract(request, slug, message_id, edit=True)
+
+
+@require_POST
+def api_message_delete(request, slug, message_id):
+    """Take a message's words out of the record (services/retract.py): yours, or anyone's as an admin."""
+    return _retract(request, slug, message_id, edit=False)
+
+
+def _retract(request, slug, message_id, edit):
+    from .services import retract
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = mood_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in first'}, status=401)
+    message = Message.objects.filter(id=_uuid_or_none(message_id), mood=Mood.by_slug(slug)).first()
+    if message is None:
+        return JsonResponse({'error': 'no such message in this Mood'}, status=404)
+    if not _under_limit(f'retract:{device.pk}', 20):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    if edit:
+        if not retract.may_edit(message, device):
+            return JsonResponse({'error': 'only what you wrote here yourself can be edited'}, status=403)
+        try:
+            text = json.loads(request.body).get('text', '')
+        except (ValueError, AttributeError):
+            return JsonResponse({'error': 'expected {"text": ...}'}, status=400)
+        text = (text if isinstance(text, str) else '').replace('\x00', '').strip()
+        if not text:
+            return JsonResponse({'error': 'nothing left: delete it instead'}, status=400)
+        if len(text) > MAX_CHARS:
+            return JsonResponse({'error': f'longer than {MAX_CHARS} characters'}, status=400)
+        if device.tier == 'wiki':  # as when posting: a PickiPedia sign-in can't address agents
+            from .services.mood_view import addressed_in, known_names
+            agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
+            if [n for n in addressed_in(text, known_names(), by=device.entity_id) if n in agents]:
+                return JsonResponse({'error': "signed in with PickiPedia, you can't address agents"}, status=403)
+        done = retract.edit(message, text, device.entity_id)
+    else:
+        if not retract.may_delete(message, device):
+            return JsonResponse({'error': 'only what you wrote can be deleted (or anything, by an admin with their SSH key)'},
+                                status=403)
+        done = retract.delete(message, device.entity_id)
+    return JsonResponse({'id': str(message.id), 'kind': 'edited' if edit else 'deleted', **done})
+
+
 @require_GET
 def api_clips(request):
     """The saved clips, by name: for the composer's /clips suggestions."""
