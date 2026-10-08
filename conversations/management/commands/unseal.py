@@ -11,14 +11,19 @@
         before NAME first touched it -- after a captured account, say
 
 A message edited twice by someone else (original, then A, then B) has two
-sealed copies, the original and A: put back, it's the original, not A.
+sealed copies, the original and A: put back, it's the original, not A. What
+a message said when it's put back is sealed too (a copy "replaced"), so a
+putting back can itself be undone.
+
+An admin's page can do the same, one message at a time, opening the seals
+in the browser (moods.html): this is for when the page won't do -- many
+messages at once, or a page you'd rather not hand the key to.
 
 The private half is read from standard input or a prompt, never from the
 command line or a file: used for this one run, not kept. See
 conversations/services/sealing.py and retract.py.
 """
 
-import base64
 import getpass
 import json
 import sys
@@ -76,23 +81,16 @@ class Command(BaseCommand):
         return (sys.stdin.readline() if not sys.stdin.isatty() else getpass.getpass('recovery private key: ')).strip()
 
     def open(self, copy, key):
+        from conversations.services.retract import Refused, opened
         from conversations.services.sealing import SealingError, unseal
         try:
-            return json.loads(unseal(copy.sealed, key))
-        except SealingError as e:
+            return opened(copy, unseal(copy.sealed, key))
+        except (SealingError, Refused) as e:
             raise CommandError(f'copy {copy.id}: {e}')
 
     def restore(self, copy, payload):
-        from conversations.models import Media, Message, MessageChange, ThinkingEntity
-        message = Message.objects.filter(id=copy.message_id).first()
-        if message is None:
-            raise CommandError(f'{copy.message_id}: the message itself is gone from the record')
-        for m in payload['media']:
-            if not Media.objects.filter(sha256=m['sha']).exists():
-                data = base64.b64decode(m['data'])
-                Media.objects.create(sha256=m['sha'], mime=m['mime'], data=data, size=len(data),
-                                     added_by=ThinkingEntity.objects.filter(name=m.get('added_by')).first(),
-                                     **({'license': m['license']} if m.get('license') else {}))
-        type(message).objects.filter(pk=message.pk).update(content=payload['content'])
-        MessageChange.objects.update_or_create(message=message, defaults={
-            'mood': message.mood, 'kind': 'restored', 'by': 'recovery', 'reached': []})
+        from conversations.services.retract import Refused, put_back
+        try:
+            put_back(copy, payload, 'recovery')
+        except Refused as e:
+            raise CommandError(str(e))

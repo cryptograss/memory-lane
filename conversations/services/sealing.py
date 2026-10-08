@@ -6,13 +6,17 @@ server holds (settings.MOOD_RECOVERY_PUBLIC_KEY) and whose private half it
 never does -- someone keeps it offline. The server can seal; it cannot
 unseal. So a pasted secret is gone from everything the server can read, and
 a captured account's (or key's) deletions can still be put back, by whoever
-holds the private half (manage.py unseal).
+holds the private half (manage.py unseal; or the page, opening them in the
+browser -- the key never leaves it).
 
 A sealed box: a fresh X25519 key for each sealing, its agreement with the
-recovery key run through HKDF-SHA256 into a ChaCha20-Poly1305 key. Text,
-"mgs1." and then base64url of (the fresh public key, the nonce, the
-ciphertext). Keys are "mgrpub1."/"mgrkey1." and base64url of their 32 bytes
-(scripts/recovery_key.py makes a pair).
+recovery key run through HKDF-SHA256 (salt: the fresh public key, then the
+recovery one) into an AES-256-GCM key. Text, "mgs1." and then base64url of
+(the fresh public key, the 12-byte nonce, the ciphertext and its tag). All
+of it is in every browser's own WebCrypto, so the page opens a seal with no
+library of ours (moods.html, "the recovery key, in this tab only"). Keys are
+"mgrpub1."/"mgrkey1." and base64url of their 32 bytes (scripts/recovery_key.py
+makes a pair).
 """
 
 import base64
@@ -20,7 +24,7 @@ import os
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
-from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 SEALED, PUBLIC, PRIVATE = 'mgs1.', 'mgrpub1.', 'mgrkey1.'
@@ -70,7 +74,7 @@ def seal(data, recipient_text):
     ephemeral = X25519PrivateKey.generate()
     eph_raw, rec_raw = _raw(ephemeral.public_key()), _raw(recipient)
     nonce = os.urandom(12)
-    box = ChaCha20Poly1305(_key(ephemeral.exchange(recipient), eph_raw, rec_raw)).encrypt(nonce, data, None)
+    box = AESGCM(_key(ephemeral.exchange(recipient), eph_raw, rec_raw)).encrypt(nonce, data, None)
     return SEALED + _b64(eph_raw + nonce + box)
 
 
@@ -83,6 +87,6 @@ def unseal(sealed, private_text):
     eph_raw, nonce, box = raw[:32], raw[32:44], raw[44:]
     shared = private.exchange(X25519PublicKey.from_public_bytes(eph_raw))
     try:
-        return ChaCha20Poly1305(_key(shared, eph_raw, _raw(private.public_key()))).decrypt(nonce, box, None)
+        return AESGCM(_key(shared, eph_raw, _raw(private.public_key()))).decrypt(nonce, box, None)
     except Exception:
         raise SealingError("that key doesn't open this")

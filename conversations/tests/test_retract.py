@@ -246,3 +246,72 @@ class GuardedTest(TestCase):
         took = [c for c in said if c['kind'] == 'took-back']
         self.assertEqual((len(took), took[0]['who'], took[0]['by']), (retract.BURST, 'skyler', 'justin'))
         self.assertEqual([c['who'] for c in said if c['kind'] == 'taking-back-a-lot'], ['justin'])  # once a burst
+
+    # --- opened in an admin's browser, the key never leaving it -------------------
+
+    def test_a_seal_opens_as_the_page_opens_it(self):
+        """Step by step as moods.html does with WebCrypto: X25519, HKDF-SHA256, AES-256-GCM."""
+        import base64
+        import hashlib
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        from conversations.models import SealedCopy
+        oops = self.post(self.justin, 'the vault password is fiddle-and-bow-77')
+        self.act(self.justin_key, oops, 'delete')
+        copy = SealedCopy.objects.get(message_id=oops.id)
+        unb64 = lambda t: base64.urlsafe_b64decode(t + '=' * (-len(t) % 4))
+        self.assertTrue(copy.sealed.startswith('mgs1.'))
+        raw = unb64(copy.sealed[len('mgs1.'):])
+        ephemeral, nonce, box = raw[:32], raw[32:44], raw[44:]
+        private = X25519PrivateKey.from_private_bytes(unb64(PRIVATE[len('mgrkey1.'):]))
+        mine = unb64(PUBLIC[len('mgrpub1.'):])
+        shared = private.exchange(X25519PublicKey.from_public_bytes(ephemeral))
+        key = HKDF(algorithm=hashes.SHA256(), length=32, salt=ephemeral + mine, info=b'magenta sealed words v1').derive(shared)
+        plain = AESGCM(key).decrypt(nonce, box, None)
+        self.assertEqual(json.loads(plain)['content'], 'the vault password is fiddle-and-bow-77')
+        self.assertEqual(hashlib.sha256(plain).hexdigest(), copy.digest)
+        self.assertGreater(len(json.loads(plain)['salt']), 40)  # the digest gives no help guessing the words
+
+    def test_an_admin_opens_them_in_the_browser_and_puts_back_only_what_was_sealed(self):
+        oops = self.post(self.skyler, 'what she meant to say')
+        thief = self.client_for(self.skyler)
+        self.act(thief, oops, 'edit', {'text': 'A'})
+        self.act(thief, oops, 'edit', {'text': 'B'})
+        sealed_url = f'/api/moods/general/messages/{oops.id}/sealed/'
+        self.assertEqual(thief.get(sealed_url).status_code, 403)
+        self.assertEqual(self.client_for(self.justin, 'wiki').get(sealed_url).status_code, 403)  # an admin, but not by key
+        got = self.justin_key.get(sealed_url).json()
+        self.assertEqual(([c['kind'] for c in got['copies']], got['public']), (['edited', 'edited'], PUBLIC))
+        listed = self.justin_key.get('/api/moods/general/taken-back/').json()['copies']
+        self.assertEqual([(c['sender'], c['by'], c['message']) for c in listed], [('skyler', 'skyler', str(oops.id))] * 2)
+        first = got['copies'][0]
+        opened = sealing.unseal(first['sealed'], PRIVATE)  # what the browser does, the key staying there
+        restore = f'/api/moods/general/messages/{oops.id}/restore/?copy={first["copy"]}'
+        forged = json.dumps({**json.loads(opened), 'content': 'words she never said'}).encode()
+        self.assertEqual(self.justin_key.post(restore, forged, content_type='application/octet-stream').status_code, 400)
+        self.assertEqual(thief.post(restore, opened, content_type='application/octet-stream').status_code, 403)
+        self.assertEqual(self.justin_key.post(restore, opened, content_type='application/octet-stream').status_code, 200)
+        oops.refresh_from_db()
+        self.assertEqual(oops.content, 'what she meant to say')
+        turns = Client().get('/api/moods/general/turns/').json()['turns']
+        self.assertIn('restored', next(t for t in turns if t['id'] == str(oops.id)))
+        self.assertEqual(MessageChange.objects.get(message=oops).by, 'justin')
+        # What it said when put back ('B') is sealed too: a putting back can be undone.
+        now = self.justin_key.get(sealed_url).json()['copies']
+        self.assertEqual([(c['kind'], c['by']) for c in now][-1], ('replaced', 'justin'))
+        self.assertEqual(json.loads(sealing.unseal(now[-1]['sealed'], PRIVATE))['content'], 'B')
+
+    def test_putting_back_isnt_taking_back(self):
+        from conversations.models import SealedCopy
+        from conversations.services import retract
+        made = [self.post(self.skyler, f'message {n}') for n in range(retract.PER_HOUR)]
+        for m in made:
+            self.act(self.client_for(self.skyler), m, 'edit', {'text': 'scrawled over'})
+        for copy in SealedCopy.objects.filter(by='skyler'):
+            retract.put_back(copy, retract.opened(copy, sealing.unseal(copy.sealed, PRIVATE)), 'justin')
+        self.assertEqual(SealedCopy.objects.filter(by='justin', kind='replaced').count(), retract.PER_HOUR)
+        self.assertEqual(self.act(self.justin_key, self.post(self.skyler, 'one more'), 'delete').status_code, 200)
+        said = [(m.content['kind'], m.content['who']) for m in Message.objects.filter(source_file='access', mood=self.mood)]
+        self.assertNotIn(('taking-back-a-lot', 'justin'), said)

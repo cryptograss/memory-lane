@@ -18,6 +18,7 @@ class Migration(migrations.Migration):
                 ('by', models.CharField(db_index=True, max_length=50)),
                 ('at', models.DateTimeField(auto_now_add=True, db_index=True)),
                 ('sealed', models.TextField()),
+                ('digest', models.CharField(max_length=64)),
             ],
             options={'db_table': 'sealed_copies'},
         ),
