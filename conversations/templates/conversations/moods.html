@@ -111,6 +111,19 @@
   #voicesBox select { font: inherit; font-size: 12px; max-width: 55%; }
   #voicesBox button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel);
                       color: var(--ink); cursor: pointer; }
+  /* "→ PickiPedia" under a picture sent here, and its form (services/wiki_upload.py). */
+  .turn .body .topp { display: block; margin: 2px 0 6px; font: inherit; font-size: 12px; color: var(--muted); background: none;
+                      border: 1px solid var(--line); border-radius: 10px; padding: 1px 9px; cursor: pointer; }
+  .turn .body .topp:hover { color: var(--accent); border-color: var(--accent); }
+  .turn .body a.onwiki { display: block; font-size: 12.5px; color: var(--muted); margin: 2px 0 6px; text-decoration: none; }
+  #uploadBox { position: fixed; z-index: 40; top: 64px; left: 50%; transform: translateX(-50%); width: min(440px, 94vw);
+               background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.18);
+               padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; }
+  #uploadBox[hidden] { display: none; }
+  #uploadBox label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); }
+  #uploadBox .hint { font-size: 12.5px; color: var(--muted); }
+  #uploadBox input, #uploadBox textarea, #uploadBox select { font: inherit; color: var(--ink); background: var(--bg);
+                                                             border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; }
   /* Reading as they come: who's speaking, and the player's three buttons. */
   #readBar { display: flex; align-items: center; gap: 8px; max-width: 760px; margin: 0 auto; padding: 6px 16px; font-size: 13px;
              color: var(--muted); }
@@ -360,6 +373,10 @@
   #replying[hidden] { display: none; }
   #replying .what { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #replying button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+  /* The license a picture of yours goes out under, said as it's attached (services/media.LICENSES). */
+  #licenseBar { max-width: 760px; margin: 0 auto; padding: 6px 16px 0; font-size: 12.5px; color: var(--muted); }
+  #licenseBar[hidden] { display: none; }
+  #licenseBar button { font: inherit; border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline; }
   a.permalink:hover time { text-decoration: underline; }
   a.permalink[data-copied]::after { content: ' link copied'; color: var(--accent); font-size: 11px; }
   /* An agent's turn: everything it did between a person's words and its last, under one header. */
@@ -662,6 +679,18 @@
   <div class="head"><b id="devicesTitle">Your devices</b> <button type="button" id="devicesClose">close</button></div>
   <div id="devicesList"></div>
 </div>
+<form id="uploadBox" hidden>
+  <b>Put this picture on PickiPedia</b>
+  <label>Name <input id="upName" maxlength="180" required></label>
+  <label>What it is <textarea id="upDesc" rows="3" maxlength="2000" placeholder="Who, what, where, when"></textarea></label>
+  <label>License <select id="upRights">
+    <option value="cc-by-sa-4.0">CC BY-SA 4.0: anyone may reuse it, crediting you</option>
+    <option value="cc0">CC0: public domain, no strings</option>
+  </select></label>
+  <span class="hint">It goes up as you, from your PickiPedia account: PickiPedia will ask you to allow it.</span>
+  <span class="note" id="upNote"></span>
+  <span><button type="submit">Put it on PickiPedia</button> <button type="button" id="upCancel">Cancel</button></span>
+</form>
 <form id="renameBox" hidden>
   <input id="renameTitle" maxlength="200" aria-label="Title" placeholder="Title">
   <textarea id="renameDesc" rows="2" maxlength="2000" aria-label="Description" placeholder="What it's about (optional)"></textarea>
@@ -703,11 +732,12 @@
     <div id="readBar" hidden><span class="what"></span><button type="button" id="readPause" title="Pause or go on">⏸</button><button type="button" id="readSkip" title="Skip to the next message">⏭</button><button type="button" id="readStop" title="Stop reading as they come">■</button></div>
     <div id="activity"><span class="dot"></span><span id="activityText"></span><button type="button" id="stopBtn" title="Stop it, as Esc does in a terminal (Esc in the message box does the same). What was said stays; add to it and it reads both." hidden>■ stop</button></div>
     <div class="hush" id="hush"></div>
+    <div id="licenseBar" hidden><span class="what"></span> <button type="button" id="licenseFlip"></button></div>
     <div id="replying" hidden><span class="what"></span><button type="button" id="replyCancel" title="Don't reply (Esc)" aria-label="Cancel the reply">✕</button></div>
     <form id="composer" autocomplete="off">
       <div id="suggest"></div>
       <button type="button" id="agentsBtn" title="Agents here: listening, model, effort" aria-label="Agent settings" aria-expanded="false">⚙</button>
-      <button type="button" id="attach" title="Add an image (or paste or drop one)" aria-label="Add an image">＋</button>
+      <button type="button" id="attach" title="Add an image (or paste or drop one). Your pictures are shared under CC BY-SA 4.0, or CC0 if you choose." aria-label="Add an image">＋</button>
       <button type="button" id="memoBtn" title="Record a voice memo: tap to start, tap again to stop. It's transcribed for you to look over before sending." aria-label="Record a voice memo" hidden>🎙</button>
       <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
       <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
@@ -735,6 +765,7 @@
   const viewerTier = "{{ viewer_tier|escapejs }}" || null;
   const keyHolder = !!viewer && viewerTier === 'key';
   const wikiSignin = {{ wiki_signin|yesno:"true,false" }};
+  const wikiUpload = {{ wiki_upload|yesno:"true,false" }};  // "→ PickiPedia" on pictures (services/wiki_upload.py)
   // Our VAPID key's public half, for pushes with magenta closed (services/push.py); '' if push is off.
   const PUSH_KEY = "{{ push_key|escapejs }}";
   // PickiPedia names for the names here (hunter's inventory); shown wherever a person is named.
@@ -1035,6 +1066,70 @@
     a.currentTime = 1e101;
   }, true);
 
+  // --- "→ PickiPedia": a picture sent here goes onto the wiki, by choice ------------
+  // (services/wiki_upload.py). Only pictures stored here (/moods/media/), offered
+  // to whoever sent them: it goes up as them, from their own PickiPedia account,
+  // after PickiPedia asks them. Once one is there, it says so, and its button goes.
+  const uploadBox = document.getElementById('uploadBox');
+  let uploading = null;  // {sha, message}
+  function offerUpload(el, t) {
+    for (const img of el.querySelectorAll('.body a.img img')) {
+      const sha = ((img.getAttribute('src') || '').match(/^\/(?:moods|motions)\/media\/([0-9a-f]{64})\./) || [])[1];
+      if (!sha || img.parentElement.nextElementSibling?.classList.contains('topp')) continue;
+      img.parentElement.insertAdjacentHTML('afterend',
+        `<button type="button" class="topp" data-sha="${sha}" data-message="${esc(t.id)}" title="Put this picture on PickiPedia">→ PickiPedia</button>`);
+    }
+  }
+  function markUploaded(sha, file, page) {
+    if (!sha) return;
+    for (const img of document.querySelectorAll(`.turn .body a.img img[src*="${CSS.escape(sha)}"]`)) {
+      const a = img.parentElement;
+      if (a.nextElementSibling?.classList.contains('topp')) a.nextElementSibling.remove();
+      if (a.nextElementSibling?.classList.contains('onwiki')) continue;
+      a.insertAdjacentHTML('afterend', `<a class="caption onwiki" href="${esc(page)}" target="_blank" rel="noopener">on PickiPedia as File:${esc(file)} ↗</a>`);
+    }
+  }
+  document.addEventListener('click', e => {
+    const b = e.target.closest('.turn .body .topp');
+    if (!b) return;
+    uploading = { sha: b.dataset.sha, message: b.dataset.message };
+    const title = (moods.find(m => m.slug === current) || {}).title || current || 'magenta';
+    document.getElementById('upName').value = `${title} ${new Date().toISOString().slice(0, 10)}`;
+    document.getElementById('upDesc').value = '';
+    document.getElementById('upNote').textContent = '';
+    const rights = document.getElementById('upRights');
+    rights.value = 'cc-by-sa-4.0';
+    fetch(`/api/media/${uploading.sha}/license/`).then(r => r.json()).then(l => { if (l.license) rights.value = l.license; })
+      .catch(() => {});  // as it was shared: CC BY-SA 4.0 unless they made it CC0
+    uploadBox.hidden = false;
+    document.getElementById('upName').focus();
+  });
+  document.getElementById('upCancel').addEventListener('click', () => { uploadBox.hidden = true; uploading = null; });
+  uploadBox.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!uploading) return;
+    const note = document.getElementById('upNote');
+    note.textContent = 'Asking PickiPedia…';
+    try {
+      const r = await fetch(`/api/media/${uploading.sha}/pickipedia/`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+        body: JSON.stringify({ mood: current, message: uploading.message, name: document.getElementById('upName').value,
+                               description: document.getElementById('upDesc').value,
+                               license: document.getElementById('upRights').value }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || r.status);
+      if (body.go) {  // to PickiPedia to say yes; back at the picture, uploaded
+        saveDraft();
+        note.textContent = 'Off to PickiPedia…';
+        location.href = body.go;
+        return;
+      }
+      markUploaded(uploading.sha, body.file, body.page);  // it was there already
+      uploadBox.hidden = true; uploading = null;
+      poll(false);
+    } catch (err) { note.textContent = err.message; }
+  });
+
   // --- Yarn clips ----------------------------------------------------------
   // The server marks a pasted Yarn clip as a card (a.yarn, data-yarn = its id,
   // checked as a UUID). The card shows Yarn's captioned GIF of the clip,
@@ -1126,6 +1221,7 @@
     if (t.attested) el._proof = t.attested;
     markTurn(el, t.mentions || []);
     el.querySelectorAll('a.yarn[data-yarn]').forEach(decorateYarn);
+    if (wikiUpload && viewer && t.sender === viewer) offerUpload(el, t);  // theirs to publish
     return el;
   }
 
@@ -1284,6 +1380,15 @@
         ? `✦ <b>${esc(e.by || 'someone')}</b> started this Mood · ${esc(stamp(e.created_at))}`
         : `■ <b>${esc(e.by || 'someone')}</b> stopped ${esc(e.agent || 'the agent')} · ${esc(stamp(e.created_at))}`;
       container.appendChild(el);
+      prev = null;
+      return;
+    }
+    if (e.type === 'wiki-upload') {  // a picture put on PickiPedia (services/wiki_upload.py)
+      el.className = 'event';
+      el.innerHTML = `🖼 <b>${esc(shown(e.by || 'someone'))}</b>${e.already ? "'s picture was on PickiPedia already" : ' put a picture on PickiPedia'}: `
+        + `<a href="${esc(e.page || '#')}" target="_blank" rel="noopener">File:${esc(e.file || '')}</a> · ${esc(stamp(e.created_at))}`;
+      container.appendChild(el);
+      markUploaded(e.sha, e.file, e.page);
       prev = null;
       return;
     }
@@ -2039,6 +2144,7 @@
     gen++;
     current = slug;
     restoreDraft();
+    showLicense();  // pictures in the draft left behind aren't in this one
     if (push) history.pushState({ slug }, '', '/moods/' + encodeURIComponent(slug) + '/');
     newBelow = 0;
     touch(slug);
@@ -2603,12 +2709,43 @@
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || r.status);
       sayBox.value = sayBox.value.replace(marker, body.markdown);
+      if (body.mine) { sharing.add(body.sha); licenseNow = body.license; showLicense(); }
     } catch (e) {
       sayBox.value = sayBox.value.replace(marker + '\n', '');
       showError('image: ' + e.message);
     }
     sayBox.dispatchEvent(new Event('input'));
   }
+  // Pictures of yours in the box go out CC BY-SA 4.0 unless you make them CC0:
+  // said here as they're attached, and changeable until sent (api_media_license).
+  const licenseBar = document.getElementById('licenseBar');
+  const LICENSE_SAID = {
+    'cc-by-sa-4.0': ['under CC BY-SA 4.0: anyone may reuse it, crediting you.', 'Make it CC0'],
+    'cc0': ['as CC0: public domain, no strings.', 'Back to CC BY-SA'],
+  };
+  const sharing = new Set();
+  let licenseNow = 'cc-by-sa-4.0';
+  function showLicense() {
+    for (const sha of [...sharing]) if (!sayBox.value.includes(sha)) sharing.delete(sha);
+    licenseBar.hidden = !sharing.size;
+    if (!sharing.size) return;
+    const [said, flip] = LICENSE_SAID[licenseNow] || LICENSE_SAID['cc-by-sa-4.0'];
+    licenseBar.querySelector('.what').textContent = (sharing.size > 1 ? 'Your pictures go out ' : 'Your picture goes out ') + said;
+    document.getElementById('licenseFlip').textContent = flip;
+  }
+  document.getElementById('licenseFlip').addEventListener('click', async () => {
+    const wanted = licenseNow === 'cc0' ? 'cc-by-sa-4.0' : 'cc0';
+    try {
+      for (const sha of sharing) {
+        const r = await fetch(`/api/media/${sha}/license/`, { method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify({ license: wanted }) });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+      }
+      licenseNow = wanted;
+      showLicense();
+    } catch (e) { showError('license: ' + e.message); }
+  });
+  sayBox.addEventListener('input', () => { if (sharing.size) showLicense(); });
   function insertAtCaret(text) {
     const at = sayBox.selectionStart ?? sayBox.value.length;
     sayBox.value = sayBox.value.slice(0, at) + text + sayBox.value.slice(sayBox.selectionEnd ?? at);
@@ -3139,7 +3276,7 @@
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
       const done = await r.json().catch(() => ({}));
-      sayBox.value = ''; fitSay(); typingSent = 0; sendTyping(false); cancelReply();
+      sayBox.value = ''; fitSay(); typingSent = 0; sendTyping(false); cancelReply(); showLicense();
       if (/^\/(?:clips|yarn)\s+(save|forget)\b/i.test(text)) clipsCache = null;  // the library changed
       if (done.note) {  // what a /clips command did, for whoever sent it
         composer.insertAdjacentHTML('beforeend', `<span class="note">${esc(done.note)}</span>`);

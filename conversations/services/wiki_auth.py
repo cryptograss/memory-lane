@@ -88,19 +88,31 @@ def new_state():
 
 def profile_for(code, redirect_uri, http=requests):
     """The wiki's word on who signed in: {'username', 'blocked', ...}. SignInRefused if not."""
+    token = exchange(code, redirect_uri, settings.PICKIPEDIA_OAUTH_CLIENT_ID,
+                     settings.PICKIPEDIA_OAUTH_CLIENT_SECRET, http=http)
+    profile = profile_with(token, http=http)
+    if profile.get('blocked'):
+        raise SignInRefused('that PickiPedia account is blocked')
+    return profile
+
+
+def exchange(code, redirect_uri, client_id, client_secret, http=requests):
+    """The access token a consumer's code is good for (sign-in's, or uploads': wiki_upload)."""
     token = http.post(f'{pickipedia_url()}/rest.php/oauth2/access_token', timeout=15, data={
         'grant_type': 'authorization_code', 'code': code, 'redirect_uri': redirect_uri,
-        'client_id': settings.PICKIPEDIA_OAUTH_CLIENT_ID,
-        'client_secret': settings.PICKIPEDIA_OAUTH_CLIENT_SECRET})
+        'client_id': client_id, 'client_secret': client_secret})
     if token.status_code != 200 or 'access_token' not in _json(token):
         raise SignInRefused(f'PickiPedia did not confirm the sign-in ({token.status_code})')
+    return _json(token)['access_token']
+
+
+def profile_with(access_token, http=requests):
+    """Who an access token is: {'username', 'blocked', ...}."""
     who = http.get(f'{pickipedia_url()}/rest.php/oauth2/resource/profile', timeout=15,
-                   headers={'Authorization': f"Bearer {_json(token)['access_token']}"})
+                   headers={'Authorization': f'Bearer {access_token}'})
     profile = _json(who)
     if who.status_code != 200 or not profile.get('username'):
         raise SignInRefused(f'PickiPedia would not say who signed in ({who.status_code})')
-    if profile.get('blocked'):
-        raise SignInRefused('that PickiPedia account is blocked')
     return profile
 
 

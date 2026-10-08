@@ -18,7 +18,7 @@ from django.core.exceptions import ValidationError
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import Message, Mood, ThinkingEntity, mood_slug
-from .services import push, wiki_auth, wiki_feed
+from .services import push, wiki_auth, wiki_feed, wiki_upload
 from .services import mood_auth
 from .services.mood_view import (
     from_wiki_tier,
@@ -49,6 +49,8 @@ def moods_page(request, slug=None):
         # 'key' or 'wiki' (services/wiki_auth.py): a wiki sign-in chats and mentions people only.
         'viewer_tier': device.tier if device else '',
         'wiki_signin': wiki_auth.enabled(),
+        # "→ PickiPedia" on a picture sent here, if uploading as its sharer is set up (services/wiki_upload.py).
+        'wiki_upload': wiki_upload.enabled(),
         # PickiPedia names, shown for the names here (from hunter's inventory).
         'wiki_names': wiki_auth.names(),
         # Notifications with magenta closed (services/push.py): what browsers subscribe with. '' if off.
@@ -133,7 +135,8 @@ def api_mood_turns(request, slug):
             events_out.append({'id': str(msg.id), 'created_at': msg.created_at.isoformat(),
                                **{k: text.get(k) for k in ('type', 'server', 'state', 'commit', 'by', 'note', 'took', 'agent',
                                                    'kind', 'title', 'user', 'comment', 'delta', 'revid', 'at',
-                                                   'who', 'tier', 'label', 'device', 'devices')}})
+                                                   'who', 'tier', 'label', 'device', 'devices', 'file', 'page', 'sha',
+                                                   'message', 'already')}})
         elif kind == 'compaction':
             compactions_out.append({'id': str(msg.id), 'session_id': str(msg.session_id or ''),
                                     'created_at': msg.created_at.isoformat(), 'html': render_html(text)})

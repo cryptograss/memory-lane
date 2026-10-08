@@ -140,7 +140,9 @@ def api_media(request, slug):
     stored = media.store(request.body, added_by=device.entity)
     if stored is None:
         return JsonResponse({'error': 'not a PNG, JPEG, GIF or WebP image'}, status=400)
-    return JsonResponse({'url': stored.url, 'markdown': media.markdown(stored)}, status=201)
+    # Their own: told it's CC BY-SA 4.0, with CC0 a press away (api_media_license).
+    return JsonResponse({'url': stored.url, 'markdown': media.markdown(stored), 'sha': stored.sha256,
+                         'license': stored.license, 'mine': stored.added_by_id == device.entity_id}, status=201)
 
 
 @require_GET
@@ -887,3 +889,98 @@ def api_push_unsubscribe(request):
         return JsonResponse({'error': 'expected {"endpoint": ...}'}, status=400)
     PushSubscription.objects.filter(endpoint=endpoint, device__entity=device.entity).delete()
     return JsonResponse({'subscribed': False})
+
+
+@require_POST
+def api_media_to_pickipedia(request, sha256):
+    """{"mood", "message", "name", "description", "license"}: put a picture on PickiPedia as whoever
+    shared it (services/wiki_upload.py), from either sign-in. Answers {"go": PickiPedia's "may magenta
+    upload for you?"}, to be sent to; or, if the picture is there already, {"file", "page"}."""
+    from .models import Media
+    from .services import wiki_upload
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = mood_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in first'}, status=401)
+    if not _under_limit(f'wiki-upload:{device.pk}', 6):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    try:
+        body = json.loads(request.body)
+    except ValueError:
+        return JsonResponse({'error': 'expected JSON'}, status=400)
+    media = Media.objects.filter(sha256=sha256).first()
+    mood = Mood.by_slug(str(body.get('mood') or ''))
+    if media is None or mood is None:
+        return JsonResponse({'error': 'no such picture, or no such Mood'}, status=404)
+    try:
+        done = wiki_upload.begin(media, str(body.get('name') or ''), str(body.get('description') or '')[:2000],
+                                 str(body.get('license') or 'cc-by-sa-4.0'), device.entity_id, mood,
+                                 _uuid_or_none(body.get('message')), _wiki_upload_return(request))
+    except wiki_upload.UploadError as e:
+        return JsonResponse({'error': str(e)}, status=e.status)
+    if 'go' not in done:
+        return JsonResponse(done)
+    response = JsonResponse({'go': done['go']})
+    response.set_cookie(wiki_upload.STATE_COOKIE, done['state'], max_age=wiki_upload.PENDING_FOR, httponly=True,
+                        secure=not settings.DEBUG, samesite='Lax')
+    return response
+
+
+@require_GET
+def wiki_upload_return(request):
+    """Back from PickiPedia with its yes (or not): upload as them, then back to the picture."""
+    from .services import wiki_upload
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    expected = request.COOKIES.get(wiki_upload.STATE_COOKIE, '')
+    back = wiki_upload.place(expected)
+    device = mood_auth.device_for(request)
+    try:
+        if device is None:
+            raise wiki_upload.UploadError('this browser is signed out of magenta', status=401)
+        if request.GET.get('error') == 'access_denied':
+            raise wiki_upload.UploadError("You didn't allow it on PickiPedia, so nothing went up.")
+        if request.GET.get('error'):
+            raise wiki_upload.UploadError('PickiPedia gave no permission, so nothing went up: '
+                                          + (request.GET.get('error_description') or request.GET['error']))
+        if not expected or request.GET.get('state') != expected or not request.GET.get('code'):
+            raise wiki_upload.UploadError('that went stale; press → PickiPedia again')
+        done = wiki_upload.finish(expected, request.GET['code'], device.entity_id, _wiki_upload_return(request))
+    except wiki_upload.UploadError as e:
+        response = render(request, 'conversations/mood_login.html',
+                          {'state': 'upload-refused', 'why': str(e), 'back': back}, status=e.status)
+    else:
+        response = HttpResponseRedirect(done['back'])
+    response.delete_cookie(wiki_upload.STATE_COOKIE)
+    return response
+
+
+def _wiki_upload_return(request):
+    return request.build_absolute_uri('/moods/auth/wiki/upload')
+
+
+@require_http_methods(['GET', 'POST'])
+def api_media_license(request, sha256):
+    """A picture's license (services/media.LICENSES): {"license", "mine"}. POST {"license"}
+    sets it: only whoever shared it may."""
+    from .models import Media
+    from .services import media as media_service
+    media = Media.objects.filter(sha256=sha256).first()
+    if media is None:
+        return JsonResponse({'error': 'no such picture'}, status=404)
+    device = mood_auth.device_for(request)
+    if request.method == 'POST':
+        if device is None:
+            return JsonResponse({'error': 'sign in first'}, status=401)
+        try:
+            wanted = str(json.loads(request.body).get('license') or '')
+        except (ValueError, AttributeError):
+            return JsonResponse({'error': 'expected {"license": ...}'}, status=400)
+        if wanted not in media_service.LICENSES:
+            return JsonResponse({'error': 'CC BY-SA 4.0 or CC0: ' + ', '.join(media_service.LICENSES)}, status=400)
+        if not media_service.relicense(media, wanted, device.entity_id):
+            return JsonResponse({'error': "only whoever shared a picture can choose its license"}, status=403)
+    return JsonResponse({'license': media.license, 'mine': bool(device) and media.added_by_id == device.entity_id})
