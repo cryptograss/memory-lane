@@ -964,7 +964,7 @@
   }
   function todoItem(it) {
     const who = it.who.map(n => n.toLowerCase() === viewer ? '<span class="you">you</span>' : esc(shown(n.toLowerCase())));
-    const meta = [it.kind, who.join(', ')].filter(Boolean).join(' · ');
+    const meta = [it.merged ? 'merged, says GitHub' : it.kind, who.join(', ')].filter(Boolean).join(' · ');
     // A task with a link is the link, as on PickiPedia (its <todo> tag).
     const href = it.link ? linkOf(it.link) : '';
     const task = href ? `<a href="${esc(href)}"${/^https?:/i.test(href) ? ' target="_blank" rel="noopener"' : ''} title="${esc(it.link)}">${esc(it.task)}</a>`

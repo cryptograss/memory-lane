@@ -24,15 +24,30 @@ PAGE = """A running list for #magenta-interface.
 
 
 class Answer:
-    def __init__(self, status, text=''):
-        self.status_code, self.text = status, text
+    def __init__(self, status, text='', body=None):
+        self.status_code, self.text, self.body = status, text, body
+
+    def json(self):
+        return self.body
 
 
 class FakeWiki:
-    def __init__(self, pages):
+    """PickiPedia's raw pages, and GitHub's pull requests (closed: {number: merged?}; single: {number: merged?})."""
+
+    def __init__(self, pages, closed=None, single=None, github_down=False):
         self.pages, self.asked = pages, []
+        self.closed, self.single, self.github_down, self.github = closed or {}, single or {}, github_down, []
 
     def get(self, url, params=None, **kw):
+        if url.startswith('https://api.github.com/'):
+            self.github.append(url)
+            if self.github_down:
+                raise ConnectionError('down')
+            if url.endswith('/pulls'):
+                return Answer(200, '', [{'number': n, 'merged_at': '2026-10-08T15:22:36Z' if m else None}
+                                       for n, m in self.closed.items()])
+            number = int(url.rsplit('/', 1)[1])
+            return Answer(200, '', {'number': number, 'merged_at': '2026-10-08T15:22:36Z' if self.single.get(number) else None})
         self.asked.append(params['title'])
         return Answer(200, self.pages[params['title']]) if params['title'] in self.pages else Answer(404)
 
@@ -89,6 +104,26 @@ class ForMoodTest(TestCase):
         cache.clear()
         broken = todo.for_mood(self.mood, http=FakeWiki({'Cryptograss:Moods/magenta-interface/todo': '<pre>\n- [x\n</pre>'}))
         self.assertIn('problem', broken['error'])
+
+    def test_a_merged_pull_request_ticks_itself(self):
+        page = PAGE.replace('<pre>', '<pre>\n- task: Merge maybelle-config#167\n  link: https://github.com/cryptograss/maybelle-config/pull/167')
+        wiki = FakeWiki({'Cryptograss:Moods/magenta-interface/todo': page},
+                        closed={113: True, 99: False}, single={167: True})
+        items = {i['task']: i for i in todo.for_mood(self.mood, http=wiki)['items']}
+        self.assertEqual((items['Merge memory-lane#113']['done'], items['Merge memory-lane#113']['merged']), (True, True))
+        self.assertTrue(items['Merge maybelle-config#167']['merged'])  # not among the recent: asked on its own
+        self.assertNotIn('merged', items['Redeploy maybelle'])  # done by hand, as written
+        asked = len(wiki.github)
+        cache.delete('todo:magenta-interface')
+        todo.for_mood(self.mood, http=wiki)
+        self.assertEqual(len(wiki.github), asked)  # kept: GitHub isn't asked again for a while
+
+    def test_an_open_one_stays_open_and_github_down_changes_nothing(self):
+        wiki = FakeWiki({'Cryptograss:Moods/magenta-interface/todo': PAGE}, closed={})
+        self.assertFalse(todo.for_mood(self.mood, http=wiki)['items'][0]['done'])
+        cache.clear()
+        down = FakeWiki({'Cryptograss:Moods/magenta-interface/todo': PAGE}, github_down=True)
+        self.assertFalse(todo.for_mood(self.mood, http=down)['items'][0]['done'])
 
     def test_the_endpoint(self):
         cache.set('todo:magenta-interface', {'page': 'p', 'edit': 'e', 'exists': True, 'items': []}, 60)
