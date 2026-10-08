@@ -46,6 +46,11 @@ class ParseTest(TestCase):
         self.assertEqual((items[0]['who'], items[0]['kind'], items[0]['done']), (['justin'], 'merge', False))
         self.assertEqual((items[1]['who'], items[1]['done']), (['justin', 'skyler'], True))
 
+    def test_a_list_in_its_todo_tags(self):
+        items = todo.parse(PAGE.replace('<pre>', '<todo>').replace('</pre>', '</todo>'))
+        self.assertEqual(len(items), 3)
+        self.assertEqual(items[0]['link'], 'https://github.com/jMyles/memory-lane/pull/113')
+
     def test_a_list_without_its_pre_and_an_empty_one(self):
         self.assertEqual(todo.parse('- task: one\n  who: a, b')[0]['who'], ['a', 'b'])
         self.assertEqual(todo.parse('<pre>\n</pre>'), [])

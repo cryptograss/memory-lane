@@ -905,7 +905,7 @@
     todoEl.querySelector('#todoTab').setAttribute('aria-label', `To do: ${open.length} open`);
     document.getElementById('todoEdit').href = t.edit;
     document.getElementById('todoNote').textContent = t.error ? `The list couldn't be read: ${t.error}.`
-      : !t.exists ? 'No list here yet: "edit" starts one on PickiPedia, as YAML ("- task: ...").'
+      : !t.exists ? 'No list here yet: "edit" starts one on PickiPedia, as YAML between <todo> tags ("- task: ...").'
       : !t.items.length ? 'Nothing to do.' : '';
     document.getElementById('todoList').innerHTML = open.map(todoItem).join('');
     const fold = document.getElementById('todoDone');

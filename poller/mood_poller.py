@@ -659,8 +659,8 @@ def quiet_opening(slug, minutes):
 
 def todo_line(slug):
     """Where the Mood's to-do list for its people is (memory-lane services/todo.py), and the agent's part in it."""
-    return [f"This Mood's to-do list for its people is on PickiPedia, Cryptograss:Moods/{slug}/todo (YAML inside "
-            '<pre>: "- task: ...", with who, kind, link, note, done as useful). When you leave someone something to '
+    return [f"This Mood's to-do list for its people is on PickiPedia, Cryptograss:Moods/{slug}/todo (YAML between "
+            '<todo> tags: "- task: ...", with who, kind, link, note, done as useful). When you leave someone something to '
             "do -- a review, a merge, a deploy, an edit -- add it there; when it's done, mark it done."]
 
 

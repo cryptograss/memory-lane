@@ -1,10 +1,12 @@
 """A Mood's to-do list: what its people have to do, kept on PickiPedia.
 
 Each Mood may have a page, Cryptograss:Moods/<slug>/todo, whose list is
-YAML inside <pre> -- on the wiki so anyone can edit it and see who changed
-what, and plain enough to write by hand:
+YAML between <todo> tags -- on the wiki so anyone can edit it and see who
+changed what, and plain enough to write by hand. PickiPedia shows it as a
+checklist with real links (PickiPediaContent's <todo> tag); a list inside
+<pre>, as the first ones were, is read too.
 
-    <pre>
+    <todo>
     - task: Merge memory-lane#113
       who: justin
       kind: merge
@@ -12,7 +14,7 @@ what, and plain enough to write by hand:
     - task: Redeploy maybelle
       kind: deploy
       done: true
-    </pre>
+    </todo>
 
 `task` is the one thing an item needs; `who` (a name, or several),
 `kind` (review, merge, deploy, edit, or anything), `link`, `note` and
@@ -32,7 +34,7 @@ PAGE = 'Cryptograss:Moods/{slug}/todo'
 FOR = 60          # seconds a list is kept before PickiPedia is asked again
 MAX_ITEMS = 200
 FIELDS = ('task', 'who', 'kind', 'link', 'note', 'done')
-_PRE = re.compile(r'<pre>\s*\n?(.*?)\n?\s*</pre>', re.S | re.I)
+_PRE = re.compile(r'<(todo|pre)>\s*\n?(.*?)\n?\s*</\1>', re.S | re.I)
 
 
 class Unreadable(Exception):
@@ -47,7 +49,7 @@ def parse(text):
     """The items in a page's text: [{'task', 'who': [...], 'kind', 'link', 'note', 'done'}]. Unreadable if not a list."""
     import yaml
     match = _PRE.search(text or '')
-    body = match.group(1) if match else (text or '')
+    body = match.group(2) if match else (text or '')
     try:
         loaded = yaml.safe_load(body)
     except yaml.YAMLError as e:
