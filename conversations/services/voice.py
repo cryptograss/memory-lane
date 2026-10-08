@@ -348,7 +348,9 @@ def narrate_thinking(mood, agent, by, where=False, http=requests):
 def script_for(text, part=0):
     """(what to say, voice name, settings) for a message's text: its `part`th
     voice block, or, with none, the message as written."""
+    from .handoff import split as split_handoffs
     rest, directions = split_voices(text)
+    rest, _ = split_handoffs(rest)  # what went to another Mood isn't read out here
     if directions:
         direction = directions[min(max(part, 0), len(directions) - 1)]
         if direction['script']:

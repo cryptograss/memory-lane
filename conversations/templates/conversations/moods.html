@@ -412,6 +412,11 @@
   .event.wiki summary { cursor: pointer; }
   .event.wiki .each { margin: 4px 0 0 18px; }
   .event code { font-size: 11.5px; }
+  /* Context taken from another Mood: one line, the context beneath on demand. */
+  .event.handoff summary { cursor: pointer; list-style: none; }
+  .event.handoff .body { text-align: left; font-size: 13.5px; color: var(--ink); background: var(--code); border-radius: 6px;
+                         padding: 8px 12px; margin-top: 6px; }
+  .event.handoff .from { font-size: 12px; margin: 6px 0 0; }
   .compaction { margin: 10px 0; font-size: 13px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
   .compaction summary { cursor: pointer; list-style: none; }
   .compaction summary::before { content: '⟲ '; }
@@ -1491,6 +1496,21 @@
       el.className = 'event wiki';
       el.dataset.user = e.user || ''; el.dataset.n = 1; el.dataset.first = `<div>${one}</div>`;
       el.innerHTML = `✎ <b>${esc(e.user || 'someone')}</b> ${e.kind === 'new' ? 'started' : 'edited'} ${one} · ${esc(stamp(e.at || e.created_at))}`;
+      container.appendChild(el);
+      prev = null;
+      return;
+    }
+    if (e.type === 'handoff' || e.type === 'handoff-sent') {  // context taken between Moods (services/handoff.py)
+      const moodA = slug => `<a class="moodlink" data-mood="${esc(slug)}" href="/moods/${encodeURIComponent(slug)}/">#${esc(slug)}</a>`;
+      const by = `<b>${esc(shown(e.by || 'an agent'))}</b>`, about = e.about ? ` about <i>${esc(e.about)}</i>` : '';
+      el.className = 'event handoff';
+      if (e.type === 'handoff-sent') {
+        el.innerHTML = `🔀 ${by} took this to ${moodA(e.to_mood || '')}${e.about ? `: <i>${esc(e.about)}</i>` : ''} · ${esc(stamp(e.created_at))}`;
+      } else {
+        const from = e.message ? ` <a href="/moods/${encodeURIComponent(e.from_mood || '')}/#m-${esc(e.message)}">where it was said</a>` : '';
+        el.innerHTML = `<details><summary>🔀 ${by} informed <b>${esc(shown(e.for || e.by || ''))}</b>${about} from ${moodA(e.from_mood || '')}`
+          + ` · ${esc(stamp(e.created_at))}</summary><div class="body">${e.html || ''}<p class="from">${from}</p></div></details>`;
+      }
       container.appendChild(el);
       prev = null;
       return;
