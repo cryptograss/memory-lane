@@ -814,6 +814,7 @@ def how_payload(msg):
         out['out'] = msg.output_tokens or 0
         out['ctx'] = sum(n or 0 for n in (msg.input_tokens, msg.cache_read_input_tokens,
                                           msg.cache_creation_input_tokens))
+        out['cached'] = msg.cache_read_input_tokens or 0  # of ctx, read back from the cache: the cheap part
     if msg.stop_reason:
         out['stop'] = msg.stop_reason
     return out
