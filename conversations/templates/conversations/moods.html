@@ -1511,7 +1511,9 @@
         el.innerHTML = `🔀 ${by} took this to ${moodA(e.to_mood || '')}${e.about ? `: <i>${esc(e.about)}</i>` : ''} · ${esc(stamp(e.created_at))}`;
       } else {
         const from = e.message ? ` <a href="/moods/${encodeURIComponent(e.from_mood || '')}/#m-${esc(e.message)}">where it was said</a>` : '';
-        el.innerHTML = `<details><summary>🔀 ${by} informed <b>${esc(shown(e.for || e.by || ''))}</b>${about} from ${moodA(e.from_mood || '')}`
+        const did = e.pulled ? `${by} brought in${e.about ? ` <i>${esc(e.about)}</i>` : ' context'}`  // asked here to look there
+          : `${by} informed <b>${esc(shown(e.for || e.by || ''))}</b>${about}`;
+        el.innerHTML = `<details><summary>🔀 ${did} from ${moodA(e.from_mood || '')}`
           + ` · ${esc(stamp(e.created_at))}</summary><div class="body">${e.html || ''}<p class="from">${from}</p></div></details>`;
       }
       container.appendChild(el);

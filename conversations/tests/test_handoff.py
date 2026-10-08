@@ -32,7 +32,7 @@ class HandoffTest(TestCase):
     def test_the_block_is_read(self):
         rest, blocks = handoff.split(BLOCK)
         self.assertEqual(rest, 'Taking it over there.')
-        self.assertEqual(blocks, [{'to': 'jams-and-events', 'about': 'the Saturday setlist, as far as we got', 'for': '',
+        self.assertEqual(blocks, [{'to': 'jams-and-events', 'from': '', 'about': 'the Saturday setlist, as far as we got', 'for': '',
                                    'context': 'Settled: Salty Dog first. Open: who sings Wildwood Flower. See #m-0f132ada.'}])
 
     def test_an_agents_block_leaves_a_line_in_each_mood(self):
@@ -46,6 +46,18 @@ class HandoffTest(TestCase):
                          ('handoff-sent', 'jams-and-events', 'the Saturday setlist, as far as we got'))
         self.assertEqual(handoff.from_message(message), [])  # once per message
         self.assertEqual(len(self.events(self.there)), 1)
+
+    def test_asked_to_look_in_another_mood_what_it_found_lands_here(self):
+        message = self.said(self.magent, BLOCK.replace('to: #jams-and-events', 'from: #jams-and-events'))
+        [here] = self.events(self.here)
+        self.assertEqual((here['type'], here['from_mood'], here['pulled'], here['message']),
+                         ('handoff', 'jams-and-events', True, str(message.id)))
+        self.assertIn('Salty Dog', here['context'])
+        [there] = self.events(self.there)
+        self.assertEqual((there['type'], there['to_mood'], there['pulled']), ('handoff-sent', 'magenta-interface', True))
+        page = Client().get('/api/moods/magenta-interface/turns/').json()
+        self.assertEqual([(e['type'], e['pulled']) for e in page['events']], [('handoff', True)])
+        self.assertNotIn('Salty Dog', str(page['turns']))  # the block, folded into the line, not shown in the message
 
     def test_for_another_agent_and_for_nobody_known(self):
         self.said(self.magent, BLOCK.replace('about:', 'for: scout\nabout:'))
@@ -80,7 +92,9 @@ class WakeTest(TestCase):
                     {'type': 'handoff', 'for': 'magent', 'by': 'magent', 'from_mood': 'a', 'about': 'the setlist',
                      'context': 'Salty Dog first.', 'created_at': '2026-10-07T21:05:00+00:00'},
                     {'type': 'handoff', 'for': 'scout', 'by': 'magent', 'from_mood': 'a', 'about': 'not yours',
-                     'context': '', 'created_at': '2026-10-07T21:06:00+00:00'}]}
+                     'context': '', 'created_at': '2026-10-07T21:06:00+00:00'},
+                    {'type': 'handoff', 'for': 'magent', 'by': 'magent', 'from_mood': 'b', 'about': 'brought in',
+                     'context': 'it said so itself', 'created_at': '2026-10-07T21:07:00+00:00', 'pulled': True}]}
         [line] = handoffs_for(page, 'magent')
         self.assertTrue(line.startswith('[magent, from #a, 2026-10-07T21:05Z] the setlist'))
         self.assertIn('Salty Dog first.', line)

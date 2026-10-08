@@ -575,7 +575,9 @@ GREETING = ("Greeting anyone is never needed. If you do, make it theirs: the las
 # the block in its reply; it leaves a line in both Moods, and the context in its next wake there.
 HANDOFF_HOW = ('Asked to take this to another Mood, put in your reply a block: ```handoff, then "to: <mood>", '
                '"about: <a few words>", a line "---", the context someone there needs (what was settled, '
-               "what's open, #m- links to what matters), and ``` to close.")
+               "what's open, #m- links to what matters), and ``` to close. Asked to look in another Mood for "
+               'what bears on this one, read it (read_mood, from a time) and write the same block with '
+               '"from: <mood>" instead of "to:", what you found as its context.')
 
 
 def wake_footer(full=False):
@@ -729,7 +731,9 @@ HANDED_NOTE = ('Context handed to you here from another Mood (by an agent, with 
 def handoffs_for(page, agent, limit=12_000):
     """Context handed to `agent` in this Mood (memory-lane services/handoff.py) since it last spoke here,
     as prompt lines -- from a page of /turns/, which carries the Mood's events."""
-    handed = [e for e in page.get('events') or () if e.get('type') == 'handoff' and e.get('for') == agent]
+    # Brought in here by the agent itself (from:), it's in what it said here already.
+    handed = [e for e in page.get('events') or ()
+              if e.get('type') == 'handoff' and e.get('for') == agent and not e.get('pulled')]
     spoke = [t['created_at'] for t in page.get('turns') or () if t.get('sender') == agent]
     if spoke:
         handed = [e for e in handed if e['created_at'] > max(spoke)]

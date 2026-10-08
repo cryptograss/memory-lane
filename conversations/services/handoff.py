@@ -13,7 +13,13 @@ here, writes a block anywhere in what it says:
 
 `to` is the Mood (its name, or #name); `about`, a few words; `for`, the
 agent it informs there (the writer, if not said); after `---`, the
-context. It's taken out of the message where it's written (split), and
+context.
+
+It goes the other way too. "Look in #jams-and-events over the past twelve
+hours" -- the agent reads that Mood (its read_mood tool, from a time), and
+writes the block with `from: jams-and-events` instead of `to:`: what it
+brought in lands here, folded to "magent brought in ... from
+#jams-and-events", and there a line says it was taken here. It's taken out of the message where it's written (split), and
 leaves two lines (events): there, "magent informed magent about ... from
 #magenta-interface", folded to that line, the context beneath; here,
 "magent took this to #jams-and-events". The agent's next wake in that Mood
@@ -50,13 +56,14 @@ def _parse(body):
     fields = {}
     for line in head.splitlines():
         key, colon, value = line.partition(':')
-        if colon and key.strip().lower() in ('to', 'about', 'for'):
+        if colon and key.strip().lower() in ('to', 'from', 'about', 'for'):
             fields[key.strip().lower()] = value.strip()
     to = fields.get('to', '').lstrip('#').strip().lower()
-    if not to:
+    source = fields.get('from', '').lstrip('#').strip().lower()
+    if not to and not source:
         return None
-    return {'to': to, 'about': fields.get('about', '')[:MAX_ABOUT], 'for': fields.get('for', '').lower(),
-            'context': context.strip()[:MAX_CONTEXT]}
+    return {'to': to, 'from': '' if to else source, 'about': fields.get('about', '')[:MAX_ABOUT],
+            'for': fields.get('for', '').lower(), 'context': context.strip()[:MAX_CONTEXT]}
 
 
 def from_message(message):
@@ -79,17 +86,21 @@ def from_message(message):
     system, _ = ConversationParticipant.objects.get_or_create(name='system', defaults={'participant_type': 'system'})
     made = []
     for block in blocks:
-        there = Mood.by_slug(block['to'])
-        if there is None or there.pk == here.pk:
+        other = Mood.by_slug(block['to'] or block['from'])
+        if other is None or other.pk == here.pk:
             continue
+        # Sent there (to:), or brought in here (from:): either way, the context lands where it's for.
+        pulled = not block['to']
+        source, dest = (other, here) if pulled else (here, other)
         informed = block['for'] if block['for'] in agents else message.sender_id
+        how = {'pulled': True} if pulled else {}
         now = int(time.time() * 1000)
         made.append(Message.objects.create(
-            id=uuid.uuid4(), sender=system, mood=there, source_file=SOURCE, timestamp=now,
-            content={'type': 'handoff', 'by': message.sender_id, 'for': informed, 'from_mood': here.slug,
-                     'about': block['about'], 'context': block['context'], 'message': str(message.id)}))
+            id=uuid.uuid4(), sender=system, mood=dest, source_file=SOURCE, timestamp=now,
+            content={'type': 'handoff', 'by': message.sender_id, 'for': informed, 'from_mood': source.slug,
+                     'about': block['about'], 'context': block['context'], 'message': str(message.id), **how}))
         Message.objects.create(
-            id=uuid.uuid4(), sender=system, mood=here, source_file=SOURCE, timestamp=now,
-            content={'type': 'handoff-sent', 'by': message.sender_id, 'for': informed, 'to_mood': there.slug,
-                     'about': block['about'], 'message': str(message.id)})
+            id=uuid.uuid4(), sender=system, mood=source, source_file=SOURCE, timestamp=now,
+            content={'type': 'handoff-sent', 'by': message.sender_id, 'for': informed, 'to_mood': dest.slug,
+                     'about': block['about'], 'message': str(message.id), **how})
     return made
