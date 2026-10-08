@@ -634,7 +634,7 @@
   #todoBody li .meta { color: var(--muted); font-size: 12px; }
   #todoBody li .meta .you { color: var(--accent); font-weight: 600; }
   #todoBody li .why { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
-  #todoBody li a.go { text-decoration: none; margin-left: 4px; }
+  #todoBody li .task a { color: inherit; }
   #todoDone { margin-top: 8px; color: var(--muted); }
   #todoDone summary { cursor: pointer; font-size: 12.5px; }
   #todoDone li .task { text-decoration: line-through; }
@@ -965,8 +965,11 @@
   function todoItem(it) {
     const who = it.who.map(n => n.toLowerCase() === viewer ? '<span class="you">you</span>' : esc(shown(n.toLowerCase())));
     const meta = [it.kind, who.join(', ')].filter(Boolean).join(' · ');
-    const go = it.link ? `<a class="go" href="${esc(linkOf(it.link))}"${/^https?:/i.test(linkOf(it.link)) ? ' target="_blank" rel="noopener"' : ''} title="${esc(it.link)}">↗</a>` : '';
-    return `<li><span class="box">${it.done ? '☑' : '☐'}</span><div><span class="task">${esc(it.task)}</span>${go}`
+    // A task with a link is the link, as on PickiPedia (its <todo> tag).
+    const href = it.link ? linkOf(it.link) : '';
+    const task = href ? `<a href="${esc(href)}"${/^https?:/i.test(href) ? ' target="_blank" rel="noopener"' : ''} title="${esc(it.link)}">${esc(it.task)}</a>`
+      : esc(it.task);
+    return `<li><span class="box">${it.done ? '☑' : '☐'}</span><div><span class="task">${task}</span>`
       + (meta ? `<div class="meta">${meta}</div>` : '') + (it.note ? `<div class="why">${esc(it.note)}</div>` : '') + '</div></li>';
   }
   function renderTodo(t) {
