@@ -1480,6 +1480,23 @@ class MessageChange(models.Model):
         db_table = 'message_changes'
 
 
+class SealedCopy(models.Model):
+    """What an edit or deletion took out of a Mood, sealed to the recovery key
+    (services/sealing.py): the server can't read it, nothing here deletes it,
+    and whoever holds the key's private half can put it back (manage.py unseal).
+    Who took it back and when are plain, so takebacks can be counted and limited."""
+
+    message_id = models.UUIDField(db_index=True)  # not a key: kept whatever happens to the message
+    mood_slug = models.CharField(max_length=100)
+    kind = models.CharField(max_length=10)  # 'deleted' or 'edited'
+    by = models.CharField(max_length=50, db_index=True)
+    at = models.DateTimeField(auto_now_add=True, db_index=True)
+    sealed = models.TextField()
+
+    class Meta:
+        db_table = 'sealed_copies'
+
+
 class Setting(models.Model):
     """
     One change to a knob: what was set, for which agent in which Mood, by whom.

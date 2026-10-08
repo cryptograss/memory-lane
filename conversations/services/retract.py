@@ -17,11 +17,38 @@ it to an agent (the poller quotes what was said, and keeps the wake) are
 scrubbed of it. What can't be called back is said, not pretended away: an
 agent session a wake already reached has seen it (MessageChange.reached),
 and a notification already sent was sent.
+
+**Taken back, never lost.** The same power in the wrong hands -- a captured
+account, a captured key -- would erase history. So nothing is taken back
+without being sealed first: the words, and the pictures and recordings that
+go with them, encrypted to the recovery key (services/sealing.py), whose
+private half the server never holds. Sealed, they're unreadable here and put
+back with that key (manage.py unseal). With no recovery key set, nothing can
+be taken back at all. And how much can be is bounded:
+
+- your own messages, deleted within a week of saying them, edited within a
+  day; older, only an admin;
+- each person (an admin too) at most PER_HOUR in an hour and PER_DAY in a
+  day;
+- an admin taking back someone else's words, or anyone taking back a burst
+  of them, is said in #general (services/access.py) for everyone to see.
 """
+
+from datetime import timedelta
 
 DELETED = '[deleted]'
 WAKE_SENDER = 'mood-poller'
 _MIN_LINE = 4  # a line shorter than this is too common to scrub by
+DELETE_OWN_WITHIN = timedelta(days=7)
+EDIT_OWN_WITHIN = timedelta(days=1)
+PER_HOUR, PER_DAY = 10, 30
+BURST, BURST_WITHIN = 5, timedelta(minutes=10)
+
+
+class Refused(Exception):
+    def __init__(self, message, status=403):
+        super().__init__(message)
+        self.status = status
 
 
 def is_admin(device):
@@ -29,14 +56,68 @@ def is_admin(device):
     return device is not None and device.tier == 'key' and device.entity_id in getattr(settings, 'MOOD_ADMINS', ())
 
 
+def _age(message):
+    from django.utils import timezone
+    return timezone.now() - message.created_at
+
+
 def may_delete(message, device):
-    return device is not None and (message.sender_id == device.entity_id or is_admin(device))
+    """Yours, said within a week; or anyone's, as an admin."""
+    if device is None:
+        return False
+    return is_admin(device) or (message.sender_id == device.entity_id and _age(message) <= DELETE_OWN_WITHIN)
 
 
 def may_edit(message, device):
+    """Yours, posted from the web within a day; never a signed statement."""
     from .mood_view import POSTED
     return (device is not None and message.sender_id == device.entity_id and message.source_file in POSTED
-            and message.source_file != 'mood-attest')
+            and message.source_file != 'mood-attest' and _age(message) <= EDIT_OWN_WITHIN)
+
+
+def _ready(by):
+    """The recovery key, if taking back may go ahead for `by` now; Refused with why if not."""
+    from django.conf import settings
+    from django.utils import timezone
+    from conversations.models import SealedCopy
+    key = getattr(settings, 'MOOD_RECOVERY_PUBLIC_KEY', '')
+    if not key:
+        raise Refused("taking back isn't set up here yet: there's no recovery key to keep what's taken back",
+                      status=503)
+    now = timezone.now()
+    mine = SealedCopy.objects.filter(by=by)
+    if mine.filter(at__gte=now - timedelta(hours=1)).count() >= PER_HOUR:
+        raise Refused(f'that is {PER_HOUR} taken back in the last hour: wait a while, or ask an admin', status=429)
+    if mine.filter(at__gte=now - timedelta(days=1)).count() >= PER_DAY:
+        raise Refused(f'that is {PER_DAY} taken back today: ask an admin', status=429)
+    return key
+
+
+def _seal(message, kind, by, key, media):
+    """Keep what's going, sealed to the recovery key, before anything goes."""
+    import base64
+    import json
+    from conversations.models import SealedCopy
+    from .sealing import seal
+    payload = {'content': message.content, 'source_file': message.source_file, 'sender': message.sender_id,
+               'media': [{'sha': m.sha256, 'mime': m.mime, 'license': getattr(m, 'license', ''),
+                          'added_by': m.added_by_id, 'data': base64.b64encode(bytes(m.data)).decode()} for m in media]}
+    SealedCopy.objects.create(message_id=message.pk, mood_slug=message.mood.slug if message.mood_id else '',
+                              kind=kind, by=by, sealed=seal(json.dumps(payload).encode(), key))
+
+
+def _say_so(message, by, kind):
+    """An admin taking back someone else's words, or anyone a burst of them: said in #general."""
+    from django.core.cache import cache
+    from django.utils import timezone
+    from conversations.models import SealedCopy
+    from .access import announce
+    where = message.mood.slug if message.mood_id else ''
+    if message.sender_id != by:
+        announce('took-back', message.sender_id, by=by, label=f'{kind} in #{where}')
+    recent = SealedCopy.objects.filter(by=by, at__gte=timezone.now() - BURST_WITHIN).count()
+    if recent >= BURST and cache.add(f'retract:burst:{by}', 1, int(BURST_WITHIN.total_seconds())):
+        announce('taking-back-a-lot', by, label=f'{recent} in {int(BURST_WITHIN.total_seconds() // 60)} minutes')
 
 
 def change_of(message):
@@ -51,15 +132,20 @@ def delete(message, by):
     change = change_of(message)
     if change and change.kind == 'deleted':
         return {'scrubbed': 0, 'reached': change.reached}
+    key = _ready(by)
     old = prose(message.content) or ''
+    going = _media_going(message, old, '')
+    _seal(message, 'deleted', by, key, going)
     content = DELETED if isinstance(message.content, str) else [{'type': 'text', 'text': DELETED}]
     type(message).objects.filter(pk=message.pk).update(content=content)
-    _forget_media(message, old, '')
+    for media in going:
+        media.delete()
     _forget_readings(message)
     scrubbed, reached = _scrub_wakes(message, old, '')
     MessageChange.objects.update_or_create(message=message, defaults={
         'mood': message.mood, 'kind': 'deleted', 'by': by, 'reached': reached})
     _forget_cached(message)
+    _say_so(message, by, 'a message deleted')
     return {'scrubbed': scrubbed, 'reached': reached}
 
 
@@ -68,24 +154,31 @@ def edit(message, text, by):
     from conversations.models import MessageChange
     from .mood_view import prose
     from .redaction import redact
+    key = _ready(by)
     old = prose(message.content) or ''
     text, _ = redact(text)
+    going = _media_going(message, old, text)
+    _seal(message, 'edited', by, key, going)
     type(message).objects.filter(pk=message.pk).update(content=text)
-    _forget_media(message, old, text)
+    for media in going:
+        media.delete()
     _forget_readings(message)
     scrubbed, reached = _scrub_wakes(message, old, text)
     MessageChange.objects.update_or_create(message=message, defaults={
         'mood': message.mood, 'kind': 'edited', 'by': by, 'reached': reached})
     _forget_cached(message)
+    _say_so(message, by, 'a message edited')
     return {'scrubbed': scrubbed, 'reached': reached}
 
 
 def mark(payload, change):
-    """A turn's payload as it now stands: "(edited)", or the line a deletion leaves."""
+    """A turn's payload as it now stands: "(edited)", "(restored)", or the line a deletion leaves."""
     if change is None:
         return payload
     if change.kind == 'edited':
         return {**payload, 'edited': change.at.isoformat()}
+    if change.kind == 'restored':
+        return {**payload, 'restored': change.at.isoformat()}
     return {**payload, 'deleted': {'by': change.by, 'at': change.at.isoformat()}, 'text': '', 'html': '',
             'mentions': [], 'reply': None, 'voiced': False, 'voices': []}
 
@@ -139,18 +232,20 @@ def _scrub_wakes(message, old, new):
     return scrubbed, reached
 
 
-def _forget_media(message, old, new):
-    """Pictures and recordings in what went, gone too -- unless something else still uses them."""
+def _media_going(message, old, new):
+    """The pictures and recordings in what goes that nothing else uses: to seal, then remove."""
     from django.db.models import TextField
     from django.db.models.functions import Cast
     from conversations.models import Media, Message
     from .media import AUDIO_PATH, MEDIA_PATH
     kept = set(m.group(1) for path in (MEDIA_PATH, AUDIO_PATH) for m in path.finditer(new or ''))
+    going = []
     for sha in set(m.group(1) for path in (MEDIA_PATH, AUDIO_PATH) for m in path.finditer(old or '')) - kept:
         elsewhere = (Message.objects.exclude(pk=message.pk).exclude(source_file='voice')
                      .annotate(as_text=Cast('content', TextField())).filter(as_text__contains=sha).exists())
         if not elsewhere:
-            Media.objects.filter(sha256=sha).delete()
+            going.extend(Media.objects.filter(sha256=sha))
+    return going
 
 
 def _forget_readings(message):

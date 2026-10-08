@@ -1383,11 +1383,14 @@
     // ↩ for anyone signed in. A reply addresses a person, never an agent (only an @mention wakes one).
     const replyBtn = viewer && !t.deleted ? `<button type="button" class="replybtn" data-reply="${esc(t.id)}" title="Reply" aria-label="Reply">↩</button>` : '';
     // ✎ what you wrote here yourself; 🗑 what you wrote, or anything as an admin (services/retract.py).
-    const editBtn = viewer && !t.deleted && t.sender === viewer && t.via === 'web' && !t.attested
+    // As services/retract.py allows: your own, edited within a day, deleted within a week; an admin's, any.
+    const age = Date.now() - new Date(t.created_at).getTime();
+    const editBtn = viewer && !t.deleted && t.sender === viewer && t.via === 'web' && !t.attested && age < 864e5
       ? `<button type="button" class="editbtn" data-edit="${esc(t.id)}" title="Edit what you said" aria-label="Edit">✎</button>` : '';
-    const delBtn = viewer && !t.deleted && (t.sender === viewer || viewerAdmin)
+    const delBtn = viewer && !t.deleted && ((t.sender === viewer && age < 7 * 864e5) || viewerAdmin)
       ? `<button type="button" class="delbtn" data-delete="${esc(t.id)}" title="Delete it: its words are taken out of the record" aria-label="Delete">🗑</button>` : '';
-    const edited = t.edited ? `<span class="edited" title="edited ${esc(stamp(t.edited))}">(edited)</span>` : '';
+    const edited = t.edited ? `<span class="edited" title="edited ${esc(stamp(t.edited))}">(edited)</span>`
+      : t.restored ? `<span class="edited" title="put back ${esc(stamp(t.restored))}, with the recovery key">(restored)</span>` : '';
     const answers = t.reply ? `<a class="replyto" href="#m-${esc(t.reply.id)}" data-reveal="${esc(t.reply.id)}" title="Go to the message this replies to">`
       + `↩ ${icon(t.reply.sender, human[t.reply.sender] !== false)}<b>${esc(shown(t.reply.sender))}</b> ${esc(t.reply.snippet || '(a message)')}</a>` : '';
     el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${cont ? '' : edited}${how(t)}${signed}${replyBtn}${cont ? '' : editBtn + delBtn}</div>`
@@ -1662,6 +1665,9 @@
         'unbanned': `${by} let ${who} sign in again`,
         'az5': `☢ ${who} pressed AZ5: everyone signed out, Moods locked`,
         'lifted': `${who} lifted AZ5: Moods open again`,
+        // Taking back (services/retract.py): an admin's, of someone else's words; or a burst of them.
+        'took-back': `🗑 ${by} took back ${who}'s words · ${esc(e.label || '')}`,
+        'taking-back-a-lot': `⚠ ${who} is taking back a lot · ${esc(e.label || '')}`,
       }[e.kind] || `${who} · ${esc(e.kind || '')}`) + ` · ${esc(stamp(e.created_at))}`;
       container.appendChild(el);
       prev = null;

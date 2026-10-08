@@ -259,7 +259,8 @@ def _retract(request, slug, message_id, edit):
         return JsonResponse({'error': 'slow down'}, status=429)
     if edit:
         if not retract.may_edit(message, device):
-            return JsonResponse({'error': 'only what you wrote here yourself can be edited'}, status=403)
+            return JsonResponse({'error': 'only what you wrote here yourself, within a day of writing it, can be edited'},
+                                status=403)
         try:
             text = json.loads(request.body).get('text', '')
         except (ValueError, AttributeError):
@@ -274,12 +275,18 @@ def _retract(request, slug, message_id, edit):
             agents = set(ThinkingEntity.objects.filter(is_biological_human=False).values_list('name', flat=True))
             if [n for n in addressed_in(text, known_names(), by=device.entity_id) if n in agents]:
                 return JsonResponse({'error': "signed in with PickiPedia, you can't address agents"}, status=403)
-        done = retract.edit(message, text, device.entity_id)
+        try:
+            done = retract.edit(message, text, device.entity_id)
+        except retract.Refused as e:
+            return JsonResponse({'error': str(e)}, status=e.status)
     else:
         if not retract.may_delete(message, device):
-            return JsonResponse({'error': 'only what you wrote can be deleted (or anything, by an admin with their SSH key)'},
-                                status=403)
-        done = retract.delete(message, device.entity_id)
+            return JsonResponse({'error': 'only what you wrote, within a week of writing it, can be deleted '
+                                          '(or anything, by an admin with their SSH key)'}, status=403)
+        try:
+            done = retract.delete(message, device.entity_id)
+        except retract.Refused as e:
+            return JsonResponse({'error': str(e)}, status=e.status)
     return JsonResponse({'id': str(message.id), 'kind': 'edited' if edit else 'deleted', **done})
 
 
