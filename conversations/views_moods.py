@@ -644,6 +644,19 @@ def notices_for(name, since, limit=NOTICES_MAX):
     return found
 
 
+
+@require_GET
+def api_wiki_preview(request):
+    """?title=: a PickiPedia page in brief, for the card shown on a link to it (services/wiki_preview.py).
+    {'title', 'url', 'summary', 'facts', 'art', 'image'}; 404 if there's no such page."""
+    from .services import wiki_preview
+    found = wiki_preview.preview(request.GET.get('title', ''))
+    if not found:
+        return JsonResponse({'error': 'no such page'}, status=404)
+    response = JsonResponse(found)
+    response['Cache-Control'] = 'public, max-age=3600'
+    return response
+
 @require_GET
 def api_mentions(request, name):
     """Recent turns, across all Moods, that mention one thinking entity.
