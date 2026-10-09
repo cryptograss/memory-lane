@@ -252,6 +252,10 @@ GITHUB_TOKEN = os.getenv('GITHUB_TOKEN', '')
 # the to-do lists linking it at once. The repository webhook's secret; unset,
 # /api/github/hook/ refuses everything and lists tick on their own, minutes later.
 GITHUB_WEBHOOK_SECRET = os.getenv('GITHUB_WEBHOOK_SECRET', '')
+# A merged pull request's to-do item, ticked on PickiPedia too (conversations/services/todo_ticks.py):
+# a bot password with "Edit existing pages" and "High-volume (bot) access". Unset: ticked in magenta only.
+PICKIPEDIA_TODO_BOT_USER = os.getenv('PICKIPEDIA_TODO_BOT_USER', '')
+PICKIPEDIA_TODO_BOT_PASSWORD = os.getenv('PICKIPEDIA_TODO_BOT_PASSWORD', '')
 
 # Who may kick, ban, scram (AZ5) and lift, with their SSH key
 # (conversations/views_admin.py): "justin,skyler". Unset, nobody can.

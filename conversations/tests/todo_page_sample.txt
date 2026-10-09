@@ -1,0 +1,178 @@
+What the people in [https://magenta.cryptograss.live/moods/magenta-interface/ #magenta-interface] have to do. magenta shows this list beside the Mood (memory-lane <code>services/todo.py</code>). Edit the YAML below: <code>- task: ...</code>, with <code>who</code>, <code>kind</code>, <code>link</code>, <code>note</code> and <code>done</code> as useful. Agents add what they leave someone to do, and mark what's done. Put a task in quotes if it has ": " or " #" in it (YAML reads those as a key and a comment); `backticks` make code.
+
+<todo>
+- task: "Merge memory-lane#138 (the webhook reads GitHub's form deliveries too, says what it last heard, and tells the Mood)"
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/138
+  note: Then a maybelle redeploy.
+- task: "Redeploy maybelle, for #135 to #137 (in progress 16:34Z), then again for #138"
+  who: justin
+  kind: deploy
+- task: "Look at the webhook's Recent Deliveries on GitHub: content type, and whether they answer 200"
+  who: justin
+  kind: review
+  note: "If it says application/x-www-form-urlencoded and the deliveries answered 400, that's why ticks weren't instant; #138 reads both."
+- task: Try read-all in the car, after the voice PRs are deployed
+  who: justin
+  kind: review
+  note: The real test of ▶'s first sound, memos sent at stop, and "Magent is thinking".
+- task: "Merge memory-lane#137 (anyone may put a person's picture on PickiPedia, credited to them)"
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/137
+  done: true
+- task: "Merge memory-lane#136 (what you send shows at once; a reload draws what this browser kept)"
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/136
+  done: true
+- task: "Merge memory-lane#135 (everyone's devices: live first, most lately used first; the order said)"
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/135
+  done: true
+- task: "Look at your devices → everyone: was Sky's 12:54 device signed out, and when?"
+  who: justin
+  kind: review
+  note: "Answered 10:26Z: none of Sky's were signed out, so that browser lost its sign-in (or it was the other one: home-screen app vs browser)."
+  done: true
+- task: "Merge maybelle-config#172 (Caddy from its GitHub release: Cloudsmith's apt repo answers 402)"
+  who: justin
+  kind: merge
+  link: https://github.com/cryptograss/maybelle-config/pull/172
+  done: true
+- task: "Deploy PickiPedia again, once #172 is in (for pickipedia#136: code and anchors on the wiki's list)"
+  who: justin
+  kind: deploy
+  done: true
+- task: "Merge memory-lane#134 (/clips works sent as a reply)"
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/134
+  done: true
+- task: "Merge memory-lane#133 (each to-do item has a link of its own; code shows as code)"
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/133
+  done: true
+- task: "Merge pickipedia#136 (code in to-do items shows as code; each item has its anchor)"
+  who: justin
+  kind: merge
+  link: https://github.com/cryptograss/pickipedia/pull/136
+  done: true
+- task: "Merge memory-lane#132 (GitHub's webhook: a merge ticks here at once)"
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/132
+  done: true
+- task: "Merge maybelle-config#171 (the webhook's secret, from the vault)"
+  who: justin
+  kind: merge
+  link: https://github.com/cryptograss/maybelle-config/pull/171
+  done: true
+- task: "Make the webhook secret (`openssl rand -hex 32`); vault it as `memory_lane_github_webhook_secret`"
+  who: justin
+  kind: edit
+  done: true
+- task: "Redeploy maybelle, once #131, #132 and maybelle-config#171 are in"
+  who: justin
+  kind: deploy
+  done: true
+- task: "Add the webhook on GitHub: pull requests, to `https://magenta.cryptograss.live/api/github/hook/`"
+  who: justin
+  kind: edit
+  done: true
+- task: Deploy PickiPedia, for the todo tag (pickipedia#134)
+  who: justin
+  kind: deploy
+  done: true
+- task: "Merge memory-lane#131 (#125 to #130 in one)"
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/131
+  done: true
+- task: "Merge memory-lane#119 (#109 to #118 in one)"
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/119
+  done: true
+- task: Merge memory-lane#120 (edit and delete)
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/120
+  done: true
+- task: Merge memory-lane#121 (merges on this list tick themselves, from GitHub)
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/121
+  done: true
+- task: Merge memory-lane#122 (link previews)
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/122
+  done: true
+- task: Merge memory-lane#123 (emoji reactions)
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/123
+  done: true
+- task: Merge memory-lane#124 (taking back is sealed, bounded and said aloud; its history read in the page)
+  who: justin
+  kind: merge
+  link: https://github.com/jMyles/memory-lane/pull/124
+  done: true
+- task: Make the recovery key pair; keep the private half offline; public half in the vault
+  who: justin
+  kind: edit
+  done: true
+- task: Merge maybelle-config#169 (the recovery public key, from the vault)
+  who: justin
+  kind: merge
+  link: https://github.com/cryptograss/maybelle-config/pull/169
+  done: true
+- task: Merge pickipedia-mcp#27 (to-do lists go up unmarked, as asked), and rebuild hunter's PickiPedia MCP
+  who: justin
+  kind: merge
+  link: https://github.com/cryptograss/pickipedia-mcp/pull/27
+  done: true
+- task: Merge pickipedia#134 (this list as a checklist with real links)
+  who: justin
+  kind: merge
+  link: https://github.com/cryptograss/pickipedia/pull/134
+  done: true
+- task: "Merge maybelle-config#166 (deploy logs: a plain word in the vault isn't a secret)"
+  who: justin
+  kind: merge
+  link: https://github.com/cryptograss/maybelle-config/pull/166
+  done: true
+- task: Merge maybelle-config#167 (deploys say who ran them, by PickiPedia name)
+  who: justin
+  kind: merge
+  link: https://github.com/cryptograss/maybelle-config/pull/167
+  done: true
+- task: Merge maybelle-config#168 (the "magenta uploads" OAuth keys, from the vault)
+  who: justin
+  kind: merge
+  link: https://github.com/cryptograss/maybelle-config/pull/168
+  done: true
+- task: Propose and approve the "magenta uploads" OAuth 2 app; put its keys in the vault
+  who: justin
+  kind: edit
+  done: true
+- task: Tick High-volume (bot) access on the DrivingThatTrain@deploy-logs bot password
+  who: justin
+  kind: edit
+  done: true
+- task: Redeploy maybelle, once the merges are in
+  who: justin
+  kind: deploy
+  note: 18:07Z, by JMyles (Cryptograss:Maybelle/deploy logs/26149367).
+  done: true
+- task: "Redeploy hunter (the poller's greeting wording, #105; the to-do line in every wake, #117; handoffs in wakes, #118)"
+  who: justin
+  kind: deploy
+  done: true
+</todo>
+
+[[Category:Mood to-do lists]]

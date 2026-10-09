@@ -122,6 +122,11 @@ def for_mood(mood, http=None):
         except Unreadable as e:
             error = str(e)
     items = with_merges(items, http)
+    if text is not None and not error:
+        from .todo_ticks import tick_later  # merged, but open on the page: a bot ticks it there too
+        for item in items:
+            if item.get('merged'):
+                tick_later(title, item['link'])
     page = f"{pickipedia_url()}/wiki/{quote(title.replace(' ', '_'))}"
     found = {'page': page, 'edit': f'{page}?action=edit', 'exists': text is not None, 'items': items,
              **({'error': error} if error else {})}
