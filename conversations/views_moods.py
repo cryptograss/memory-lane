@@ -556,14 +556,18 @@ def api_recent(request):
 
     told = set()  # a redeploy is announced in several Moods; list it once
     for row in (Message.objects.filter(source_file='deploy', created_at__gt=since).order_by('-created_at')
-                .values('content', 'created_at')[:limit * 10]):
+                .values('id', 'content', 'created_at', 'timestamp')[:limit * 10]):
         c = row['content'] if isinstance(row['content'], dict) else {}
         key = (c.get('server'), c.get('state'), row['created_at'].replace(microsecond=0).isoformat()[:18])
         if key in told:
             continue
         told.add(key)
         verb = {'started': 'redeploy started', 'finished': 'redeployed', 'failed': 'redeploy failed'}.get(c.get('state'), '')
+        # id: the same every time it's listed, whichever Mood's row comes first (one per Mood, one moment);
+        # row: one of them, for the narrator to say (api_narrate).
         events.append({'kind': 'deploy', 'at': row['created_at'].isoformat(), 'mood': None, 'who': c.get('by', ''),
+                       'id': f"deploy-{c.get('server')}-{c.get('state')}-{row['timestamp']}", 'row': str(row['id']),
+                       'state': c.get('state', ''),
                        'text': f"{c.get('server')} {verb}" + (f" · {c['commit'][:8]}" if c.get('commit') else '')})
 
     for mood in Mood.objects.filter(created_at__gt=since).order_by('-created_at')[:limit]:

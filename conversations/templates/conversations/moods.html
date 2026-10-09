@@ -795,7 +795,7 @@
       <label class="only"><input type="checkbox" id="onlyMine"> only mentions of me</label>
       <span class="textsize">text size <button type="button" data-step="-1" aria-label="Smaller text">A−</button><span id="textSizeVal">100%</span><button type="button" data-step="1" aria-label="Larger text">A+</button></span>
       <button id="notify" type="button" hidden aria-label="Notifications"></button>
-      <label class="readall" id="readAllLabel" hidden title="Each new message read aloud as it arrives, in its speaker's voice, the narrator saying who speaks and when an agent starts thinking. Your own messages aren't read.">read aloud as they come <select id="readAll"><option value="off">off</option><option value="here">this Mood</option><option value="everywhere">every Mood</option></select></label>
+      <label class="readall" id="readAllLabel" hidden title="Each new message read aloud as it arrives, in its speaker's voice, the narrator saying who speaks, when an agent starts thinking, and when a server redeploys. Your own messages aren't read.">read aloud as they come <select id="readAll"><option value="off">off</option><option value="here">this Mood</option><option value="everywhere">every Mood</option></select></label>
       <a href="#" id="voicesLink" hidden>voices</a>
       <a href="#" id="devicesLink" hidden>your devices</a>
       <a href="#" id="takenBackLink" hidden title="Who edited or deleted what in this Mood, and when; with the recovery key, what it said before">taken back here</a>
@@ -3527,7 +3527,7 @@
     const everyone = [{ name: narrator, narrator: true },
                       ...[...people].sort((a, b) => (b.name === viewer) - (a.name === viewer) || a.name.localeCompare(b.name))];
     voicesList.innerHTML = (data.note ? `<p class="meta">${esc(data.note)}</p>` : '')
-      + `<p class="meta">Reading as they come, the narrator says who speaks next, and when an agent starts thinking.</p>`
+      + `<p class="meta">Reading as they come, the narrator says who speaks next, when an agent starts thinking, and when a server redeploys.</p>`
       + everyone.map(p => {
         const v = voiceFor(data, p.name);
         const may = p.name === viewer || keyHolder;
@@ -3604,8 +3604,11 @@
       if (!r.ok) return;
       events = (await r.json()).events || [];
     } catch (e) { return; }
-    const fresh = events.filter(e => (e.kind === 'said' || e.kind === 'answered') && e.id && !readHeard.has(e.id)
-                                     && e.who !== viewer && (readMode === 'everywhere' || e.mood === current))
+    // A server redeployed (or failing to) is news reading here or everywhere: the narrator says it.
+    const said = e => (e.kind === 'said' || e.kind === 'answered') && e.who !== viewer
+                      && (readMode === 'everywhere' || e.mood === current);
+    const redeployed = e => e.kind === 'deploy' && e.row && (e.state === 'finished' || e.state === 'failed');
+    const fresh = events.filter(e => (said(e) || redeployed(e)) && e.id && !readHeard.has(e.id))
       .sort((a, b) => new Date(a.at) - new Date(b.at));
     for (const e of fresh) { readHeard.add(e.id); readQueue.push(e); }
     // Next time from a minute before the newest: a clock a little off misses nothing, and ids keep it once.
@@ -3692,13 +3695,14 @@
     const intro = newMood && readMode === 'everywhere' ? 'where' : newMood || readLast.who !== item.who ? '1' : '';
     const clips = [];
     try {
-      if (item.kind === 'thinking') {
+      if (item.kind === 'thinking' || item.kind === 'deploy') {
         const r = await fetch('/api/voice/narrate/', { method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
-          body: JSON.stringify({ mood: item.mood, agent: item.agent, where: readMode === 'everywhere' }) });
+          body: JSON.stringify(item.kind === 'deploy' ? { mood: current, deploy: item.row }
+                               : { mood: item.mood, agent: item.agent, where: readMode === 'everywhere' }) });
         const body = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(body.error || r.status);
-        clips.push(['thinking', body.url]);
+        clips.push([item.kind, body.url]);
       } else if (intro || !memo) {
         const ask = new URLSearchParams(intro ? { intro } : {});
         if (memo) ask.set('only', 'intro');
@@ -3742,7 +3746,7 @@
         await new Promise(r => setTimeout(r, 1500));
         how = await playClip(src);
       }
-      if (item.kind !== 'thinking') readReport(item, clip, how);
+      if (item.kind !== 'thinking' && item.kind !== 'deploy') readReport(item, clip, how);
       if (how === 'blocked' || how === 'failed') {
         // Not on to the next as if this were heard: wait, and say why. ▶ (or the car's play)
         // tries it again -- a press is what a phone wants -- and ⏭ leaves it.
@@ -3751,7 +3755,8 @@
       }
     }
     if (readNow !== now) return;  // stopped meanwhile
-    if (item.kind !== 'thinking') readLast = { who: item.who, mood: item.mood };  // its answer still says who speaks
+    if (item.kind === 'deploy') readLast = null;  // after the news, whoever speaks next is said again
+    else if (item.kind !== 'thinking') readLast = { who: item.who, mood: item.mood };  // its answer still says who speaks
     readNow = null;
     readNext();
   }
@@ -3763,6 +3768,7 @@
     const more = readQueue.length ? ` · ${readQueue.length} more` : '';
     readWhat.textContent = note
       || (readBlocked ? `🔊 ${readQueue.length} to read: press ▶${readWhy ? ` (it said ${readWhy})` : ''}`
+      : item && item.kind === 'deploy' ? `🔊 ${item.text}${more}`
       : item ? `🔊 ${shown(item.who)}${readMode === 'everywhere' ? ' · ' + where : ''}${more}`
       : `🔊 reading ${readMode === 'everywhere' ? 'every Mood' : 'this Mood'} as it comes`);
     readPause.textContent = readHeld || readBlocked ? '▶' : '⏸';
