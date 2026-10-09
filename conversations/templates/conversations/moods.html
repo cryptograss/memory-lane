@@ -714,6 +714,14 @@
   #todoBody li .meta .you { color: var(--accent); font-weight: 600; }
   #todoBody li .why { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
   #todoBody li .task a { color: inherit; }
+  /* `code` in a task or its note; each item's own link (#), copied on a click, and the item it opens flashes. */
+  #todoBody li code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); border-radius: 4px; padding: 0 4px; }
+  #todoBody li > div { flex: 1; min-width: 0; }
+  #todoBody li a.todolink { flex: none; color: var(--muted); text-decoration: none; font-size: 12px; opacity: 0; }
+  #todoBody li:hover a.todolink, #todoBody li a.todolink:focus { opacity: .8; }
+  @media (hover: none) { #todoBody li a.todolink { opacity: .45; } }
+  #todoBody li a.todolink[data-copied]::after { content: ' copied'; color: var(--accent); }
+  #todoBody li.flash { animation: flash 2.5s ease-out; }
   #todoDone { margin-top: 8px; color: var(--muted); }
   #todoDone summary { cursor: pointer; font-size: 12.5px; }
   #todoDone li .task { text-decoration: line-through; }
@@ -1049,15 +1057,21 @@
     if (/^#[\w-]+$/.test(link)) return '/moods/' + link.slice(1) + '/';
     return link ? `${WIKI}/wiki/${encodeURIComponent(link.replace(/ /g, '_'))}` : '';
   }
+  // `code` in a task or a note, as in a message.
+  function todoText(text) { return esc(text).replace(/`([^`\n]+)`/g, '<code>$1</code>'); }
+  // Each item's own name in a link (#todo-<its words>): stable while its words are.
+  function todoId(it) { return 'todo-' + it.task.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60); }
   function todoItem(it) {
     const who = it.who.map(n => n.toLowerCase() === viewer ? '<span class="you">you</span>' : esc(shown(n.toLowerCase())));
     const meta = [it.merged ? 'merged, says GitHub' : it.kind, who.join(', ')].filter(Boolean).join(' · ');
     // A task with a link is the link, as on PickiPedia (its <todo> tag).
     const href = it.link ? linkOf(it.link) : '';
-    const task = href ? `<a href="${esc(href)}"${/^https?:/i.test(href) ? ' target="_blank" rel="noopener"' : ''} title="${esc(it.link)}">${esc(it.task)}</a>`
-      : esc(it.task);
-    return `<li><span class="box">${it.done ? '☑' : '☐'}</span><div><span class="task">${task}</span>`
-      + (meta ? `<div class="meta">${meta}</div>` : '') + (it.note ? `<div class="why">${esc(it.note)}</div>` : '') + '</div></li>';
+    const task = href ? `<a href="${esc(href)}"${/^https?:/i.test(href) ? ' target="_blank" rel="noopener"' : ''} title="${esc(it.link)}">${todoText(it.task)}</a>`
+      : todoText(it.task);
+    const id = todoId(it);
+    return `<li id="${esc(id)}"><span class="box">${it.done ? '☑' : '☐'}</span><div><span class="task">${task}</span>`
+      + (meta ? `<div class="meta">${meta}</div>` : '') + (it.note ? `<div class="why">${todoText(it.note)}</div>` : '') + '</div>'
+      + `<a class="todolink" href="#${esc(id)}" title="This item's link: click to copy">#</a></li>`;
   }
   function renderTodo(t) {
     todoShown = t;
@@ -1074,7 +1088,33 @@
     if (done.length) fold.dataset.n = done.length; else delete fold.dataset.n;
     fold.querySelector('summary').textContent = `Done (${done.length})`;
     fold.querySelector('ul').innerHTML = done.map(todoItem).join('');
+    showTodoItem();
   }
+  // A link to one item (/moods/<slug>/#todo-…): the list opens, at it, and it flashes.
+  let todoWanted = (location.hash.match(/^#(todo-[a-z0-9-]+)$/) || [])[1] || null;
+  function showTodoItem() {
+    if (!todoWanted) return;
+    const li = document.getElementById(todoWanted);
+    if (!li) return;
+    todoWanted = null;
+    openTodo(true);
+    const fold = li.closest('details');
+    if (fold) fold.open = true;
+    li.scrollIntoView({ block: 'center' });
+    li.classList.remove('flash'); void li.offsetWidth; li.classList.add('flash');
+  }
+  addEventListener('hashchange', () => {
+    const m = location.hash.match(/^#(todo-[a-z0-9-]+)$/);
+    if (m) { todoWanted = m[1]; showTodoItem(); }
+  });
+  document.addEventListener('click', async e => {
+    const a = e.target.closest('#todoBody a.todolink');
+    if (!a) return;
+    e.preventDefault();
+    const url = `${location.origin}/moods/${encodeURIComponent(current)}/${a.getAttribute('href')}`;
+    try { await navigator.clipboard.writeText(url); a.dataset.copied = ''; setTimeout(() => delete a.dataset.copied, 1500); }
+    catch (err) { prompt('Copy this link:', url); }
+  });
   let todoStamp = null;  // the server's word on when a list last may have changed (pollOnce)
   async function loadTodo(fresh) {
     const slug = current;
