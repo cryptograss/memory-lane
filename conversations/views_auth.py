@@ -196,14 +196,19 @@ def api_say(request, slug):
                                           f"your SSH key (magenta.sh login)", 'agents': addressed}, status=403)
 
     # /clips: the team's saved clips (services/clips.py). A command either
-    # becomes what's posted, or -- listing them -- posts nothing at all.
+    # becomes what's posted, or -- listing them -- posts nothing at all. Sent
+    # as a reply, it's the words after the reply's '↩ #m-…' that are the command.
     from .services import clips
+    from .services.mood_view import reply_to
+    answering, said = reply_to(text)
     try:
-        text, note = clips.command(text, device.entity_id)
+        posted, note = clips.command(said, device.entity_id)
     except clips.Refused as e:
         return JsonResponse({'error': str(e)}, status=400)
-    if text is None:
+    if posted is None:
         return JsonResponse({'note': note})
+    if posted != said:
+        text = f'↩ #m-{answering}\n{posted}' if answering else posted
 
     recent = Message.objects.filter(sender=device.entity, source_file=WEB_SOURCE,
                                     created_at__gt=timezone.now() - timedelta(minutes=1)).count()
