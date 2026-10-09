@@ -1,4 +1,4 @@
-"""A picture from a Mood, onto PickiPedia: by whoever shared it, as themselves.
+"""A picture from a Mood, onto PickiPedia: by anyone here, as themselves, credited to whoever shared it.
 
 Pictures sent into Moods stay in memory-lane (services/media.py), under the
 license their sharer gave them there: CC BY-SA 4.0 unless they made it CC0.
@@ -6,9 +6,14 @@ One worth keeping -- a photo from a jam, a flyer -- its sharer can put on
 PickiPedia from the "→ PickiPedia" button under it, as a File: with a name
 and a description, under that license, linking back to the message.
 
-It goes up from their own PickiPedia account. A license is a promise only
-whoever made the picture can give, and the file's history should say who
-did. So pressing the button sends them to PickiPedia to let magenta upload
+Every picture shared here is under a free license its sharer gave it (CC
+BY-SA 4.0, or CC0 if they chose), so anyone here may put it on PickiPedia,
+as that license allows: under it, unchanged -- only its sharer may change it
+-- and its file page saying who shared it, as its author. Pictures an agent
+brought in carry no such license from a person, and don't go.
+
+It goes up from the uploader's own PickiPedia account, so the file's
+history says who put it there. Pressing the button sends them to PickiPedia to let magenta upload
 for them (OAuth 2, the "magenta uploads" consumer: settings.
 PICKIPEDIA_UPLOAD_CLIENT_ID / _SECRET; unset, there is no button). Back here
 (views_auth.wiki_upload_return), the upload is made with that permission and
@@ -32,8 +37,8 @@ from django.core.cache import cache
 SOURCE = 'wiki-upload'
 EXTENSIONS = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp'}
 LICENSE_TEXT = {
-    'cc-by-sa-4.0': 'Released by its uploader under [https://creativecommons.org/licenses/by-sa/4.0/ CC BY-SA 4.0].',
-    'cc0': 'Dedicated by its uploader to the public domain ([https://creativecommons.org/publicdomain/zero/1.0/ CC0]).',
+    'cc-by-sa-4.0': 'Released by its author under [https://creativecommons.org/licenses/by-sa/4.0/ CC BY-SA 4.0].',
+    'cc0': 'Dedicated by its author to the public domain ([https://creativecommons.org/publicdomain/zero/1.0/ CC0]).',
 }
 STATE_COOKIE = 'wiki_upload'
 PENDING_FOR = 900  # seconds to say yes on PickiPedia (signing in there first, perhaps)
@@ -71,9 +76,15 @@ def already(sha):
     return {'file': row['file'], 'page': row['page']} if row else None
 
 
-def page_text(description, license, link):
+def page_text(description, license, link, author=None):
+    """A file page: what it is, who made it (whoever shared it in magenta), where, and its license."""
+    from .wiki_auth import names
+    credit = ''
+    if author:
+        wiki = names().get(author.lower())
+        credit = f'Author: {"[[User:" + wiki + "|" + wiki + "]]" if wiki else author}, who shared it in magenta.\n\n'
     return (f'== Summary ==\n{description.strip() or "(no description)"}\n\n'
-            f'Shared in magenta: {link}\n\n'
+            f'{credit}Shared in magenta: {link}\n\n'
             f'== Licensing ==\n{LICENSE_TEXT.get(license, LICENSE_TEXT["cc-by-sa-4.0"])}\n\n'
             '[[Category:From magenta]]\n')
 
@@ -136,10 +147,14 @@ def begin(media, wanted, description, license, entity, mood, message_id, redirec
     if not enabled():
         raise UploadError("putting pictures on PickiPedia isn't set up here", status=503)
     name_here = getattr(entity, 'pk', entity)
-    if media.added_by_id != name_here:
-        raise UploadError('only whoever shared a picture can put it on PickiPedia: it goes up as theirs', status=403)
+    author = media.added_by_id
+    if not author or not getattr(media.added_by, 'is_biological_human', False):
+        raise UploadError("this picture wasn't shared by a person here, so it carries no license from one to "
+                          "pass on", status=403)
     if license not in media_service.LICENSES:
         raise UploadError('CC BY-SA 4.0 or CC0')
+    if author != name_here:
+        license = media.license  # its sharer's to choose; anyone else passes it on as it is
     gone = already(media.sha256)
     if gone:
         return {**gone, 'new': False}
@@ -148,14 +163,15 @@ def begin(media, wanted, description, license, entity, mood, message_id, redirec
     there = wiki.holding(hashlib.sha1(bytes(media.data)).hexdigest())
     if there:
         _record(mood, name_here, file=there, page=file_page(there), sha=media.sha256,
-                message=str(message_id or ''), already=True)
+                message=str(message_id or ''), author=author, already=True)
         return {'file': there, 'page': file_page(there), 'new': False}
     if wiki.taken(name):
         raise UploadError(f'PickiPedia already has a File:{name}: choose another name', status=409)
-    media_service.relicense(media, license, name_here)
+    if author == name_here:
+        media_service.relicense(media, license, name_here)
     state = new_state()
     cache.set(f'wiki-upload:{state}', {'sha': media.sha256, 'name': name, 'description': description,
-                                       'license': license, 'by': name_here, 'mood': mood.slug,
+                                       'license': license, 'by': name_here, 'author': author, 'mood': mood.slug,
                                        'message': str(message_id or '')}, PENDING_FOR)
     from urllib.parse import urlencode
     from .mood_view import pickipedia_url
@@ -207,7 +223,8 @@ def finish(state, code, entity, redirect_uri, http=None):
     link = 'https://magenta.cryptograss.live' + place_of(mood.slug, pending['message'])
     wiki = Wiki(http, token=token)
     said = wiki.upload(pending['name'], bytes(media.data), media.mime,
-                       page_text(pending['description'], media.license, link), 'From magenta')
+                       page_text(pending['description'], media.license, link, author=pending.get('author')),
+                       'From magenta')
     warnings = said.get('warnings') or {}
     name, new = pending['name'], True
     if said.get('result') == 'Warning' and warnings.get('duplicate'):
@@ -219,7 +236,8 @@ def finish(state, code, entity, redirect_uri, http=None):
     else:
         name = said.get('filename') or name
     name = name.replace('_', ' ')  # as the wiki titles it; the API answers with underscores
-    details = {'file': name, 'page': file_page(name), 'sha': media.sha256, 'message': pending['message']}
+    details = {'file': name, 'page': file_page(name), 'sha': media.sha256, 'message': pending['message'],
+               'author': pending.get('author') or media.added_by_id}
     _record(mood, name_here, **details, **({} if new else {'already': True}))
     return {**details, 'new': new, 'back': place_of(mood.slug, pending['message'])}
 
