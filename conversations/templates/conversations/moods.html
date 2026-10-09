@@ -457,6 +457,11 @@
   .event { margin: 8px 0; font-size: 12.5px; color: var(--muted); text-align: center; }
   .event.failed { color: var(--err); }
   .event.wiki { text-align: left; font-size: 12px; margin: 4px 0; }
+  /* A new release (services/wiki_feed.py): a line, and its player under it. */
+  .event.release { text-align: left; }
+  .event.release a { color: inherit; }
+  .event.release .body { margin-top: 4px; color: var(--ink); font-size: 13.5px; }
+  .event.release .body .embed .caption { display: none; }  /* the line above says what it is */
   .event.wiki a { color: inherit; }
   .event.wiki .delta { color: var(--muted); text-decoration: none; }
   .event.wiki summary { cursor: pointer; }
@@ -606,25 +611,25 @@
                      border: 0; cursor: pointer; padding: 6px; }
   .turn .body a.img { cursor: zoom-in; }
   /* A file or a release, shown where it was linked (mood_view._file_embed, _release_embed). */
-  .turn .body .embed { display: block; margin: 6px 0; max-width: 560px; }
-  .turn .body .embed video { display: block; width: 100%; max-height: 60vh; border-radius: 6px; background: #000; }
-  .turn .body .embed audio { display: block; width: 100%; }
+  :is(.turn, .event.release) .body .embed { display: block; margin: 6px 0; max-width: 560px; }
+  :is(.turn, .event.release) .body .embed video { display: block; width: 100%; max-height: 60vh; border-radius: 6px; background: #000; }
+  :is(.turn, .event.release) .body .embed audio { display: block; width: 100%; }
   /* A release's player: the video, delivery-kid's mark on hover, and its qualities under it. */
-  .turn .body .embed .player { position: relative; display: block; }
-  .turn .body .embed .dkmask { position: absolute; top: 8px; left: 8px; z-index: 2; pointer-events: none;
+  :is(.turn, .event.release) .body .embed .player { position: relative; display: block; }
+  :is(.turn, .event.release) .body .embed .dkmask { position: absolute; top: 8px; left: 8px; z-index: 2; pointer-events: none;
     display: flex; gap: 8px; align-items: flex-end; padding: 6px 8px; border-radius: 6px;
     background: rgba(12, 10, 14, .62); color: #ece7e1; backdrop-filter: blur(3px);
     opacity: 0; transition: opacity .2s; }
-  .turn .body .embed .player:hover .dkmask, .turn .body .embed .player:focus-within .dkmask { opacity: 1; }
-  .turn .body .embed .dkmask pre { margin: 0; font-size: 2.1px; line-height: 1.05; letter-spacing: 0; color: inherit;
+  :is(.turn, .event.release) .body .embed .player:hover .dkmask, :is(.turn, .event.release) .body .embed .player:focus-within .dkmask { opacity: 1; }
+  :is(.turn, .event.release) .body .embed .dkmask pre { margin: 0; font-size: 2.1px; line-height: 1.05; letter-spacing: 0; color: inherit;
     font-family: ui-monospace, Menlo, Consolas, monospace; }
-  .turn .body .embed .dkmask b { font: 600 12px/1.2 ui-monospace, Menlo, Consolas, monospace; letter-spacing: .02em; }
-  .turn .body .embed .dkmask small { display: block; font-size: 10px; opacity: .75; }
-  .turn .body .embed .quality { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; font-size: 12px; }
-  .turn .body .embed .quality span { color: var(--muted); margin-right: 2px; }
-  .turn .body .embed .quality button { font: inherit; padding: 1px 8px; border-radius: 10px; cursor: pointer;
+  :is(.turn, .event.release) .body .embed .dkmask b { font: 600 12px/1.2 ui-monospace, Menlo, Consolas, monospace; letter-spacing: .02em; }
+  :is(.turn, .event.release) .body .embed .dkmask small { display: block; font-size: 10px; opacity: .75; }
+  :is(.turn, .event.release) .body .embed .quality { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; font-size: 12px; }
+  :is(.turn, .event.release) .body .embed .quality span { color: var(--muted); margin-right: 2px; }
+  :is(.turn, .event.release) .body .embed .quality button { font: inherit; padding: 1px 8px; border-radius: 10px; cursor: pointer;
     border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
-  .turn .body .embed .quality button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+  :is(.turn, .event.release) .body .embed .quality button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
   .turn .body .caption { display: block; font-size: 12.5px; color: var(--muted); margin-top: 3px; }
   .turn .body a.caption { text-decoration: none; }
   .turn .body a.caption:hover { color: var(--accent); }
@@ -1370,7 +1375,7 @@
   }
   document.addEventListener('error', e => {
     const v = e.target;
-    if (!(v instanceof HTMLMediaElement) || !v.closest('.turn .embed') || v._gave_up) return;
+    if (!(v instanceof HTMLMediaElement) || !v.closest('.turn .embed, .event.release .embed') || v._gave_up) return;
     if (v.dataset.hls && !v._plain && v.src === v.dataset.hls) { plainRelease(v); return; }  // the browser's own HLS
     cantPlay(v);
   }, true);
@@ -1921,6 +1926,17 @@
       prev = null;
       return;
     }
+    if (e.type === 'release') {  // a release made on PickiPedia, pinned by delivery-kid (services/wiki_feed.py)
+      const page = `${WIKI}/wiki/${encodeURIComponent((e.page || '').replace(/ /g, '_'))}`;
+      const by = e.by ? ` · uploaded by <a href="${esc(`${WIKI}/wiki/User:${encodeURIComponent(e.by.replace(/ /g, '_'))}`)}" `
+                        + `target="_blank" rel="noopener">${esc(e.by)}</a>` : '';
+      el.className = 'event release';
+      el.innerHTML = `📦 New release on PickiPedia: <a href="${esc(page)}" target="_blank" rel="noopener"><b>${esc(e.title || e.cid || 'a release')}</b></a>`
+        + `${by} · ${esc(stamp(e.at || e.created_at))}<div class="body">${e.html || ''}</div>`;
+      container.appendChild(el);
+      prev = null;
+      return;
+    }
     if (e.type === 'handoff' || e.type === 'handoff-sent') {  // context taken between Moods (services/handoff.py)
       const moodA = slug => `<a class="moodlink" data-mood="${esc(slug)}" href="/moods/${encodeURIComponent(slug)}/">#${esc(slug)}</a>`;
       const by = `<b>${esc(shown(e.by || 'an agent'))}</b>`, about = e.about ? ` about <i>${esc(e.about)}</i>` : '';
@@ -1996,6 +2012,9 @@
       prev = null;
       return;
     }
+    // The server by name, linked to its PickiPedia page.
+    const server = e.server_url ? `<a href="${esc(e.server_url)}" target="_blank" rel="noopener"><b>${esc(e.server)}</b></a>`
+                                : `<b>${esc(e.server)}</b>`;
     // One line a deploy: "redeploying…" while it's under way, then, in that same
     // line, how it ended -- with its log. A start nothing ever finished says so.
     const commit = e.commit ? ` · <code>${esc(e.commit.slice(0, 8))}</code>` : '';
@@ -2008,10 +2027,10 @@
     line.dataset.server = e.server || '';
     const unheard = e.state === 'started' && Date.now() - new Date(e.created_at).getTime() > DEPLOY_PATIENCE_MS;
     line.innerHTML = e.state === 'started'
-      ? (unheard ? `⚙ <b>${esc(e.server)}</b> began redeploying${by}${commit}; no word of how it ended · ${esc(stamp(e.created_at))}`
-                 : `⚙ <b>${esc(e.server)}</b> redeploying…${by}${commit} · ${esc(stamp(e.created_at))}`)
-      : e.state === 'failed' ? `✗ <b>${esc(e.server)}</b> redeploy failed${took(e.took)}${by}${log} · ${esc(stamp(e.created_at))}`
-      : `✓ <b>${esc(e.server)}</b> redeployed${took(e.took)}${commit}${by}${log} · ${esc(stamp(e.created_at))}`;
+      ? (unheard ? `⚙ ${server} began redeploying${by}${commit}; no word of how it ended · ${esc(stamp(e.created_at))}`
+                 : `⚙ ${server} redeploying…${by}${commit} · ${esc(stamp(e.created_at))}`)
+      : e.state === 'failed' ? `✗ ${server} redeploy failed${took(e.took)}${by}${log} · ${esc(stamp(e.created_at))}`
+      : `✓ ${server} redeployed${took(e.took)}${commit}${by}${log} · ${esc(stamp(e.created_at))}`;
     if (unheard) line.classList.remove('started');  // over, presumed: a finish that comes late gets a line of its own
     if (!started) container.appendChild(line);
     prev = null;

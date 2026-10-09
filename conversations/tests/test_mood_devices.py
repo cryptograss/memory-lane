@@ -400,8 +400,49 @@ class WikiFeedTest(TestCase):
         from conversations.services import wiki_feed
         http = self.wiki(1)
         self.assertTrue(wiki_feed.nudge(http, wait=True))
+        asked = http.get.call_count  # its changes, and its new releases
         self.assertFalse(wiki_feed.nudge(http, wait=True))
-        self.assertEqual(http.get.call_count, 1)
+        self.assertEqual(http.get.call_count, asked)
+
+    def releases(self, *made):
+        """A wiki whose new Release: pages are `made` ((rcid, cid, minutes ago)), each page's YAML saying who uploaded it."""
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        listed = [{'type': 'new', 'ns': 3004, 'title': f'Release:{cid}', 'rcid': rcid, 'user': 'Blue Railroad Imports',
+                   'timestamp': (now - timedelta(minutes=ago)).strftime('%Y-%m-%dT%H:%M:%SZ')}
+                  for rcid, cid, ago in sorted(made, reverse=True)]
+
+        def get(url, params=None, **kwargs):
+            if url.endswith('/index.php'):
+                return mock.Mock(text=f"title: 'Take {params['title'][-1]} '\nuploaded_by: wiki:Watertowerband\nrelease_type: video\n")
+            return mock.Mock(json=lambda: {'query': {'recentchanges': listed}})
+        return mock.Mock(get=mock.Mock(side_effect=get))
+
+    def test_a_new_release_is_shown_once_with_its_player(self):
+        from conversations.services import embeds, wiki_feed
+        old, new = 'Qm' + 'a' * 44, 'Qm' + 'b' * 44
+        # The first look: only what's recent, not every release ever made.
+        self.assertEqual(wiki_feed.refresh_releases(self.releases((7, old, 600), (8, new, 20))), 1)
+        self.assertEqual(wiki_feed.refresh_releases(self.releases((7, old, 600), (8, new, 20))), 0)  # once
+        newer = 'Qm' + 'c' * 44
+        self.assertEqual(wiki_feed.refresh_releases(self.releases((8, new, 21), (9, newer, 1))), 1)
+        listed = {new: {'title': 'Take b', 'type': 'video/mov', 'page': new, 'thumbnail': ''}}
+        with mock.patch.object(embeds, 'releases', return_value=listed):
+            events = self.client.get('/api/moods/general/turns/').json()['events']
+        self.assertEqual([(e['type'], e['title'], e['by'], e['cid']) for e in events],
+                         [('release', 'Take b', 'Watertowerband', new), ('release', 'Take c', 'Watertowerband', newer)])
+        self.assertIn(f'data-hls="https://ipfs.delivery-kid.cryptograss.live/ipfs/{new}/master.m3u8"', events[0]['html'])
+        self.assertNotIn('<video', events[1]['html'])  # not in the release list yet: a link until it is
+        self.assertEqual(self.client.get('/api/moods/').json()['moods'][0]['message_count'], 0)  # lines, not words
+
+    def test_a_redeploy_line_links_its_server(self):
+        from conversations.services import servers
+        servers.record_deploy('delivery-kid', 'finished', by='jmyles')
+        servers.record_deploy('pickipedia', 'finished', by='jmyles')
+        events = self.client.get('/api/moods/general/turns/').json()['events']
+        self.assertEqual({e['server']: e['server_url'] for e in events},
+                         {'delivery-kid': 'https://pickipedia.xyz/wiki/Cryptograss:Delivery-kid',
+                          'pickipedia': 'https://pickipedia.xyz/'})
 
 
 @skipUnless(HAS_SSH_KEYGEN, 'needs ssh-keygen')
