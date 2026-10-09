@@ -816,10 +816,10 @@
   <label>Name <input id="upName" maxlength="180" required></label>
   <label>What it is <textarea id="upDesc" rows="3" maxlength="2000" placeholder="Who, what, where, when"></textarea></label>
   <label>License <select id="upRights">
-    <option value="cc-by-sa-4.0">CC BY-SA 4.0: anyone may reuse it, crediting you</option>
+    <option value="cc-by-sa-4.0">CC BY-SA 4.0: anyone may reuse it, crediting whoever took it</option>
     <option value="cc0">CC0: public domain, no strings</option>
   </select></label>
-  <span class="hint">It goes up as you, from your PickiPedia account: PickiPedia will ask you to allow it.</span>
+  <span class="hint" id="upHint">It goes up as you, from your PickiPedia account: PickiPedia will ask you to allow it.</span>
   <span class="note" id="upNote"></span>
   <span><button type="submit">Put it on PickiPedia</button> <button type="button" id="upCancel">Cancel</button></span>
 </form>
@@ -1369,12 +1369,20 @@
     const b = e.target.closest('.turn .body .topp');
     if (!b) return;
     uploading = { sha: b.dataset.sha, message: b.dataset.message };
+    // Someone else's picture: it goes up credited to them, under the license they gave it, theirs alone to change.
+    const sharer = b.closest('.turn')?.dataset.sender;
+    const theirs = sharer && sharer !== viewer;
     const title = (moods.find(m => m.slug === current) || {}).title || current || 'magenta';
     document.getElementById('upName').value = `${title} ${new Date().toISOString().slice(0, 10)}`;
     document.getElementById('upDesc').value = '';
     document.getElementById('upNote').textContent = '';
     const rights = document.getElementById('upRights');
     rights.value = 'cc-by-sa-4.0';
+    rights.disabled = !!theirs;
+    document.getElementById('upHint').textContent = theirs
+      ? `${shown(sharer)}'s picture: it goes up credited to them, under the license they gave it (theirs to change). `
+        + 'It goes up from your PickiPedia account: PickiPedia will ask you to allow it.'
+      : 'It goes up as you, from your PickiPedia account: PickiPedia will ask you to allow it.';
     fetch(`/api/media/${uploading.sha}/license/`).then(r => r.json()).then(l => { if (l.license) rights.value = l.license; })
       .catch(() => {});  // as it was shared: CC BY-SA 4.0 unless they made it CC0
     uploadBox.hidden = false;
@@ -1521,7 +1529,8 @@
     if (el.querySelector('.body a[href^="http"]:not([class])')) cardsWatch.observe(el);  // a preview, as it nears the screen
     el.insertAdjacentHTML('beforeend', '<div class="reacts"></div>');
     renderReacts(el, reactionsNow[t.id] || {});
-    if (wikiUpload && viewer && t.sender === viewer) offerUpload(el, t);  // theirs to publish
+    // A person's picture: anyone here may put it on PickiPedia, credited to them, under the license they gave it.
+    if (wikiUpload && viewer && t.is_human) offerUpload(el, t);
     return el;
   }
 
@@ -1780,7 +1789,8 @@
     }
     if (e.type === 'wiki-upload') {  // a picture put on PickiPedia (services/wiki_upload.py)
       el.className = 'event';
-      el.innerHTML = `🖼 <b>${esc(shown(e.by || 'someone'))}</b>${e.already ? "'s picture was on PickiPedia already" : ' put a picture on PickiPedia'}: `
+      const whose = e.author && e.author !== e.by ? ` <b>${esc(shown(e.author))}</b>'s picture` : ' a picture';
+      el.innerHTML = `🖼 <b>${esc(shown(e.by || 'someone'))}</b>${e.already ? "'s picture was on PickiPedia already" : ` put${whose} on PickiPedia`}: `
         + `<a href="${esc(e.page || '#')}" target="_blank" rel="noopener">File:${esc(e.file || '')}</a> · ${esc(stamp(e.created_at))}`;
       container.appendChild(el);
       markUploaded(e.sha, e.file, e.page);

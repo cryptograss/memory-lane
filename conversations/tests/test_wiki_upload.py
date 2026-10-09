@@ -1,6 +1,7 @@
-"""A picture from a Mood onto PickiPedia: by whoever shared it, as themselves, under the license they gave it.
+"""A picture from a Mood onto PickiPedia: by anyone, as themselves, credited to whoever shared it,
+under the license they gave it.
 
-Never twice, never over another, never by someone else, never as someone else.
+Never twice, never over another, never as someone else, never under another license.
 """
 
 import hashlib
@@ -101,9 +102,28 @@ class WikiUploadTest(TestCase):
                          ('justin', 'Hillberry jam.png', self.picture.sha256, None))
         self.assertEqual(event['page'], 'https://pickipedia.xyz/wiki/File:Hillberry_jam.png')
 
-    def test_only_whoever_shared_it(self):
+    def test_anyone_may_put_someones_picture_up_credited_to_them_under_their_license(self):
+        wiki = FakePickiPedia(user='SkymanJenkins')
+        both = mock.patch('conversations.services.wiki_auth.names', return_value={'justin': 'JMyles', 'skyler': 'SkymanJenkins'})
+        both.start()
+        self.addCleanup(both.stop)
+        started = self.begin(wiki, by='skyler', license='cc0')  # not skyler's to change
+        self.assertEqual(Media.objects.get(pk=self.picture.pk).license, 'cc-by-sa-4.0')
+        wiki_upload.finish(started['state'], 'code-1', 'skyler', BACK, http=wiki)
+        sent = wiki.uploads[0]
+        self.assertEqual(sent['as'], 'Bearer token-for-SkymanJenkins')  # as the uploader
+        self.assertIn('Author: [[User:JMyles|JMyles]], who shared it in magenta.', sent['data']['text'])
+        self.assertIn('CC BY-SA 4.0', sent['data']['text'])
+        self.assertNotIn('CC0', sent['data']['text'])
+        event = next(e for e in Client().get('/api/moods/general/turns/').json()['events'] if e['type'] == 'wiki-upload')
+        self.assertEqual((event['by'], event['author']), ('skyler', 'justin'))
+
+    def test_not_a_picture_an_agent_brought_in(self):
+        magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+        Media.objects.filter(pk=self.picture.pk).update(added_by=magent)
+        self.picture.refresh_from_db()
         with self.assertRaises(wiki_upload.UploadError) as caught:
-            self.begin(FakePickiPedia(), by='skyler')
+            self.begin(FakePickiPedia(), by='justin')
         self.assertEqual(caught.exception.status, 403)
 
     def test_only_as_themselves(self):
@@ -207,7 +227,7 @@ class EndpointsTest(TestCase):
         self.assertEqual(said_no.status_code, 400)
         self.assertIn("allow it on PickiPedia, so nothing went up", said_no.content.decode())
         self.assertEqual(self.ask(Client()).status_code, 401)
-        self.assertEqual(self.ask(self.client_for(self.justin, 'key')).status_code, 403)  # skyler's picture
+        self.assertEqual(self.ask(self.client_for(self.justin, 'key')).status_code, 200)  # skyler's picture: anyone may
         with override_settings(PICKIPEDIA_UPLOAD_CLIENT_ID=''):
             self.assertEqual(self.ask(client).status_code, 503)
         self.assertEqual(wiki.uploads, [])
