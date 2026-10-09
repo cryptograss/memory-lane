@@ -219,7 +219,7 @@ def stamp():
     return cache.get(STAMP) or 0
 
 
-def merged_now(owner, repo, number, title='', by=''):
+def merged_now(owner, repo, number, title='', by='', commit=''):
     """GitHub says this pull request just merged: kept as merged, every list asked again,
     and each Mood whose list links it told so, in its thread (in the background)."""
     from conversations.models import Mood
@@ -230,14 +230,15 @@ def merged_now(owner, repo, number, title='', by=''):
         cache.set(f'todo:merged:{repository}', recent | {number}, CLOSED_FOR)
     cache.delete_many([f'todo:{slug}' for slug in Mood.objects.values_list('slug', flat=True)])
     changed()
-    _in_background(announce_merge, owner, repo, number, title, by)
+    _in_background(announce_merge, owner, repo, number, title, by, commit)
 
 
 MERGED_SOURCE = 'merged'  # an event line (mood_view.EVENT_SOURCES): a pull request on the list merged
 
 
-def announce_merge(owner, repo, number, title='', by=''):
-    """A line in each Mood whose to-do list links this pull request: merged, by whom, which item it ticks."""
+def announce_merge(owner, repo, number, title='', by='', commit=''):
+    """A line in each Mood whose to-do list links this pull request: "memory-lane#142 (226537a)
+    merged by jMyles", and which item it ticks; its title shown on hover."""
     import time
     import uuid
     from conversations.models import ConversationParticipant, Message, Mood
@@ -257,7 +258,10 @@ def announce_merge(owner, repo, number, title='', by=''):
             Message.objects.create(id=uuid.uuid4(), sender=system, mood=mood, source_file=MERGED_SOURCE,
                                    timestamp=int(time.time() * 1000),
                                    content={'type': 'merged', 'title': title or f'{owner}/{repo}#{number}',
-                                            'page': item.get('link'), 'by': by, 'about': item.get('task', '')})
+                                            'pull': f"{repository.split('/')[-1]}#{number}",
+                                            'commit': commit[:40], 'by': by, 'about': item.get('task', ''),
+                                            'commit_url': f'https://github.com/{owner}/{repo}/commit/{commit[:40]}' if commit else '',
+                                            'page': item.get('link')})
             break
 
 
