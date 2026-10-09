@@ -34,8 +34,8 @@ class TickedTest(TestCase):
 
 
 class FakeWiki:
-    def __init__(self, text, conflicts=0):
-        self.text, self.conflicts, self.edits, self.headers = text, conflicts, [], {}
+    def __init__(self, text, conflicts=0, overwritten=0):
+        self.text, self.conflicts, self.overwritten, self.edits, self.headers = text, conflicts, overwritten, [], {}
 
     def get(self, url, params=None, timeout=None):
         if params.get('type') == 'login':
@@ -52,6 +52,9 @@ class FakeWiki:
         if self.conflicts:
             self.conflicts -= 1
             return mock.Mock(json=lambda: {'error': {'code': 'editconflict'}})
+        if self.overwritten:  # "Success", then another edit in the same second puts the old text back
+            self.overwritten -= 1
+            return mock.Mock(json=lambda: {'edit': {'result': 'Success'}})
         self.text = data['text']
         return mock.Mock(json=lambda: {'edit': {'result': 'Success'}})
 
@@ -64,11 +67,21 @@ class TickTest(TestCase):
 
     def test_a_bot_edit_marked_so_against_the_revision_read_once_more_on_a_conflict(self):
         wiki = FakeWiki(f'<todo>\n- task: Merge it\n  link: {LINK}\n</todo>\n', conflicts=1)
-        self.assertTrue(todo_ticks.tick('Cryptograss:Moods/x/todo', LINK, http=wiki))
+        self.assertTrue(todo_ticks.tick('Cryptograss:Moods/x/todo', LINK, http=wiki, settle=0))
         last = wiki.edits[-1]
         self.assertEqual((last['bot'], last['nocreate'], last['baserevid']), (1, 1, 9401))
         self.assertIn('  done: true', wiki.text)
-        self.assertFalse(todo_ticks.tick('Cryptograss:Moods/x/todo', LINK, http=wiki))  # done: nothing to edit
+        self.assertFalse(todo_ticks.tick('Cryptograss:Moods/x/todo', LINK, http=wiki, settle=0))  # done: nothing to edit
+
+    def test_several_in_one_edit_and_again_if_one_didnt_stay(self):
+        other = 'https://github.com/jMyles/memory-lane/pull/139'
+        page = f'<todo>\n- task: A\n  link: {other}\n- task: B\n  link: {LINK}\n</todo>\n'
+        wiki = FakeWiki(page, overwritten=1)
+        self.assertTrue(todo_ticks.tick('T', [other, LINK], http=wiki, settle=0))
+        self.assertEqual(len(wiki.edits), 2)  # the first "succeeded" and didn't stay: made again
+        self.assertEqual(wiki.text.count('done: true'), 2)
+        self.assertIn(other, wiki.edits[0]['summary'])
+        self.assertIn(LINK, wiki.edits[0]['summary'])
 
     def test_merged_seen_ticks_it_once_a_day(self):
         Mood.objects.create(slug='magenta-interface', title='magenta interface')
@@ -79,7 +92,9 @@ class TickTest(TestCase):
             todo.for_mood(Mood.objects.get())
             todo.forget(Mood.objects.get())
             todo.for_mood(Mood.objects.get())
-        self.assertEqual(ticks, [('Cryptograss:Moods/magenta-interface/todo', LINK)])
+        title = 'Cryptograss:Moods/magenta-interface/todo'
+        self.assertEqual(ticks, [(title,)])  # one edit's worth, for that page
+        self.assertEqual(todo_ticks._waiting.pop(title), {LINK})
 
     def test_not_set_up_not_ticked(self):
         with override_settings(PICKIPEDIA_TODO_BOT_USER=''):

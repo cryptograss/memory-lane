@@ -16,6 +16,7 @@ leave them out by default. Unset, lists are ticked in magenta only, as before.
 """
 
 import re
+import threading
 
 from django.conf import settings
 from django.core.cache import cache
@@ -56,18 +57,44 @@ def ticked(text, link):
     return _BLOCK.sub(tick_block, text, count=1)
 
 
+# Ticks for one page, gathered and made in one edit. Several merges are often
+# seen in the same look at a list, and MediaWiki tells edits apart by the
+# second: three bots' edits in one second each passed as current, and the last
+# put back an item the one before had ticked (2026-10-09). So: one edit for
+# all a page's waiting ticks, and the page read again after, edited again if
+# any didn't stay.
+GATHER = 2          # seconds a page's first tick waits for others from the same look
+_waiting = {}       # title -> {link}
+_lock = threading.Lock()
+
+
 def tick_later(title, link):
-    """Tick `link`'s item on `title`, in the background, at most once a day."""
+    """Tick `link`'s item on `title`, with any others for it, in the background; at most once a day each."""
     if not enabled() or not cache.add(f'todo:tick:{title}:{link}'.lower(), 1, 86400):
         return
-    from .todo import _in_background
-    _in_background(tick, title, link)
+    with _lock:
+        first = title not in _waiting
+        _waiting.setdefault(title, set()).add(link)
+    if first:
+        from .todo import _in_background
+        _in_background(_tick_waiting, title)
 
 
-def tick(title, link, http=None):
-    """Mark the item done on the wiki; True if an edit was made."""
+def _tick_waiting(title):
+    import time
+    time.sleep(GATHER)
+    with _lock:
+        links = sorted(_waiting.pop(title, set()))
+    if links:
+        tick(title, links)
+
+
+def tick(title, links, http=None, settle=1.5):
+    """Mark the items linking `links` done on the wiki, in one edit; True if an edit was made and stayed."""
+    import time
     import requests
     from .mood_view import pickipedia_url
+    links = [links] if isinstance(links, str) else list(links)
     http = http or requests.Session()
     http.headers['User-Agent'] = 'memory-lane (magenta; to-do ticks)'
     api = f'{pickipedia_url()}/api.php'
@@ -78,25 +105,34 @@ def tick(title, link, http=None):
                                  'format': 'json'}, timeout=10).json()
     if (login.get('login') or {}).get('result') != 'Success':
         return False
-    for _ in range(2):  # once more, if someone edited it meanwhile
+
+    def read():
         page = http.get(api, params={'action': 'query', 'prop': 'revisions', 'titles': title, 'rvslots': 'main',
                                      'rvprop': 'content|ids|timestamp', 'formatversion': 2, 'format': 'json'},
                         timeout=10).json()['query']['pages'][0]
-        if page.get('missing'):
+        return None if page.get('missing') else page['revisions'][0]
+
+    edited = False
+    for _ in range(3):  # again, if someone edited it meanwhile, or a tick didn't stay
+        revision = read()
+        if revision is None:
             return False
-        revision = page['revisions'][0]
         text = revision['slots']['main']['content']
-        new = ticked(text, link)
+        new = text
+        for link in links:
+            new = ticked(new, link)
         if new == text:
-            return False
+            return edited  # all done, there
         csrf = http.get(api, params={'action': 'query', 'meta': 'tokens', 'format': 'json'},
                         timeout=10).json()['query']['tokens']['csrftoken']
         done = http.post(api, data={'action': 'edit', 'title': title, 'text': new, 'token': csrf, 'bot': 1,
                                     'minor': 1, 'nocreate': 1, 'baserevid': revision['revid'],
                                     'basetimestamp': revision['timestamp'], 'format': 'json',
-                                    'summary': f'Merged, says GitHub: {link}'}, timeout=15).json()
+                                    'summary': 'Merged, says GitHub: ' + ', '.join(links)}, timeout=15).json()
         if (done.get('edit') or {}).get('result') == 'Success':
-            return True
+            edited = True
+            time.sleep(settle)  # then read it again: did every tick stay?
+            continue
         if (done.get('error') or {}).get('code') != 'editconflict':
             return False
-    return False
+    return edited
