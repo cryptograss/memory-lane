@@ -3753,7 +3753,8 @@
       + `</div>` : '';
     if (devicesAll) {
       const n = d.people.reduce((sum, p) => sum + p.devices.filter(v => !v.signed_out_at).length, 0);
-      list.innerHTML = which + `<div class="meta">${n} device${n === 1 ? '' : 's'} signed in. To sign someone out: `
+      list.innerHTML = which + `<div class="meta">${n} device${n === 1 ? '' : 's'} signed in: by person, A to Z; each one's in use most lately first, `
+        + `then any signed out in the last two weeks. To sign someone out: `
         + `<code>magenta.sh kick &lt;name&gt; --all</code>, or one device: click its id to copy the command.</div>` + d.people.map(p =>
           `<div class="devperson"><b>${icon(p.name, true)}${esc(p.name)}</b></div>` + p.devices.map(v => {
             const short = v.id.replace(/-/g, '').slice(0, 8);

@@ -447,6 +447,13 @@ class EveryonesDevicesTest(TestCase):
         self.assertEqual([(d['label'], d['tier'], bool(d['signed_out_at'])) for d in people['skyler']],
                          [('PickiPedia sign-in (SkymanJenkins, Android)', 'wiki', False),
                           ('old laptop', 'key', True)])  # signed out lately: listed, with when
+        # Live first, the most lately used first; then the signed out.
+        _, sky_laptop = self.client_for(self.skyler, 'laptop')
+        Device.objects.filter(pk=sky_laptop.pk).update(last_used_at=timezone.now() + timedelta(minutes=1))
+        people = {p['name']: p['devices'] for p in laptop.get('/api/auth/devices/?all=1').json()['people']}
+        self.assertEqual([d['label'] for d in people['skyler']],
+                         ['laptop', 'PickiPedia sign-in (SkymanJenkins, Android)', 'old laptop'])
+        Device.objects.filter(pk=sky_laptop.pk).delete()
         long_gone = self.client_for(self.skyler, 'older laptop')[1]
         Device.objects.filter(pk=long_gone.pk).update(revoked_at=timezone.now() - timedelta(days=30))
         people = {p['name']: p['devices'] for p in laptop.get('/api/auth/devices/?all=1').json()['people']}

@@ -485,7 +485,12 @@ def api_devices(request):
         from django.db.models import Q
         people = {}
         recent = Q(revoked_at__isnull=True) | Q(revoked_at__gte=timezone.now() - SIGNED_OUT_SHOWN)
-        for d in Device.objects.filter(recent).order_by('entity_id', 'revoked_at', '-created_at'):
+        from django.db.models import F
+        # By person, by name; each one's live devices first, the most lately used first; then those signed
+        # out lately, the latest first. (Spelled out: Postgres puts NULLs last ascending, SQLite first.)
+        order = ('entity_id', F('revoked_at').desc(nulls_first=True), F('last_used_at').desc(nulls_last=True),
+                 '-created_at')
+        for d in Device.objects.filter(recent).order_by(*order):
             if d.revoked_at or mood_auth.device_state(d) == 'live':
                 people.setdefault(d.entity_id, []).append(
                     {**_device_payload(d, d.pk == device.pk), 'tier': d.tier})
