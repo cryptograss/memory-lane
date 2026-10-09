@@ -1,6 +1,7 @@
 """/clips: the team's saved clips, kept in the record (services/clips.py)."""
 
 import json
+import uuid
 
 from django.core.cache import cache
 from django.test import Client, TestCase
@@ -50,6 +51,18 @@ class ClipsLibraryTest(TestCase):
         self.assertNotIn('tony', used.split('<a', 1)[0])
         # As uses were first posted, the same.
         self.assertEqual(render_html(f'🎬 tony https://www.yarn.co/yarn-clip/{CLIP}'), used)
+
+    def test_a_clip_sent_as_a_reply(self):
+        justin = self.client_for(self.justin)
+        self.say(justin, f'/clips save huh https://www.yarn.co/yarn-clip/{CLIP}')
+        asked = Message.objects.create(id=uuid.uuid4(), sender=self.skyler, mood=Mood.objects.get(slug='general'),
+                                       timestamp=1, content='did the redeploy land?', source_file='mood-web')
+        self.assertEqual(self.say(justin, f'↩ #m-{asked.id}\n/clips huh').status_code, 201)
+        self.assertEqual(self.posted()[-1], f'↩ #m-{asked.id}\n/clips huh https://www.yarn.co/yarn-clip/{CLIP}')
+        turn = self.client.get('/api/moods/general/turns/').json()['turns'][-1]
+        self.assertEqual(turn['reply']['id'], str(asked.id))  # still a reply
+        self.assertIn(f'data-yarn="{CLIP}"', turn['html'])  # and just the clip
+        self.assertEqual(self.say(justin, f'↩ #m-{asked.id}\n/clips nope').status_code, 400)
 
     def test_listing_posts_nothing(self):
         justin = self.client_for(self.justin)
