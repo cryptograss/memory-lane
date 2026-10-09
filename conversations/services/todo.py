@@ -212,8 +212,9 @@ def stamp():
     return cache.get(STAMP) or 0
 
 
-def merged_now(owner, repo, number):
-    """GitHub says this pull request just merged: kept as merged, every list asked again."""
+def merged_now(owner, repo, number, title='', by=''):
+    """GitHub says this pull request just merged: kept as merged, every list asked again,
+    and each Mood whose list links it told so, in its thread (in the background)."""
     from conversations.models import Mood
     cache.set(f'todo:pull:{owner}/{repo}#{number}'.lower(), True, MERGED_FOR)
     recent = cache.get(f'todo:merged:{owner}/{repo}'.lower())
@@ -221,3 +222,55 @@ def merged_now(owner, repo, number):
         cache.set(f'todo:merged:{owner}/{repo}'.lower(), recent | {number}, CLOSED_FOR)
     cache.delete_many([f'todo:{slug}' for slug in Mood.objects.values_list('slug', flat=True)])
     changed()
+    _in_background(announce_merge, owner, repo, number, title, by)
+
+
+MERGED_SOURCE = 'merged'  # an event line (mood_view.EVENT_SOURCES): a pull request on the list merged
+
+
+def announce_merge(owner, repo, number, title='', by=''):
+    """A line in each Mood whose to-do list links this pull request: merged, by whom, which item it ticks."""
+    import time
+    import uuid
+    from conversations.models import ConversationParticipant, Message, Mood
+    system = None
+    for mood in Mood.objects.all():
+        items = for_mood(mood).get('items', [])
+        for item in items:
+            found = _PULL.match(item.get('link') or '')
+            if not found or (found[1].lower(), found[2].lower(), int(found[3])) != (owner.lower(), repo.lower(), number):
+                continue
+            if not cache.add(f'todo:announced:{owner}/{repo}#{number}:{mood.slug}'.lower(), 1, 7 * 86400):
+                break  # said already (GitHub sends a delivery again, now and then)
+            if system is None:
+                system, _ = ConversationParticipant.objects.get_or_create(name='system',
+                                                                           defaults={'participant_type': 'system'})
+            Message.objects.create(id=uuid.uuid4(), sender=system, mood=mood, source_file=MERGED_SOURCE,
+                                   timestamp=int(time.time() * 1000),
+                                   content={'type': 'merged', 'title': title or f'{owner}/{repo}#{number}',
+                                            'page': item.get('link'), 'by': by, 'about': item.get('task', '')})
+            break
+
+
+def heard(event, outcome):
+    """What GitHub last sent, and what came of it: for anyone wondering whether the webhook works."""
+    import time
+    cache.set('todo:hook:last', {'event': event, 'outcome': outcome, 'at': int(time.time())}, None)
+
+
+def last_heard():
+    return cache.get('todo:hook:last')
+
+
+def _in_background(fn, *args):
+    import threading
+
+    def run():
+        from django.db import connection
+        try:
+            fn(*args)
+        except Exception:  # noqa: BLE001 -- a line not said; the list still ticks
+            pass
+        finally:
+            connection.close()
+    threading.Thread(target=run, daemon=True).start()

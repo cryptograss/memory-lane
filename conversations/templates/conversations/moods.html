@@ -1790,6 +1790,14 @@
       prev = null;
       return;
     }
+    if (e.type === 'merged') {  // a pull request on this Mood's to-do list merged (services/todo.py)
+      el.className = 'event';
+      el.innerHTML = `✓ <a href="${esc(e.page || '#')}" target="_blank" rel="noopener">${esc(e.title || 'a pull request')}</a> merged`
+        + (e.by ? ` by <b>${esc(shown(e.by))}</b>` : '') + (e.about ? `: ticks “${todoText(e.about)}”` : '') + ` · ${esc(stamp(e.created_at))}`;
+      container.appendChild(el);
+      prev = null;
+      return;
+    }
     if (e.type === 'wiki-upload') {  // a picture put on PickiPedia (services/wiki_upload.py)
       el.className = 'event';
       const whose = e.author && e.author !== e.by ? ` <b>${esc(shown(e.author))}</b>'s picture` : ' a picture';
