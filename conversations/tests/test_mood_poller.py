@@ -1197,10 +1197,12 @@ class RunnerKeyTest(TestCase):
 
 
 class GlovesOffTest(TestCase):
-    """Full tools for a mention wake, only when every post that woke it is a trusted person's."""
+    """Full tools for a mention wake, only when every post that woke it is a trusted one: typed
+    into magenta by a person signed in with an SSH key, or by someone named in full_tools_for."""
 
-    def wake_for(self, *senders):
-        api = FakeAPI([mention('m26', dict(turn(f'm{i}', who, i), via='web')) for i, who in enumerate(senders)],
+    def wake_for(self, *senders, **how):
+        how = {'via': 'web', **how}
+        api = FakeAPI([mention('m26', dict(turn(f'm{i}', who, i), **how)) for i, who in enumerate(senders)],
                       sessions={'m26': ['s-local']})
         waker = FakeWaker()
         state = Path(tempfile.mkdtemp()) / 'state.json'
@@ -1214,10 +1216,20 @@ class GlovesOffTest(TestCase):
         self.assertTrue(waker.options['full'])
         self.assertIn('This turn has your full tools', waker.woken[0][1])
 
-    def test_anyone_elses_or_a_mix_looks_but_does_not_touch(self):
+    def test_anyone_signed_in_with_an_ssh_key_wakes_with_full_tools(self):
         for senders in (('skyler',), ('justin', 'skyler')):
             with self.subTest(senders=senders):
-                waker = self.wake_for(*senders)
+                waker = self.wake_for(*senders, is_human=True, tier=None)
+                self.assertTrue(waker.options['full'])
+                self.assertIn('This turn has your full tools', waker.woken[0][1])
+
+    def test_a_pickipedia_sign_in_an_agent_or_a_session_looks_but_does_not_touch(self):
+        for senders, how in ((('skyler',), {'is_human': True, 'tier': 'wiki'}),
+                             (('justin', 'skyler'), {'is_human': True, 'tier': 'wiki'}),
+                             (('skyler',), {'is_human': True, 'via': 'session'}),
+                             (('otheragent',), {'is_human': False})):
+            with self.subTest(senders=senders, how=how):
+                waker = self.wake_for(*senders, **how)
                 self.assertFalse(waker.options['full'])
                 self.assertIn('This turn can look but not touch', waker.woken[0][1])
 

@@ -580,6 +580,12 @@ HANDOFF_HOW = ('Asked to take this to another Mood, put in your reply a block: `
                '"from: <mood>" instead of "to:", what you found as its context.')
 
 
+def signed_in_with_key(turn):
+    """Typed into magenta by a person whose device was enrolled with an SSH key
+    (mood_auth: tier 'key'), not signed in with PickiPedia (tier 'wiki')."""
+    return turn.get('via') == 'web' and bool(turn.get('is_human')) and turn.get('tier') != 'wiki'
+
+
 def wake_footer(full=False):
     """How a woken turn is to conduct itself; the end of every wake prompt."""
     if full:
@@ -697,7 +703,7 @@ def wake_frames(slug, rules='', agent='magent', trusted='the people its runner t
                            + [posts, '', 'What was said here since you last spoke (newest last):', context]
                            + rules_block(rules, verbosity, slug) + wake_footer(full=True))},
         {'kind': 'mention-look', 'title': 'When someone @mentions it: look, not touch',
-         'when': 'Any post that woke it is from someone else.',
+         'when': 'Any post that woke it is from a PickiPedia sign-in, an agent, or a session.',
          'text': '\n'.join(mention_opening(slug, 'this was posted from the web, where no session is listening.')
                            + [posts, '', 'What was said here since you last spoke (newest last):', context]
                            + rules_block(rules, verbosity, slug) + wake_footer(full=False))},
@@ -996,6 +1002,14 @@ class MoodPoller:
             considered += self.greet_arrivals(pulse)
         return woken, considered
 
+    def trusted(self, turn):
+        """Whether this turn may wake the agent with its full tools: typed into
+        magenta by a person signed in with an SSH key (justin, 2026-10-09:
+        "anybody who is signed in via SSH"), or by someone named in
+        full_tools_for. A PickiPedia sign-in, an agent, or a session's turn
+        wakes it look-only."""
+        return turn['sender'] in self.full_tools_for or signed_in_with_key(turn)
+
     def poll_once(self):
         """Look once; at most one wake per Mood. Returns the Moods woken."""
         mentions = self.api.mentions(self.agent, since=self.state['since'])
@@ -1078,8 +1092,7 @@ class MoodPoller:
         # "@magent /compact" (or another of COMMANDS) from someone trusted with
         # real work: run it instead of a turn. Anything else owed here waits
         # for the next look, and is answered from the session it leaves.
-        commands = [t for t in owed if t['sender'] in self.full_tools_for
-                    and command_request(t['text'], self.agent) is not None]
+        commands = [t for t in owed if self.trusted(t) and command_request(t['text'], self.agent) is not None]
         if commands:
             owed = commands[:1]
         sessions = self.api.sessions(slug, self.agent)
@@ -1091,7 +1104,7 @@ class MoodPoller:
             logger.info(f'{slug}: owed a turn; the latest session is not resumable here')
             return settled, 'elsewhere'
 
-        full = bool(self.full_tools_for) and all(t['sender'] in self.full_tools_for for t in owed)
+        full = all(self.trusted(t) for t in owed)
         if commands:
             # Claude Code's own command, run as typed: no wake framing, no effort.
             prompt = command_request(commands[0]['text'], self.agent)
@@ -1671,8 +1684,8 @@ def main(argv=None):
     parser.add_argument('--moods', default='',
                         help="Comma-separated: answer only these Moods (a Mood's own container); default all")
     parser.add_argument('--full-tools-for', default='justin',
-                        help="Comma-separated: a mention wake gets full tools when every post that woke it is "
-                             "from these people ('' for nobody)")
+                        help="Comma-separated: people whose posts wake with full tools however they're signed "
+                             "in. Anyone signed in with an SSH key gets them anyway (MoodPoller.trusted)")
     parser.add_argument('--no-consider', action='store_true', help='Answer mentions only; never speak up unasked')
     parser.add_argument('--considers-per-hour', type=int, default=6, help='Full considerations per Mood per hour')
     parser.add_argument('--consider-usd-per-day', type=float, default=10.0,
