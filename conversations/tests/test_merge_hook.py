@@ -83,3 +83,43 @@ class MergeHookTest(TestCase):
         self.assertNotIn('ticked', self.hook(unmerged).json())
         with override_settings(GITHUB_WEBHOOK_SECRET=''):
             self.assertEqual(self.hook(body).status_code, 503)
+
+
+@override_settings(GITHUB_WEBHOOK_SECRET=SECRET)
+class MovedRepositoryTest(TestCase):
+    """memory-lane moved to the cryptograss org: GitHub says cryptograss/memory-lane#131,
+    and the list's link still says jMyles/memory-lane/pull/131. The same pull request."""
+
+    def setUp(self):
+        cache.clear()
+        self.mood = Mood.objects.create(slug='magenta-interface', title='magenta interface')
+
+    def test_a_merge_in_the_new_place_ticks_and_tells_the_old_link(self):
+        merged = {'action': 'closed', 'pull_request': {'number': 131, 'merged': True, 'title': 'One',
+                                                       'merged_by': {'login': 'jMyles'}},
+                  'repository': {'full_name': 'cryptograss/memory-lane'}}
+        raw, good = signed(merged)
+        with mock.patch.object(todo, '_raw', return_value=PAGE), mock.patch.object(todo, '_github', mock.Mock(return_value=None)), \
+                mock.patch.object(todo, '_in_background', lambda fn, *args: fn(*args) if fn is todo.announce_merge else None):
+            self.client.post('/api/github/hook/', raw, content_type='application/json',
+                             HTTP_X_HUB_SIGNATURE_256=good, HTTP_X_GITHUB_EVENT='pull_request')
+            self.assertTrue(todo.for_mood(self.mood)['items'][0]['done'])
+        events = [e for e in self.client.get('/api/moods/magenta-interface/turns/').json()['events'] if e['type'] == 'merged']
+        self.assertEqual(len(events), 1)
+
+    def test_open_work_matches_what_was_said_before_it_moved(self):
+        from conversations.services import repos, work
+        self.assertEqual(repos.same('jMyles/memory-lane'), 'cryptograss/memory-lane')
+        self.assertEqual(repos.same('cryptograss/pickipedia'), 'cryptograss/pickipedia')
+        import requests
+        refused = requests.HTTPError(response=mock.Mock(status_code=422))
+        asked = []
+
+        def search(query):
+            asked.append(query)
+            if 'repo:jMyles' in query:
+                raise refused
+            return []
+        with mock.patch.object(work, '_search', search):
+            self.assertEqual(work._scoped('is:pr is:open'), [])
+        self.assertEqual(asked[-1], 'is:pr is:open org:cryptograss')  # the old names refused: the org alone

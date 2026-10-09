@@ -39,6 +39,8 @@ import re
 
 from django.core.cache import cache
 
+from .repos import same
+
 PAGE = 'Cryptograss:Moods/{slug}/todo'
 FOR = 60          # seconds a list is kept before PickiPedia is asked again
 MAX_ITEMS = 200
@@ -153,7 +155,7 @@ def _github(path, http, **params):
 
 def _recently_merged(owner, repo, http):
     """{number} of a repository's recently closed pull requests that were merged; None if GitHub won't say."""
-    key = f'todo:merged:{owner}/{repo}'.lower()
+    key = f'todo:merged:{same(f"{owner}/{repo}")}'
     found = cache.get(key)
     if found is None:
         listed = _github(f'/repos/{owner}/{repo}/pulls', http, state='closed', sort='updated', direction='desc',
@@ -168,7 +170,7 @@ def _merged(owner, repo, number, http):
     recent = _recently_merged(owner, repo, http)
     if recent and number in recent:
         return True
-    key = f'todo:pull:{owner}/{repo}#{number}'.lower()
+    key = f'todo:pull:{same(f"{owner}/{repo}")}#{number}'
     found = cache.get(key)
     if found is None:
         pull = _github(f'/repos/{owner}/{repo}/pulls/{number}', http)
@@ -221,10 +223,11 @@ def merged_now(owner, repo, number, title='', by=''):
     """GitHub says this pull request just merged: kept as merged, every list asked again,
     and each Mood whose list links it told so, in its thread (in the background)."""
     from conversations.models import Mood
-    cache.set(f'todo:pull:{owner}/{repo}#{number}'.lower(), True, MERGED_FOR)
-    recent = cache.get(f'todo:merged:{owner}/{repo}'.lower())
+    repository = same(f'{owner}/{repo}')  # a link to the old place is kept under the new one
+    cache.set(f'todo:pull:{repository}#{number}', True, MERGED_FOR)
+    recent = cache.get(f'todo:merged:{repository}')
     if isinstance(recent, set):
-        cache.set(f'todo:merged:{owner}/{repo}'.lower(), recent | {number}, CLOSED_FOR)
+        cache.set(f'todo:merged:{repository}', recent | {number}, CLOSED_FOR)
     cache.delete_many([f'todo:{slug}' for slug in Mood.objects.values_list('slug', flat=True)])
     changed()
     _in_background(announce_merge, owner, repo, number, title, by)
@@ -239,13 +242,14 @@ def announce_merge(owner, repo, number, title='', by=''):
     import uuid
     from conversations.models import ConversationParticipant, Message, Mood
     system = None
+    repository = same(f'{owner}/{repo}')
     for mood in Mood.objects.all():
         items = for_mood(mood).get('items', [])
         for item in items:
             found = _PULL.match(item.get('link') or '')
-            if not found or (found[1].lower(), found[2].lower(), int(found[3])) != (owner.lower(), repo.lower(), number):
+            if not found or (same(f'{found[1]}/{found[2]}'), int(found[3])) != (repository, number):
                 continue
-            if not cache.add(f'todo:announced:{owner}/{repo}#{number}:{mood.slug}'.lower(), 1, 7 * 86400):
+            if not cache.add(f'todo:announced:{repository}#{number}:{mood.slug}'.lower(), 1, 7 * 86400):
                 break  # said already (GitHub sends a delivery again, now and then)
             if system is None:
                 system, _ = ConversationParticipant.objects.get_or_create(name='system',

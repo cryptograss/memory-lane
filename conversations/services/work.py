@@ -19,7 +19,10 @@ from datetime import datetime, timedelta, timezone
 
 from django.core.cache import cache
 
-SCOPES = 'org:cryptograss repo:jMyles/memory-lane repo:magent-cryptograss/magenta'
+from .repos import same
+
+ORG = 'org:cryptograss'
+SCOPES = f'{ORG} repo:jMyles/memory-lane repo:magent-cryptograss/magenta'  # until they're the org's (services/repos.py)
 NEW_ISSUE_DAYS = 14
 CACHE_FOR = 600  # seconds: the forge allows an unauthenticated search ten times a minute
 MENTION_DAYS = 90  # how far back the record is read for mentions
@@ -39,6 +42,18 @@ def _search(query):
     return response.json().get('items', [])
 
 
+def _scoped(query):
+    """The search across the org and the repositories still outside it: once
+    those have moved, GitHub may refuse their old names (422), so the org alone."""
+    import requests
+    try:
+        return _search(f'{query} {SCOPES}')
+    except requests.HTTPError as e:
+        if getattr(e.response, 'status_code', None) != 422:
+            raise
+        return _search(f'{query} {ORG}')
+
+
 def _item(raw, kind):
     repo = '/'.join(raw['repository_url'].split('/')[-2:])
     login = (raw.get('user') or {}).get('login', '')
@@ -52,8 +67,8 @@ def forge_items():
     items = cache.get('work:forge')
     if items is None:
         since = (datetime.now(timezone.utc) - timedelta(days=NEW_ISSUE_DAYS)).date().isoformat()
-        items = ([_item(r, 'pr') for r in _search(f'is:pr is:open {SCOPES}')]
-                 + [_item(r, 'issue') for r in _search(f'is:issue is:open created:>={since} {SCOPES}')])
+        items = ([_item(r, 'pr') for r in _scoped('is:pr is:open')]
+                 + [_item(r, 'issue') for r in _scoped(f'is:issue is:open created:>={since}')])
         cache.set('work:forge', items, CACHE_FOR)
     return items
 
@@ -62,7 +77,7 @@ def involvement(keys):
     """{(repo, number): {'moods', 'mentioned_by', 'asked_by'}} from what was said in the Moods."""
     from conversations.models import Message, Mood, ThinkingEntity
     from conversations.services.mood_view import MACHINERY_SENDERS
-    wanted = {(r.lower(), n) for r, n in keys}
+    wanted = {(same(r), n) for r, n in keys}
     humans = set(ThinkingEntity.objects.filter(is_biological_human=True).values_list('name', flat=True))
     titles = dict(Mood.objects.values_list('slug', 'title'))
     since = datetime.now(timezone.utc) - timedelta(days=MENTION_DAYS)
@@ -74,7 +89,7 @@ def involvement(keys):
     for row in rows:
         seen = set()
         for repo, _, number in _LINK.findall(str(row['content'])):
-            key = (repo.lower(), int(number))
+            key = (same(repo), int(number))  # said before it moved: the same one
             if key not in wanted or key in seen:
                 continue
             seen.add(key)
@@ -98,7 +113,7 @@ def open_work():
     items = forge_items()
     found = involvement([(i['repo'], i['number']) for i in items])
     for item in items:
-        known = found.get((item['repo'].lower(), item['number'])) or {}
+        known = found.get((same(item['repo']), item['number'])) or {}
         item['moods'] = known.get('moods', [])
         item['asked_by'] = known.get('asked_by')
         people = set(known.get('mentioned_by', []))
