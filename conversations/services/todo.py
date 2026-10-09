@@ -257,14 +257,22 @@ def announce_merge(owner, repo, number, title='', by=''):
             break
 
 
-def heard(event, outcome):
-    """What GitHub last sent, and what came of it: for anyone wondering whether the webhook works."""
+def heard(event, outcome, refused=False):
+    """What GitHub last sent, and what came of it: for anyone wondering whether the webhook works.
+
+    A refused one (unsigned, or signed with another secret) is kept apart, so
+    anyone's stray POST can't hide the last good delivery."""
     import time
-    cache.set('todo:hook:last', {'event': event, 'outcome': outcome, 'at': int(time.time())}, None)
+    key = 'todo:hook:refused' if refused else 'todo:hook:last'
+    cache.set(key, {'event': event, 'outcome': outcome, 'at': int(time.time())}, None)
 
 
 def last_heard():
     return cache.get('todo:hook:last')
+
+
+def last_refused():
+    return cache.get('todo:hook:refused')
 
 
 def _in_background(fn, *args):

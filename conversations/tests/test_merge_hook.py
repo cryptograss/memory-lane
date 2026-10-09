@@ -76,7 +76,9 @@ class MergeHookTest(TestCase):
     def test_only_with_the_signature(self):
         body = {'action': 'closed', 'pull_request': {'number': 1, 'merged': True}, 'repository': {'full_name': 'a/b'}}
         self.assertEqual(self.hook(body, signature='sha256=' + '0' * 64).status_code, 403)
+        self.assertEqual(todo.last_refused()['outcome'], 'signed')  # another secret: said, apart
         self.assertEqual(self.hook({'zen': 'hi'}, event='ping').json(), {'ok': True, 'event': 'ping'})
+        self.assertEqual(todo.last_heard()['event'], 'ping')
         unmerged = {'action': 'closed', 'pull_request': {'number': 2, 'merged': False}, 'repository': {'full_name': 'a/b'}}
         self.assertNotIn('ticked', self.hook(unmerged).json())
         with override_settings(GITHUB_WEBHOOK_SECRET=''):
