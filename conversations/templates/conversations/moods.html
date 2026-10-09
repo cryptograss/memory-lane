@@ -1810,7 +1810,9 @@
     }
     if (e.type === 'merged') {  // a pull request on this Mood's to-do list merged (services/todo.py)
       el.className = 'event';
-      el.innerHTML = `✓ <a href="${esc(e.page || '#')}" target="_blank" rel="noopener">${esc(e.title || 'a pull request')}</a> merged`
+      // "memory-lane#142 (226537a) merged by justin": which one, and its commit; its title on hover.
+      const commit = e.commit ? ` (<a href="${esc(e.commit_url || '#')}" target="_blank" rel="noopener"><code>${esc(e.commit.slice(0, 7))}</code></a>)` : '';
+      el.innerHTML = `✓ <a href="${esc(e.page || '#')}" target="_blank" rel="noopener" title="${esc(e.title || '')}">${esc(e.pull || e.title || 'a pull request')}</a>${commit} merged`
         + (e.by ? ` by <b>${esc(shown(e.by))}</b>` : '') + (e.about ? `: ticks “${todoText(e.about)}”` : '') + ` · ${esc(stamp(e.created_at))}`;
       container.appendChild(el);
       prev = null;

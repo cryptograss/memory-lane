@@ -55,7 +55,7 @@ class MergeHookTest(TestCase):
         """GitHub's default for a new webhook is a form, the JSON in "payload": read as well. And the
         Mood whose list links the pull request gets a line saying it merged; the last delivery is kept."""
         merged = {'action': 'closed', 'pull_request': {'number': 131, 'merged': True, 'title': 'Moods: #125 to #130 in one',
-                                                       'merged_by': {'login': 'jMyles'}},
+                                                       'merged_by': {'login': 'jMyles'}, 'merge_commit_sha': 'c0ffee1' * 5 + 'abcde'},
                   'repository': {'full_name': 'jMyles/memory-lane'}}
         raw = urlencode({'payload': json.dumps(merged)}).encode()
         signature = 'sha256=' + hmac.new(SECRET.encode(), raw, hashlib.sha256).hexdigest()
@@ -72,6 +72,8 @@ class MergeHookTest(TestCase):
         events = [e for e in self.client.get('/api/moods/magenta-interface/turns/').json()['events'] if e['type'] == 'merged']
         self.assertEqual([(e['title'], e['by'], e['about']) for e in events],
                          [('Moods: #125 to #130 in one', 'jMyles', 'Merge memory-lane#131')])  # once, sent twice
+        self.assertEqual((events[0]['pull'], events[0]['commit'][:7]), ('memory-lane#131', 'c0ffee1'))
+        self.assertEqual(events[0]['commit_url'], 'https://github.com/jMyles/memory-lane/commit/' + 'c0ffee1' * 5 + 'abcde')
 
     def test_only_with_the_signature(self):
         body = {'action': 'closed', 'pull_request': {'number': 1, 'merged': True}, 'repository': {'full_name': 'a/b'}}

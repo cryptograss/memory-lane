@@ -139,7 +139,7 @@ def api_mood_turns(request, slug):
                                                    'kind', 'title', 'user', 'comment', 'delta', 'revid', 'at',
                                                    'who', 'tier', 'label', 'device', 'devices', 'file', 'page', 'sha',
                                                    'message', 'already', 'author', 'for', 'from_mood', 'to_mood', 'about', 'context',
-                                                   'pulled')},
+                                                   'pulled', 'pull', 'commit_url')},
                                # A handoff's context, as a message is shown (services/handoff.py).
                                **({'html': render_html(text.get('context') or '')} if text.get('type') == 'handoff' else {})})
         elif kind == 'compaction':
@@ -837,7 +837,7 @@ def api_github_hook(request):
     if event == 'pull_request' and body.get('action') == 'closed' and pull.get('merged') and '/' in name:
         owner, repo = name.split('/', 1)
         todo.merged_now(owner, repo, int(pull.get('number') or 0), pull.get('title') or '',
-                        (pull.get('merged_by') or {}).get('login') or '')
+                        (pull.get('merged_by') or {}).get('login') or '', commit=pull.get('merge_commit_sha') or '')
         todo.heard(event, f"ticked {name}#{pull.get('number')}")
         return JsonResponse({'ticked': f"{name}#{pull.get('number')}"})
     todo.heard(event, 'nothing to do')
