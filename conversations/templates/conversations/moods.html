@@ -609,6 +609,22 @@
   .turn .body .embed { display: block; margin: 6px 0; max-width: 560px; }
   .turn .body .embed video { display: block; width: 100%; max-height: 60vh; border-radius: 6px; background: #000; }
   .turn .body .embed audio { display: block; width: 100%; }
+  /* A release's player: the video, delivery-kid's mark on hover, and its qualities under it. */
+  .turn .body .embed .player { position: relative; display: block; }
+  .turn .body .embed .dkmask { position: absolute; top: 8px; left: 8px; z-index: 2; pointer-events: none;
+    display: flex; gap: 8px; align-items: flex-end; padding: 6px 8px; border-radius: 6px;
+    background: rgba(12, 10, 14, .62); color: #ece7e1; backdrop-filter: blur(3px);
+    opacity: 0; transition: opacity .2s; }
+  .turn .body .embed .player:hover .dkmask, .turn .body .embed .player:focus-within .dkmask { opacity: 1; }
+  .turn .body .embed .dkmask pre { margin: 0; font-size: 2.1px; line-height: 1.05; letter-spacing: 0; color: inherit;
+    font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .turn .body .embed .dkmask b { font: 600 12px/1.2 ui-monospace, Menlo, Consolas, monospace; letter-spacing: .02em; }
+  .turn .body .embed .dkmask small { display: block; font-size: 10px; opacity: .75; }
+  .turn .body .embed .quality { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; font-size: 12px; }
+  .turn .body .embed .quality span { color: var(--muted); margin-right: 2px; }
+  .turn .body .embed .quality button { font: inherit; padding: 1px 8px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  .turn .body .embed .quality button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
   .turn .body .caption { display: block; font-size: 12.5px; color: var(--muted); margin-top: 3px; }
   .turn .body a.caption { text-decoration: none; }
   .turn .body a.caption:hover { color: var(--accent); }
@@ -1338,6 +1354,8 @@
     if (v._gave_up) return;
     v._gave_up = true;
     if (v._hls) v._hls.destroy();
+    const player = v.closest('.player');
+    if (player) for (const extra of player.parentNode.querySelectorAll('.quality, .dkmask')) extra.remove();
     const cap = v.closest('.embed').querySelector('.caption');
     v.replaceWith(Object.assign(document.createElement('span'), {
       className: 'caption', textContent: 'This browser can\'t play it here' + (cap ? ':' : '.') }));
@@ -1345,6 +1363,8 @@
   // The CID isn't a stream after all (a release pinned as one file): the file itself.
   function plainRelease(v) {
     if (v._hls) { v._hls.destroy(); v._hls = null; }
+    const bar = v.closest('.embed') && v.closest('.embed').querySelector('.quality');
+    if (bar) bar.remove();  // one file: nothing to choose between
     v._plain = true;
     v.src = v.dataset.src;
   }
@@ -1374,22 +1394,96 @@
     });
   }
   function nativeHls(v) { return v.canPlayType('application/vnd.apple.mpegurl') !== ''; }
-  async function attachRelease(v) {
-    if (v._attached) return;
-    v._attached = true;
-    const mse = 'MediaSource' in window || 'ManagedMediaSource' in window;
-    if (!mse && nativeHls(v)) { v.src = v.dataset.hls; return; }  // iOS: the browser's own
-    let Hls;
-    try { Hls = await loadHls(); } catch (e) { Hls = null; }
-    if (!Hls || !Hls.isSupported()) { if (nativeHls(v)) v.src = v.dataset.hls; else plainRelease(v); return; }
-    const hls = v._hls = new Hls({ autoStartLoad: false });  // the playlist now; the video when it's played
+  // Its renditions by the short side of the picture (an upright phone video at 1080x1920
+  // is 1080p, as a landscape one is); a level with no picture is the audio stream.
+  function levelName(level) {
+    return level.width && level.height ? Math.min(level.width, level.height) + 'p' : 'Audio only';
+  }
+  function hlsFor(Hls, v, options) {
+    const hls = new Hls(options);
     hls.on(Hls.Events.ERROR, (_, data) => {
       if (!data.fatal) return;
       // A decoder that can't (AV1 on an older device) is the browser's limit; anything else,
       // most often no playlist at that CID, means the release is one plain file.
       if (data.type === Hls.ErrorTypes.MEDIA_ERROR) cantPlay(v); else plainRelease(v);
     });
-    v.addEventListener('play', () => { if (v._hls) v._hls.startLoad(); }, { once: true });
+    return hls;
+  }
+  // Load `url` into the video afresh: for Audio only (its own playlist; hls.js can't drop the
+  // picture from a stream already playing, and quietly went back to 1080p) and back from it.
+  function reloadRelease(Hls, v, url, level) {
+    const at = v.currentTime, playing = !v.paused;
+    if (v._hls) v._hls.destroy();
+    const hls = v._hls = hlsFor(Hls, v, { startPosition: at, startLevel: level, autoStartLoad: playing || v._started });
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      if (level >= 0) hls.currentLevel = level;  // chosen, not just started at
+      if (playing) v.play().catch(() => {});
+    });
+    hls.loadSource(url);
+    hls.attachMedia(v);
+  }
+  // The row under it: Auto, each picture largest first, Audio only. Remembered across
+  // releases (someone on a phone's data picks Audio only once and means it for the evening).
+  function addQualities(Hls, v, levels) {
+    const embed = v.closest('.embed');
+    if (!embed || levels.length < 2 || embed.querySelector('.quality')) return;
+    const choices = [{ name: 'Auto', index: -1 }, ...levels.map((level, index) => ({ name: levelName(level), index, level }))
+      .sort((a, b) => (b.level.width || 0) * (b.level.height || 0) - (a.level.width || 0) * (a.level.height || 0))];
+    const audio = choices.find(c => c.name === 'Audio only');
+    const bar = Object.assign(document.createElement('div'), { className: 'quality' });
+    bar.innerHTML = '<span>Quality</span>' + choices.map(c => `<button type="button" data-name="${esc(c.name)}">${esc(c.name)}</button>`).join('');
+    const paint = name => { for (const b of bar.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.name === name)); };
+    function choose(choice, remember) {
+      if (remember) store.set('releaseQuality', choice.name);
+      paint(choice.name);
+      if (choice === audio) {
+        const url = choice.level.uri || [].concat(choice.level.url)[0];
+        if (!v._audioOnly) { v._audioOnly = true; reloadRelease(Hls, v, url, -1); }
+        return;
+      }
+      if (v._audioOnly) { v._audioOnly = false; reloadRelease(Hls, v, v.dataset.hls, choice.index); return; }
+      v._hls.currentLevel = choice.index;  // -1: hls.js picks by bandwidth; a level: switched at once
+    }
+    bar.addEventListener('click', e => {
+      const b = e.target.closest('button');
+      if (b) choose(choices.find(c => c.name === b.dataset.name), true);
+    });
+    v.closest('.player').after(bar);
+    const wanted = choices.find(c => c.name === store.get('releaseQuality', 'Auto')) || choices[0];
+    if (wanted.index === -1) paint('Auto'); else choose(wanted, false);
+  }
+  // delivery-kid's mark, shown over the video on hover: its ASCII portrait from its PickiPedia
+  // page (as in the servers popover), and where the release lives.
+  function dkMask() {
+    const mask = Object.assign(document.createElement('span'), { className: 'dkmask' });
+    mask.setAttribute('aria-hidden', 'true');
+    let dk = null;
+    try { dk = serverList.find(sv => sv.name === 'delivery-kid'); } catch (e) {}  // asked for further down the page
+    mask.innerHTML = (dk && dk.art ? `<pre>${esc(dk.art)}</pre>` : '')
+      + '<span><b>delivery-kid</b><small>pinned on IPFS</small></span>';
+    return mask;
+  }
+  async function attachRelease(v) {
+    if (v._attached) return;
+    v._attached = true;
+    if (!v.closest('.player')) {
+      const player = Object.assign(document.createElement('span'), { className: 'player' });
+      v.replaceWith(player);
+      player.append(v, dkMask());
+      v.addEventListener('mouseenter', () => {  // the art, if the servers hadn't been asked yet when it was made
+        const pre = player.querySelector('.dkmask pre');
+        if (!pre) { player.querySelector('.dkmask').replaceWith(dkMask()); }
+      });
+    }
+    v.addEventListener('play', () => { v._started = true; }, { once: true });
+    const mse = 'MediaSource' in window || 'ManagedMediaSource' in window;
+    if (!mse && nativeHls(v)) { v.src = v.dataset.hls; return; }  // iOS: the browser's own (it picks the quality)
+    let Hls;
+    try { Hls = await loadHls(); } catch (e) { Hls = null; }
+    if (!Hls || !Hls.isSupported()) { if (nativeHls(v)) v.src = v.dataset.hls; else plainRelease(v); return; }
+    const hls = v._hls = hlsFor(Hls, v, { autoStartLoad: false });  // the playlist now; the video when it's played
+    hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => addQualities(Hls, v, data.levels || hls.levels));
+    v.addEventListener('play', () => { if (v._hls && !v._hls.config.autoStartLoad) v._hls.startLoad(); }, { once: true });
     hls.loadSource(v.dataset.hls);
     hls.attachMedia(v);
   }
