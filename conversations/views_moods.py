@@ -797,7 +797,7 @@ def api_mood_todo(request, slug):
     if request.GET.get('fresh'):
         todo.forget(mood)
     # And what GitHub's webhook last said, and when: whether merges are being told at once.
-    return JsonResponse({**todo.for_mood(mood), 'hook': todo.last_heard()})
+    return JsonResponse({**todo.for_mood(mood), 'hook': todo.last_heard(), 'hook_refused': todo.last_refused()})
 
 
 @csrf_exempt  # GitHub's call, proven by its signature, not a browser's session
@@ -818,6 +818,7 @@ def api_github_hook(request):
     given = request.headers.get('X-Hub-Signature-256', '')
     expected = 'sha256=' + hmac.new(secret.encode(), request.body, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(given, expected):
+        todo.heard(request.headers.get('X-GitHub-Event', ''), 'signed' if given else 'unsigned', refused=True)
         return JsonResponse({'error': 'signature not accepted'}, status=403)
     event = request.headers.get('X-GitHub-Event', '')
     # GitHub sends JSON, or -- its default for a new webhook -- a form with the JSON as "payload".
