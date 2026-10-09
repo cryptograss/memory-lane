@@ -597,6 +597,11 @@
   #lightbox img { max-width: 94vw; max-height: 80vh; object-fit: contain; border-radius: 6px; box-shadow: 0 6px 30px rgba(0,0,0,.5); }
   #lightbox .lbfoot { color: #eee; font-size: 14px; text-align: center; max-width: 90vw; }
   #lightbox .lbfoot a { color: #ffb3d9; margin-left: 10px; white-space: nowrap; }
+  /* "→ PickiPedia" where the picture is seen whole: when a pickipedian use for it comes to mind. */
+  #lightbox .lbup { margin-left: 12px; font: inherit; font-size: 13px; padding: 4px 12px; border: 1px solid #ffb3d9; border-radius: 14px;
+                    background: rgba(255,255,255,.08); color: #ffb3d9; cursor: pointer; }
+  #lightbox .lbup:hover { background: rgba(255,179,217,.18); }
+  #lightbox .lbup[hidden] { display: none; }
   #lightbox .close { position: absolute; top: 10px; right: 14px; font-size: 26px; line-height: 1; color: #fff; background: none;
                      border: 0; cursor: pointer; padding: 6px; }
   .turn .body a.img { cursor: zoom-in; }
@@ -800,7 +805,7 @@
   </span>
 </header>
 <div id="lightbox" hidden role="dialog" aria-label="Picture"><button type="button" class="close" aria-label="Close">✕</button>
-  <img alt=""><div class="lbfoot"><span class="lbcap"></span><a class="lbpage" target="_blank" rel="noopener"></a></div></div>
+  <img alt=""><div class="lbfoot"><span class="lbcap"></span><a class="lbpage" target="_blank" rel="noopener"></a><button type="button" class="lbup" hidden>→ PickiPedia</button></div></div>
 <div id="voicesBox" hidden role="dialog" aria-label="Voices">
   <div class="head"><b>Who is read in which voice</b> <button type="button" id="voicesClose">close</button></div>
   <div id="voicesList"></div>
@@ -1309,7 +1314,19 @@
     const host = new URL(a.href, location.href).hostname;
     page.textContent = !a.dataset.full ? 'the picture itself ↗'
       : host.endsWith('wikimedia.org') ? 'its page on Commons ↗' : 'its page on PickiPedia ↗';
+    // Under the picture in the thread: "→ PickiPedia" (here too), or where it already is on the wiki.
+    const next = a.nextElementSibling;
+    const onWiki = next && next.classList.contains('onwiki') ? next : null;
+    if (onWiki) { page.href = onWiki.href; page.textContent = 'its page on PickiPedia ↗'; }
+    lightbox._topp = next && next.classList.contains('topp') ? next : null;
+    lightbox.querySelector('.lbup').hidden = !lightbox._topp;
     lightbox.hidden = false;
+  });
+  lightbox.querySelector('.lbup').addEventListener('click', e => {
+    e.stopPropagation();
+    const offer = lightbox._topp;
+    closeLightbox();
+    if (offer) offer.click();  // the same dialog as the button under the picture
   });
   lightbox.addEventListener('click', e => { if (e.target === lightbox || e.target.closest('.close')) closeLightbox(); });
   document.addEventListener('keydown', e => {
@@ -1346,9 +1363,10 @@
   }, true);
 
   // --- "→ PickiPedia": a picture sent here goes onto the wiki, by choice ------------
-  // (services/wiki_upload.py). Only pictures stored here (/moods/media/), offered
-  // to whoever sent them: it goes up as them, from their own PickiPedia account,
-  // after PickiPedia asks them. Once one is there, it says so, and its button goes.
+  // (services/wiki_upload.py). Only pictures stored here (/moods/media/) a person
+  // shared, offered to anyone signed in: it goes up from their own PickiPedia
+  // account, after PickiPedia asks them, credited to whoever shared it. Once one
+  // is there, it says so, and its button goes. The lightbox offers it too.
   const uploadBox = document.getElementById('uploadBox');
   let uploading = null;  // {sha, message}
   function offerUpload(el, t) {
