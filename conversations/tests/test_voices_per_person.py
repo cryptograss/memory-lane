@@ -73,7 +73,7 @@ class SpeakersTest(TestCase):
         self.assertEqual(voice.intro(self.said(self.skyler, 'And a capo.'), 'justin', http=self.fake), url)
         self.assertEqual(len(self.fake.asked), asked)  # the same words: made once
         voice.intro(message, 'justin', where=True, http=self.fake)
-        self.assertEqual(self.fake.asked[-1][2]['json']['text'], 'In magenta interface, Skyler says:')
+        self.assertEqual(self.fake.asked[-1][2]['json']['text'], 'Pound magenta interface. Skyler says:')
         row = Message.objects.filter(source_file='voice', content__intro='skyler').first()
         self.assertEqual((row.content['type'], row.content['by']), ('spoken', 'justin'))
 
@@ -88,7 +88,7 @@ class SpeakersTest(TestCase):
 
     def test_the_narrator_says_an_agent_is_thinking_once_per_wording(self):
         url = voice.narrate_thinking(self.mood, 'magent', 'justin', where=True, http=self.fake)
-        self.assertEqual(self.fake.asked[-1][2]['json']['text'], 'Magent is thinking, in magenta interface.')
+        self.assertEqual(self.fake.asked[-1][2]['json']['text'], 'Pound magenta interface. Magent is thinking.')
         self.assertEqual(self.voice_used(), voice.voice_id_for(voice.chosen_voices()['narrator'], self.fake))
         asked = len(self.fake.asked)
         self.assertEqual(voice.narrate_thinking(self.mood, 'magent', 'skyler', where=True, http=self.fake), url)
@@ -160,7 +160,7 @@ class SpeakerEndpointsTest(TestCase):
             self.assertEqual(ask(client, 'skyler').status_code, 404)  # a person: never "thinking", by this
             said = ask(client, 'magent')
         self.assertTrue(said.json()['url'].endswith('.mp3'))
-        self.assertEqual(fake.asked[-1][2]['json']['text'], 'Magent is thinking, in general.')
+        self.assertEqual(fake.asked[-1][2]['json']['text'], 'Pound general. Magent is thinking.')
 
     def test_speak_can_say_who_speaks_first_or_only_that(self):
         fake = FakeQuartet()
@@ -172,7 +172,7 @@ class SpeakerEndpointsTest(TestCase):
             texts = [kw['json']['text'] for method, _, kw in fake.asked if method == 'POST']
             only = client.post(f'/api/moods/general/speak/{message.id}/?only=intro').json()
         self.assertEqual(set(both), {'intro', 'url', 'pieces'})
-        self.assertEqual(texts, ['In general, Skyler says:', 'Bus at nine.'])
+        self.assertEqual(texts, ['Pound general. Skyler says:', 'Bus at nine.'])
         self.assertEqual(set(only), {'intro'})
 
     def test_a_memo_that_names_someone_is_posted_mentioning_them(self):
@@ -261,3 +261,42 @@ class VoiceSampleTest(TestCase):
         with mock.patch('conversations.services.voice.voices', return_value=listed), \
                 mock.patch('requests.get', lambda url, **kw: Answer(200, content=b'<html>nope</html>')):
             self.assertEqual(Client().get('/api/voice/sample/v-aria/').status_code, 502)
+
+
+@override_settings(ELEVENLABS_API_KEY='test-eleven-key')
+class NarratorSaysTheMoodAndRedeploysTest(TestCase):
+
+    def setUp(self):
+        cache.clear()
+        self.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        self.mood = Mood.objects.create(slug='magenta-interface', title='magenta interface')
+        _, token = mood_auth.enrol_device(self.justin, 'test', tier='key')
+        self.client = Client()
+        self.client.cookies[mood_auth.COOKIE] = token
+
+    def test_a_mood_in_a_message_is_said_as_written(self):
+        self.assertEqual(voice.plain('Over in #magenta-interface, see #69.'),
+                         'Over in pound magenta interface , see number 69.')
+        self.assertEqual(voice.plain('C# and ## Heading'), 'C# and ## Heading')
+
+    def test_a_redeploy_is_listed_once_and_said(self):
+        from conversations.services import servers, wiki_auth
+        servers.record_deploy('maybelle', 'started', by='JMyles')
+        servers.record_deploy('maybelle', 'finished', commit='abc123', by='JMyles')
+        Mood.objects.create(slug='general', title='general')
+        events = [e for e in self.client.get('/api/moods/recent/?since=2000-01-01T00:00:00Z').json()['events']
+                  if e['kind'] == 'deploy']
+        self.assertEqual(sorted(e['state'] for e in events), ['finished', 'started'])
+        done = next(e for e in events if e['state'] == 'finished')
+        self.assertTrue(done['id'].startswith('deploy-maybelle-finished-'))
+        fake = FakeQuartet()
+        ask = lambda row: self.client.post('/api/voice/narrate/', json.dumps({'mood': 'magenta-interface', 'deploy': row}),
+                                           content_type='application/json')
+        with mock.patch('requests.get', fake.get), mock.patch('requests.post', fake.post), \
+                mock.patch.object(wiki_auth, 'aliases', return_value={'jmyles': 'justin'}):
+            said = ask(done['row'])
+            self.assertTrue(said.json()['url'].endswith('.mp3'))
+            self.assertEqual(fake.asked[-1][2]['json']['text'], 'Maybelle redeployed, by Justin.')
+            started = next(e for e in events if e['state'] == 'started')
+            self.assertEqual(ask(started['row']).status_code, 400)  # only started: news when it's done
+            self.assertEqual(ask(str(uuid.uuid4())).status_code, 404)

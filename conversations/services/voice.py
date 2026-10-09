@@ -31,8 +31,10 @@ unlike the narrator's and everyone else's -- and kept. magent reads in the
 house voice unless it has chosen another. **The narrator** has a voice of
 its own (the 'narrator_voice' setting; given at its first word, nobody
 else's, changeable in the voices list): when messages are read one after
-another it says who speaks next ("Justin says:"), and when an agent starts
-work, that it's thinking ("Magent is thinking, in magenta interface").
+another it says who speaks next ("Justin says:"), when an agent starts
+work, that it's thinking, and when a server's redeployed. Reading every
+Mood, it names the Mood first, as it's written ("Pound magenta interface.
+Magent is thinking.").
 
 **It starts at once.** A message is read in pieces (pieces()): its first
 paragraph alone -- cut at a sentence if it runs long -- so it's spoken in a
@@ -174,6 +176,7 @@ def plain(text):
     text = _PATH.sub(lambda m: m.group(1), text)
     text = _LONG_TOKEN.sub(' a long string ', text)
     text = re.sub(r'(?<![\w&])#(\d+)\b', r'number \1', text)             # #69: "number 69", not "hashtag"
+    text = re.sub(r'(?<![\w&/#])#([A-Za-z][\w-]*)', lambda m: f' {said_mood(m.group(1))} ', text)  # a Mood: "pound general"
     for symbol, words in SPOKEN_SYMBOLS.items():
         text = text.replace(symbol, f' {words} ' if words else ' ')
     text = re.sub(r'^\s{0,3}#{1,6}\s*', '', text, flags=re.M)        # headings
@@ -319,28 +322,47 @@ def spoken_name(name):
     return (name or 'someone')[:1].upper() + (name or 'someone')[1:]
 
 
+def said_mood(slug):
+    """A Mood as it's said: #magenta-interface is "pound magenta interface"."""
+    return 'pound ' + (slug or '').replace('-', ' ').replace('_', ' ')
+
+
+def _where(mood):
+    """The Mood, said first: "Pound general. "."""
+    return said_mood(mood.slug)[:1].upper() + said_mood(mood.slug)[1:] + '. '
+
+
 def intro(message, by, where=False, http=requests):
     """The URL of the narrator saying who speaks next -- and, with `where`, in
-    which Mood ("In general, Justin says:"). Made once per wording, and kept."""
-    who = spoken_name(message.sender_id)
-    if where:
-        title = (message.mood.title or message.mood.slug).replace('-', ' ')
-        script = f'In {title}, {who} says:'
-    else:
-        script = f'{who} says:'
+    which Mood, first ("Pound general. Justin says:"). Made once per wording, and kept."""
+    script = (_where(message.mood) if where else '') + f'{spoken_name(message.sender_id)} says:'
     return _spoken(message.mood, by, voice_of(NARRATOR, http), {'text': script, 'model_id': TTS_MODEL}, script,
                    http, intro=message.sender_id)
 
 
 def narrate_thinking(mood, agent, by, where=False, http=requests):
     """The URL of the narrator saying `agent` has started work ("Magent is
-    thinking" -- with `where`, ", in magenta interface"). Made once per wording, and kept."""
-    script = f'{spoken_name(agent)} is thinking'
-    if where:
-        script += f", in {(mood.title or mood.slug).replace('-', ' ')}"
-    script += '.'
+    thinking." -- with `where`, the Mood first: "Pound magenta interface. ..."). Made once per wording, and kept."""
+    script = (_where(mood) if where else '') + f'{spoken_name(agent)} is thinking.'
     return _spoken(mood, by, voice_of(NARRATOR, http), {'text': script, 'model_id': TTS_MODEL}, script,
                    http, narrated='thinking', agent=agent)
+
+
+DEPLOY_SAID = {'finished': '{server} redeployed{who}.', 'failed': "{server}'s redeploy failed{who}."}
+
+
+def narrate_deploy(row, mood, by, http=requests):
+    """The URL of the narrator saying a server's redeploy is done ("Maybelle
+    redeployed, by Justin.") or failed, from its deploy row (services/servers.py).
+    None for a redeploy only started. Made once per wording, and kept."""
+    from conversations.services.wiki_auth import local_name_for
+    c = row.content if isinstance(row.content, dict) else {}
+    if c.get('state') not in DEPLOY_SAID:
+        return None
+    who = f", by {spoken_name(local_name_for(c['by']))}" if c.get('by') else ''
+    script = DEPLOY_SAID[c['state']].format(server=spoken_name(c.get('server') or 'a server'), who=who)
+    return _spoken(mood, by, voice_of(NARRATOR, http), {'text': script, 'model_id': TTS_MODEL}, script,
+                   http, narrated='deploy', server=c.get('server'))
 
 
 # --- reading a message aloud --------------------------------------------------------

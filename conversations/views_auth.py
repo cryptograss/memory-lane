@@ -937,7 +937,8 @@ def api_speaker_voice(request):
 @require_POST
 def api_narrate(request):
     """{"mood", "agent", "where"}: the narrator saying an agent has started work there
-    ("Magent is thinking, in magenta interface"), for reading Moods as they come: {"url"}."""
+    ("Pound magenta interface. Magent is thinking."), for reading Moods as they come: {"url"}.
+    {"mood", "deploy": a deploy row's id}: saying a server redeployed, or failed to."""
     from .services import voice
     from .views_admin import locked_response
     if locked_response():
@@ -950,6 +951,17 @@ def api_narrate(request):
     except ValueError:
         return JsonResponse({'error': 'expected JSON'}, status=400)
     mood = Mood.by_slug(str(body.get('mood') or ''))
+    if body.get('deploy'):
+        row = Message.objects.filter(id=_uuid_or_none(str(body['deploy'])), source_file='deploy').first()
+        if mood is None or row is None:
+            return JsonResponse({'error': 'no such Mood, or no such redeploy'}, status=404)
+        if not _under_limit(f'voice:{device.pk}', VOICE_PER_MINUTE):
+            return JsonResponse({'error': 'slow down'}, status=429)
+        try:
+            url = voice.narrate_deploy(row, mood, device.entity_id)
+        except voice.VoiceError as e:
+            return JsonResponse({'error': str(e)}, status=e.status)
+        return JsonResponse({'url': url}) if url else JsonResponse({'error': 'only a finished or failed redeploy is said'}, status=400)
     agent = ThinkingEntity.objects.filter(name=str(body.get('agent') or ''), is_biological_human=False).first()
     if mood is None or agent is None:
         return JsonResponse({'error': 'no such Mood, or no such agent'}, status=404)
