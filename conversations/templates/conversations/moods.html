@@ -1075,6 +1075,7 @@
     fold.querySelector('summary').textContent = `Done (${done.length})`;
     fold.querySelector('ul').innerHTML = done.map(todoItem).join('');
   }
+  let todoStamp = null;  // the server's word on when a list last may have changed (pollOnce)
   async function loadTodo(fresh) {
     const slug = current;
     if (!slug) return;
@@ -2633,6 +2634,11 @@
     const turnsEl = document.getElementById('turns');
     if (!turnsEl) return;
     if (data.now) changesAt[current] = data.now;
+    // A to-do list may have changed (GitHub told of a merge; the wiki was edited): ask for it now.
+    if (data.todo_stamp !== undefined) {
+      if (todoStamp !== null && data.todo_stamp !== todoStamp) loadTodo();
+      todoStamp = data.todo_stamp;
+    }
     (data.changes || []).forEach(applyChange);
     reactionsNow = data.reactions || {};
     turnsEl.querySelectorAll('.turn[data-id]').forEach(el => renderReacts(el, reactionsNow[el.dataset.id] || {}));

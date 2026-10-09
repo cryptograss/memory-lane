@@ -248,6 +248,10 @@ MOOD_RECOVERY_PUBLIC_KEY = os.getenv('MOOD_RECOVERY_PUBLIC_KEY', '')
 # A Mood's to-do list asks GitHub which pull requests are merged (conversations/services/todo.py):
 # unsigned, sixty requests an hour; a read-only token, if set, lifts that.
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN', '')
+# GitHub's webhook (conversations/services/todo.py): a pull request merged ticks
+# the to-do lists linking it at once. The repository webhook's secret; unset,
+# /api/github/hook/ refuses everything and lists tick on their own, minutes later.
+GITHUB_WEBHOOK_SECRET = os.getenv('GITHUB_WEBHOOK_SECRET', '')
 
 # Who may kick, ban, scram (AZ5) and lift, with their SSH key
 # (conversations/views_admin.py): "justin,skyler". Unset, nobody can.

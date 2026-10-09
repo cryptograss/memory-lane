@@ -13,7 +13,7 @@ from django.db.models import Max
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils.dateparse import parse_datetime
-from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.core.exceptions import ValidationError
 from django.views.decorators.http import require_GET, require_POST
 
@@ -178,6 +178,8 @@ def api_mood_turns(request, slug):
         # What was edited or deleted since ?changes_since=, as it stands now; and the time to ask from next.
         'changes': changes,
         'now': timezone.now().isoformat(),
+        # Changes when a to-do list may have (a merge GitHub told of, a wiki edit): ask for it again.
+        'todo_stamp': todo_stamp(),
         # Prose only: the poller reads an agent turn here as an answer, so a
         # tool call must never appear in this list.
         'turns': turns_out,
@@ -205,6 +207,11 @@ def api_mood_turns(request, slug):
 
 
 PAGE = 400
+
+
+def todo_stamp():
+    from .services import todo
+    return todo.stamp()
 
 
 def agents_in(mood):
@@ -790,6 +797,39 @@ def api_mood_todo(request, slug):
     if request.GET.get('fresh'):
         todo.forget(mood)
     return JsonResponse(todo.for_mood(mood))
+
+
+@csrf_exempt  # GitHub's call, proven by its signature, not a browser's session
+@require_POST
+def api_github_hook(request):
+    """GitHub's webhook: a pull request merged ticks every to-do list linking it, now (services/todo.py).
+
+    Signed with settings.GITHUB_WEBHOOK_SECRET (X-Hub-Signature-256); unsigned
+    or mis-signed, refused. Any other event, or a pull request closed unmerged,
+    is acknowledged and changes nothing."""
+    import hashlib
+    import hmac
+    import json
+    from .services import todo
+    secret = getattr(settings, 'GITHUB_WEBHOOK_SECRET', '')
+    if not secret:
+        return JsonResponse({'error': "the webhook isn't set up here"}, status=503)
+    given = request.headers.get('X-Hub-Signature-256', '')
+    expected = 'sha256=' + hmac.new(secret.encode(), request.body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(given, expected):
+        return JsonResponse({'error': 'signature not accepted'}, status=403)
+    event = request.headers.get('X-GitHub-Event', '')
+    try:
+        body = json.loads(request.body)
+    except ValueError:
+        return JsonResponse({'error': 'expected JSON'}, status=400)
+    pull = body.get('pull_request') or {}
+    name = (body.get('repository') or {}).get('full_name', '')
+    if event == 'pull_request' and body.get('action') == 'closed' and pull.get('merged') and '/' in name:
+        owner, repo = name.split('/', 1)
+        todo.merged_now(owner, repo, int(pull.get('number') or 0))
+        return JsonResponse({'ticked': f"{name}#{pull.get('number')}"})
+    return JsonResponse({'ok': True, 'event': event})
 
 
 @require_GET

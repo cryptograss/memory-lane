@@ -189,3 +189,35 @@ def with_merges(items, http):
 
 def forget(mood):
     cache.delete(f'todo:{mood.slug}')
+    changed()
+
+
+# --- told at once: a merge, by GitHub's webhook; an edit, by the wiki feed ------------
+# Asking GitHub on a timer is a few minutes behind. GitHub can say so itself
+# the moment a pull request merges (a repository webhook, "Pull requests", to
+# /api/github/hook/, signed with settings.GITHUB_WEBHOOK_SECRET). Then every
+# list forgets what it kept, and the stamp every open page polls for changes:
+# they ask for their list again within a few seconds.
+
+STAMP = 'todo:stamp'
+
+
+def changed():
+    """Tell open pages a list may have changed: they ask again at their next poll."""
+    import time
+    cache.set(STAMP, int(time.time() * 1000), None)
+
+
+def stamp():
+    return cache.get(STAMP) or 0
+
+
+def merged_now(owner, repo, number):
+    """GitHub says this pull request just merged: kept as merged, every list asked again."""
+    from conversations.models import Mood
+    cache.set(f'todo:pull:{owner}/{repo}#{number}'.lower(), True, MERGED_FOR)
+    recent = cache.get(f'todo:merged:{owner}/{repo}'.lower())
+    if isinstance(recent, set):
+        cache.set(f'todo:merged:{owner}/{repo}'.lower(), recent | {number}, CLOSED_FOR)
+    cache.delete_many([f'todo:{slug}' for slug in Mood.objects.values_list('slug', flat=True)])
+    changed()
