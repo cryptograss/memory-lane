@@ -72,7 +72,8 @@ class EmbedsTest(TestCase):
 
     def test_a_release_plays_by_gateway_link_release_page_or_wikilink(self):
         player = (f'<span class="embed release"><video controls preload="none" playsinline '
-                  f'src="https://ipfs.delivery-kid.cryptograss.live/ipfs/{V1}" '
+                  f'data-hls="https://ipfs.delivery-kid.cryptograss.live/ipfs/{V1}/master.m3u8" '
+                  f'data-src="https://ipfs.delivery-kid.cryptograss.live/ipfs/{V1}" '
                   f'poster="https://pickipedia.xyz/images/s/Squats.jpg"></video>'
                   f'<a class="caption" href="https://pickipedia.xyz/wiki/Release:B{V1[1:]}" target="_blank" rel="noopener">'
                   f'🎬 Blue Railroad Train (Squats) #3, #4</a></span>')
@@ -80,14 +81,18 @@ class EmbedsTest(TestCase):
                      f'https://pickipedia.xyz/wiki/Release:B{V1[1:]}'):
             with self.subTest(text=text):
                 self.assertIn(player, render_html(f'watch {text}'))
-        self.assertIn(f'src="https://ipfs.delivery-kid.cryptograss.live/ipfs/{V0}"></video>',  # no thumbnail, no poster
+        # No thumbnail on the wiki: the poster pinned with the stream.
+        self.assertIn(f'data-src="https://ipfs.delivery-kid.cryptograss.live/ipfs/{V0}" '
+                      f'poster="https://ipfs.delivery-kid.cryptograss.live/ipfs/{V0}/poster.jpg"></video>',
                       render_html(f'https://ipfs.delivery-kid.cryptograss.live/ipfs/{V0}'))
+        # A stream, whatever type the release says (delivery-kid's are the upload's, 'video/mov').
+        self.assertIn('data-hls="https://ipfs.delivery-kid.cryptograss.live/ipfs/QmHLSstream00000000000000000000000000000000000/master.m3u8"',
+                      render_html('[[Release:QmHLSstream00000000000000000000000000000000000]]'))
         self.assertIn('<audio controls preload="none" src="https://ipfs.delivery-kid.cryptograss.live/ipfs/qmflac',
                       render_html('[[Release:QmFlac000000000000000000000000000000000000000a]]').lower())
 
     def test_what_isnt_a_playable_release_stays_a_link(self):
-        for text in ('https://ipfs.delivery-kid.cryptograss.live/ipfs/QmHLSstream00000000000000000000000000000000000',
-                     'https://ipfs.delivery-kid.cryptograss.live/ipfs/QmUnknown0000000000000000000000000000000000000',
+        for text in ('https://ipfs.delivery-kid.cryptograss.live/ipfs/QmUnknown0000000000000000000000000000000000000',
                      f'https://ipfs.delivery-kid.cryptograss.live/ipfs/{V1}/inside.mp4'):
             with self.subTest(text=text):
                 out = render_html(text)

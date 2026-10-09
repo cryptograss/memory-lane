@@ -66,7 +66,7 @@ class RenderHtmlTest(TestCase):
                    'a': {'href', 'class', 'target', 'rel', 'data-yarn', 'data-who', 'data-mood', 'data-reveal', 'data-full'},
                    'span': {'class', 'data-who'},
                    'img': {'src', 'alt', 'loading'},
-                   'video': {'controls', 'preload', 'playsinline', 'src', 'poster'},
+                   'video': {'controls', 'preload', 'playsinline', 'src', 'poster', 'data-hls', 'data-src'},
                    'audio': {'controls', 'preload', 'src', 'title'}}
         fixed = {'target': '_blank', 'rel': 'noopener'}  # the renderer's own, never a post's
         case = self
@@ -83,6 +83,9 @@ class RenderHtmlTest(TestCase):
                     if name in ('href', 'src', 'poster', 'data-full'):  # decoded: entities are fine
                         case.assertRegex(value, r'^(https?://|/moods/media/[0-9a-f]{64}\.(png|jpg|gif|webp)$'
                                                 r'|/moods/[a-z0-9-]+/(#m-[0-9a-f-]{36})?$)', (source, out))
+                    if name in ('data-hls', 'data-src'):  # the page plays it: delivery-kid's gateway, nothing else
+                        case.assertRegex(value, r'^https://ipfs\.delivery-kid\.cryptograss\.live/ipfs/[A-Za-z0-9]{46,64}'
+                                                r'(/master\.m3u8)?$', (source, out))
                     if name == 'data-mood':  # the page opens it
                         case.assertRegex(value, r'^[a-z0-9-]+$', (source, out))
                     if name == 'data-reveal':

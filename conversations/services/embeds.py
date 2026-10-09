@@ -11,6 +11,12 @@ it, Wikimedia Commons), and releases delivery-kid serves.
         -> a player for the release: a video (its thumbnail the poster) or a
            sound, titled, linked to its Release page
 
+A video delivery-kid has encoded is an HLS folder under its CID (master.m3u8,
+a quality ladder in AV1 and Opus, poster.jpg), whatever its file_type says --
+that's the upload's type ('video/mov'). So a video is offered as its stream,
+with the plain file as the fallback for older releases that are one file
+(the page plays both, as PickiPedia's player does).
+
 PickiPedia answers both: its imageinfo knows its own uploads and, through
 InstantCommons, Commons'; its release list knows every Release's CID and
 type. What it says is kept a while (a file a day; the release list ten
@@ -30,8 +36,8 @@ THUMB_WIDTH = 800
 # [[File:X|thumb|300px|left|caption]]: everything but the caption is how MediaWiki lays it out.
 _LAYOUT = re.compile(r'^(thumb|thumbnail|frame|frameless|border|left|right|center|centre|none|upright(=[\d.]+)?'
                      r'|\d+(x\d+)?px|x\d+px|link=.*|alt=.*|page=\d+|class=.*|lang=.*)$', re.I)
-# Kinds a browser plays in a <video> or an <audio> (HLS needs a player of its own: a link).
-VIDEO_TYPES = {'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'video/mov'}
+# Kinds a browser plays in a <video> or an <audio>; a video may be an HLS stream (see above).
+HLS_TYPES = {'application/vnd.apple.mpegurl', 'application/x-mpegurl'}
 AUDIO_TYPES = {'audio/mpeg', 'audio/mp3', 'audio/ogg', 'audio/flac', 'audio/wav', 'audio/x-wav', 'audio/webm',
                'audio/mp4', 'audio/aac'}
 
@@ -119,16 +125,21 @@ def _release_thumbnail(page):
 
 
 def release(cid):
-    """A playable release: {'cid', 'title', 'kind': 'video'|'audio', 'src', 'poster', 'page'}, or None."""
+    """A playable release: {'cid', 'title', 'kind': 'video'|'audio', 'src', 'hls', 'poster', 'page'}, or None.
+    'hls' (videos): the stream to try first; 'src' the plain file, if it isn't one."""
     found = releases().get(normal_cid(cid))
     if not found:
         return None
-    kind = 'video' if found['type'] in VIDEO_TYPES else 'audio' if found['type'] in AUDIO_TYPES else None
+    kind = ('video' if found['type'].startswith('video/') or found['type'] in HLS_TYPES
+            else 'audio' if found['type'] in AUDIO_TYPES else None)
     if not kind:
-        return None  # HLS, or a type nobody said: a link
+        return None  # a type nobody said: a link
     from .mood_view import pickipedia_url
     thumbnail = found['thumbnail'] or (_release_thumbnail(found['page']) if kind == 'video' else '')
     poster = (wiki_file(thumbnail) or {}).get('src', '') if thumbnail and kind == 'video' else ''
+    base = f'{GATEWAY}/ipfs/{normal_cid(cid)}'
+    if kind == 'video' and not poster:
+        poster = f'{base}/poster.jpg'  # pinned with the stream; a release without one shows nothing, not a break
     return {'cid': normal_cid(cid), 'title': found['title'], 'kind': kind, 'poster': poster,
-            'src': f'{GATEWAY}/ipfs/{normal_cid(cid)}',
+            'src': base, 'hls': f'{base}/master.m3u8' if kind == 'video' else '',
             'page': f"{pickipedia_url()}/wiki/Release:{found['page'].replace(' ', '_')}"}

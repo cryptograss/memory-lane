@@ -1333,15 +1333,82 @@
     if (e.key === 'Escape' && !lightbox.hidden) { e.preventDefault(); e.stopImmediatePropagation(); closeLightbox(); }
   }, { capture: true });
 
-  // A release this browser can't play (a .mov outside Safari, say): its caption is the link to it.
-  document.addEventListener('error', e => {
-    const v = e.target;
-    if (!(v instanceof HTMLMediaElement) || !v.closest('.turn .embed') || v._gave_up) return;
+  // A release this browser can't play (a .mov outside Safari, AV1 without a decoder): its caption is the link to it.
+  function cantPlay(v) {
+    if (v._gave_up) return;
     v._gave_up = true;
+    if (v._hls) v._hls.destroy();
     const cap = v.closest('.embed').querySelector('.caption');
     v.replaceWith(Object.assign(document.createElement('span'), {
       className: 'caption', textContent: 'This browser can\'t play it here' + (cap ? ':' : '.') }));
+  }
+  // The CID isn't a stream after all (a release pinned as one file): the file itself.
+  function plainRelease(v) {
+    if (v._hls) { v._hls.destroy(); v._hls = null; }
+    v._plain = true;
+    v.src = v.dataset.src;
+  }
+  document.addEventListener('error', e => {
+    const v = e.target;
+    if (!(v instanceof HTMLMediaElement) || !v.closest('.turn .embed') || v._gave_up) return;
+    if (v.dataset.hls && !v._plain && v.src === v.dataset.hls) { plainRelease(v); return; }  // the browser's own HLS
+    cantPlay(v);
   }, true);
+
+  // A release's video, as delivery-kid encodes them, is an HLS stream (CID/master.m3u8: a
+  // quality ladder in AV1 and Opus); older ones are one plain file. As PickiPedia's player:
+  // hls.js where there's Media Source, the browser's own HLS otherwise (iOS), and the plain
+  // file if the CID isn't a stream. Each is set up as it comes on screen: hls.js (pinned,
+  // checked by its hash) loads then, the playlist with it; the video itself when played.
+  const HLS_JS = { src: 'https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js',
+                   integrity: 'sha384-cciJ0zi8d1uMKC2zJd7jvPY4HQt7W4ByUI/FlMkltvBi31aW61rcpVBhpmW8/NwX' };
+  let hlsLoading = null;
+  function loadHls() {
+    if (window.Hls) return Promise.resolve(window.Hls);
+    return hlsLoading = hlsLoading || new Promise((ok, fail) => {
+      const s = Object.assign(document.createElement('script'),
+                              { src: HLS_JS.src, integrity: HLS_JS.integrity, crossOrigin: 'anonymous' });
+      s.onload = () => ok(window.Hls);
+      s.onerror = () => { hlsLoading = null; fail(new Error('hls.js did not load')); };
+      document.head.appendChild(s);
+    });
+  }
+  function nativeHls(v) { return v.canPlayType('application/vnd.apple.mpegurl') !== ''; }
+  async function attachRelease(v) {
+    if (v._attached) return;
+    v._attached = true;
+    const mse = 'MediaSource' in window || 'ManagedMediaSource' in window;
+    if (!mse && nativeHls(v)) { v.src = v.dataset.hls; return; }  // iOS: the browser's own
+    let Hls;
+    try { Hls = await loadHls(); } catch (e) { Hls = null; }
+    if (!Hls || !Hls.isSupported()) { if (nativeHls(v)) v.src = v.dataset.hls; else plainRelease(v); return; }
+    const hls = v._hls = new Hls({ autoStartLoad: false });  // the playlist now; the video when it's played
+    hls.on(Hls.Events.ERROR, (_, data) => {
+      if (!data.fatal) return;
+      // A decoder that can't (AV1 on an older device) is the browser's limit; anything else,
+      // most often no playlist at that CID, means the release is one plain file.
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) cantPlay(v); else plainRelease(v);
+    });
+    v.addEventListener('play', () => { if (v._hls) v._hls.startLoad(); }, { once: true });
+    hls.loadSource(v.dataset.hls);
+    hls.attachMedia(v);
+  }
+  const releaseSeen = new IntersectionObserver(entries => {
+    for (const e of entries) if (e.isIntersecting) { releaseSeen.unobserve(e.target); attachRelease(e.target); }
+  }, { rootMargin: '400px' });
+  function watchReleases(root) {
+    const found = [...(root.matches && root.matches('video[data-hls]') ? [root] : []),
+                   ...root.querySelectorAll('video[data-hls]')];
+    for (const v of found) {
+      if (v.dataset.watched || !v.dataset.hls) continue;
+      v.dataset.watched = '1';
+      releaseSeen.observe(v);
+    }
+  }
+  new MutationObserver(changes => {
+    for (const c of changes) for (const n of c.addedNodes) if (n.nodeType === 1) watchReleases(n);
+  }).observe(document.body, { childList: true, subtree: true });
+  watchReleases(document);
 
   // A memo recorded in a browser doesn't say how long it is (MediaRecorder writes no
   // duration), so its player can't place its bar: it races ahead, then crawls.

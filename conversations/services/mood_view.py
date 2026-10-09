@@ -183,8 +183,10 @@ def _release_embed(cid):
         return None
     src, page, title = (html.escape(found[k], quote=True) for k in ('src', 'page', 'title'))
     poster = f' poster="{html.escape(found["poster"], quote=True)}"' if found['poster'] else ''
-    player = (f'<video controls preload="none" playsinline src="{src}"{poster}></video>' if found['kind'] == 'video'
-              else f'<audio controls preload="none" src="{src}"></audio>')
+    # A video's stream is attached by the page (hls.js, or the browser's own HLS), its plain file the fallback.
+    hls = html.escape(found.get('hls') or '', quote=True)
+    player = (f'<video controls preload="none" playsinline data-hls="{hls}" data-src="{src}"{poster}></video>'
+              if found['kind'] == 'video' else f'<audio controls preload="none" src="{src}"></audio>')
     mark = '🎬' if found['kind'] == 'video' else '🎵'
     return f'<span class="embed release">{player}<a class="caption" href="{page}"{_OUT}>{mark} {title}</a></span>'
 
