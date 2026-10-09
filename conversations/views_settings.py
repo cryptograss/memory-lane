@@ -118,7 +118,7 @@ def rules_page(request, slug):
     resolved = knobs.resolve(slug, agent)
     frames = wake_frames(slug, rules=resolved.get('rules') or '', agent=agent,
                          discretion=resolved.get('discretion') or 'normal', verbosity=resolved.get('verbosity') or 'normal',
-                         trusted="Justin, from his container; and, in a Mood with its own container, that Mood's people")
+                         trusted="anyone signed into magenta with an SSH key")
     def plain(key, value):
         if key == 'listening':
             return value.get('mode', 'on') + (f" until {value['until']}" if value.get('until') else '')
