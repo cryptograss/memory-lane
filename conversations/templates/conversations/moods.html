@@ -395,6 +395,9 @@
   /* On a touch screen ▶ floats at the top right of a follow-on message: the row floats beside it, not under it. */
   @media (pointer: coarse) { .turn.cont > .acts { position: static; float: right; margin: 6px 0 4px 4px; background: none; } }
   .turn .body.gone { color: var(--muted); font-style: italic; font-size: 13px; }
+  /* Sent, not yet in the record: shown at once, faint, till the record has it (say). */
+  .turn.pending { opacity: .55; }
+  .turn.pending .sending { font-size: 12px; color: var(--muted); font-style: italic; }
   .turn .editbox { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
                    background: var(--panel); color: var(--ink); resize: vertical; }
   .turn .editbar { margin-top: 4px; }
@@ -2188,6 +2191,8 @@
       }
       closeBlock(container);
       if (it.kind === 'turn') {
+        const waiting = container.querySelector(`.turn.pending[data-pending-id="${it.v.id}"]`);
+        if (waiting) waiting.remove();  // sent from here: the record's own now stands in its place
         container.appendChild(turnEl(it.v, isNew));
         container._askedAt = new Date(it.v.created_at).getTime() / 1000;
       }
@@ -2568,6 +2573,14 @@
       showMoodName(saved.headMood);
       toNewest();  // before anything is painted: never its top while the poll is out
       await poll(false);
+    } else if (keptOf(slug) && keptOf(slug).mood) {
+      // Kept in this browser: drawn at once, then only what's new and what changed.
+      const kept = keptOf(slug);
+      lastId = null;
+      drawKept(kept);
+      if (kept.now) changesAt[slug] = kept.now;
+      toNewest();
+      await poll(lastId ? false : true);
     } else {
       lastId = null;
       inner.innerHTML = '<div class="empty">Loading…</div>';
@@ -2638,6 +2651,55 @@
     try { await pollOnce(full, mine); } finally { if (pollingGen === mine) pollingGen = null; }
   }
   let pollingGen = null;
+  // --- kept in this browser: each Mood's latest, drawn at once on a reload ----------
+  // The newest KEPT_ITEMS of the last KEPT_MOODS Moods opened, as the server
+  // sent them; a reload draws them before asking for anything, then asks only
+  // for what's new and what changed since (as switching back to a Mood does).
+  const KEPT_ITEMS = 150, KEPT_MOODS = 6;
+  const KEPT_KINDS = ['turns', 'steps', 'quiet', 'thoughts', 'compactions', 'events'];
+  function keptOf(slug) { return store.get('kept.' + slug, null); }
+  function keep(slug, data, full) {
+    let kept = full ? null : keptOf(slug);
+    if (!full && !kept) return;  // grown only from a whole first page
+    kept = kept || { has_earlier: !!data.has_earlier };
+    if (data.mood) kept.mood = data.mood;
+    for (const k of KEPT_KINDS) {
+      const byId = new Map((kept[k] || []).map(v => [v.id, v]));
+      for (const v of data[k] || []) byId.set(v.id, v);
+      kept[k] = [...byId.values()];
+    }
+    for (const c of data.changes || []) if (c.turn) kept.turns = kept.turns.map(t => t.id === c.id ? c.turn : t);
+    const times = KEPT_KINDS.flatMap(k => kept[k].map(v => v.created_at)).sort();
+    if (times.length > KEPT_ITEMS) {
+      const cut = times[times.length - KEPT_ITEMS];
+      for (const k of KEPT_KINDS) kept[k] = kept[k].filter(v => v.created_at >= cut);
+      kept.has_earlier = true;
+    }
+    kept.now = data.now || kept.now;
+    const order = [slug, ...store.get('kept', []).filter(s => s !== slug)];
+    for (const gone of order.slice(KEPT_MOODS)) { try { localStorage.removeItem('moods.kept.' + gone); } catch (e) {} }
+    store.set('kept', order.slice(0, KEPT_MOODS));
+    store.set('kept.' + slug, kept);
+  }
+  function forgetKept() {
+    for (const slug of store.get('kept', [])) { try { localStorage.removeItem('moods.kept.' + slug); } catch (e) {} }
+    store.set('kept', []);
+  }
+  // A Mood drawn from what this browser kept, as a first load draws it.
+  function drawKept(kept) {
+    prev = null;
+    inner.innerHTML = renderHead(kept.mood);
+    showMoodName(kept.mood);
+    const turnsEl = document.getElementById('turns');
+    if (!turnsEl) return;
+    const items = itemsOf(kept);
+    firstId = items.length ? items[0].v.id : null;
+    document.getElementById('earlier').hidden = !kept.has_earlier;
+    if (!items.length) { turnsEl.innerHTML = '<div class="empty">Nothing said here yet.</div>'; return; }
+    renderItems(items, turnsEl, false);
+    foldOld(turnsEl);
+    lastId = items[items.length - 1].v.id;
+  }
   async function pollOnce(full, mine) {
     const since = changesAt[current];
     const url = '/api/moods/' + encodeURIComponent(current) + '/turns/'
@@ -2654,6 +2716,7 @@
       return;
     }
     if (mine !== gen) return;  // an answer for a Mood since left: drawing it here would mislead
+    keep(current, data, full);
     if (full) {
       prev = null;
       inner.innerHTML = renderHead(data.mood);
@@ -3709,6 +3772,7 @@
     document.getElementById('signout').addEventListener('click', async e => {
       e.preventDefault();
       await fetch('/api/auth/logout/', { method: 'POST', headers: { 'X-CSRFToken': csrf() } });
+      forgetKept();
       location.reload();
     });
   } else {
@@ -4070,6 +4134,9 @@
     }
     sendBtn.disabled = true;
     const old = composer.querySelector('.err'); if (old) old.remove();
+    // Shown at once, faint, while it's on its way; the box is free for the next.
+    const pending = showPending(text);
+    sayBox.value = ''; fitSay();
     try {
       const r = await fetch('/api/moods/' + encodeURIComponent(current) + '/say/', {
         method: 'POST',
@@ -4078,7 +4145,11 @@
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
       const done = await r.json().catch(() => ({}));
-      sayBox.value = ''; fitSay(); typingSent = 0; sendTyping(false); cancelReply(); showLicense();
+      if (pending) {
+        if (!done.id || document.getElementById('m-' + done.id)) pending.remove();  // nothing posted, or drawn already
+        else pending.dataset.pendingId = done.id;
+      }
+      typingSent = 0; sendTyping(false); cancelReply(); showLicense();
       composer.querySelectorAll('.note').forEach(el => el.remove());
       if (done.pending) memoOnItsWay(done.pending);
       if (/^\/(?:clips|yarn)\s+(save|forget)\b/i.test(text)) clipsCache = null;  // the library changed
@@ -4089,11 +4160,25 @@
       }
       await poll(false);
     } catch (e) {
+      if (pending) pending.remove();
+      if (!sayBox.value.trim()) { sayBox.value = text; fitSay(); }  // not sent: the words back where they were
       composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(e.message)}</span>`);
     } finally {
       sendBtn.disabled = false;
       sayBox.focus();
     }
+  }
+  function showPending(text) {
+    const turnsEl = document.getElementById('turns');
+    if (!turnsEl || !viewer) return null;
+    const el = document.createElement('article');
+    el.className = 'turn human pending';
+    el.innerHTML = `<div class="who"><span class="name">${icon(viewer, true)}${esc(shown(viewer))}</span>`
+      + `<span class="sending">sending…</span></div><div class="body"><p>${esc(text).replace(/\n/g, '<br>')}</p></div>`;
+    const empty = turnsEl.querySelector('.empty'); if (empty) empty.remove();
+    turnsEl.appendChild(el);
+    main.scrollTop = main.scrollHeight;
+    return el;
   }
   composer.addEventListener('submit', e => { e.preventDefault(); say(); });
   // Enter sends; Ctrl+Enter (or Shift+Enter) makes a new line. On a touch
