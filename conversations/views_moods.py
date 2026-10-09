@@ -796,7 +796,8 @@ def api_mood_todo(request, slug):
     mood = Mood.by_slug_or_404(slug)
     if request.GET.get('fresh'):
         todo.forget(mood)
-    return JsonResponse(todo.for_mood(mood))
+    # And what GitHub's webhook last said, and when: whether merges are being told at once.
+    return JsonResponse({**todo.for_mood(mood), 'hook': todo.last_heard()})
 
 
 @csrf_exempt  # GitHub's call, proven by its signature, not a browser's session
@@ -819,16 +820,22 @@ def api_github_hook(request):
     if not hmac.compare_digest(given, expected):
         return JsonResponse({'error': 'signature not accepted'}, status=403)
     event = request.headers.get('X-GitHub-Event', '')
+    # GitHub sends JSON, or -- its default for a new webhook -- a form with the JSON as "payload".
     try:
-        body = json.loads(request.body)
+        raw = request.POST.get('payload', '') if 'form' in request.content_type else request.body
+        body = json.loads(raw or b'{}')
     except ValueError:
-        return JsonResponse({'error': 'expected JSON'}, status=400)
+        todo.heard(event, 'unreadable')
+        return JsonResponse({'error': 'expected JSON, or a form with it as payload'}, status=400)
     pull = body.get('pull_request') or {}
     name = (body.get('repository') or {}).get('full_name', '')
     if event == 'pull_request' and body.get('action') == 'closed' and pull.get('merged') and '/' in name:
         owner, repo = name.split('/', 1)
-        todo.merged_now(owner, repo, int(pull.get('number') or 0))
+        todo.merged_now(owner, repo, int(pull.get('number') or 0), pull.get('title') or '',
+                        (pull.get('merged_by') or {}).get('login') or '')
+        todo.heard(event, f"ticked {name}#{pull.get('number')}")
         return JsonResponse({'ticked': f"{name}#{pull.get('number')}"})
+    todo.heard(event, 'nothing to do')
     return JsonResponse({'ok': True, 'event': event})
 
 

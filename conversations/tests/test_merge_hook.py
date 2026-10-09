@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 from unittest import mock
+from urllib.parse import urlencode
 
 from django.core.cache import cache
 from django.test import TestCase, override_settings
@@ -28,6 +29,9 @@ class MergeHookTest(TestCase):
 
     def setUp(self):
         cache.clear()
+        quiet = mock.patch.object(todo, '_in_background', lambda fn, *args: None)  # no thread into the test database
+        quiet.start()
+        self.addCleanup(quiet.stop)
         self.mood = Mood.objects.create(slug='magenta-interface', title='magenta interface')
 
     def hook(self, body, signature=None, event='pull_request'):
@@ -46,6 +50,28 @@ class MergeHookTest(TestCase):
             item = todo.for_mood(self.mood)['items'][0]
             self.assertEqual((item['done'], item.get('merged')), (True, True))
             self.assertNotEqual(self.client.get('/api/moods/magenta-interface/turns/').json()['todo_stamp'], before)
+
+    def test_a_form_delivery_too_and_the_mood_is_told(self):
+        """GitHub's default for a new webhook is a form, the JSON in "payload": read as well. And the
+        Mood whose list links the pull request gets a line saying it merged; the last delivery is kept."""
+        merged = {'action': 'closed', 'pull_request': {'number': 131, 'merged': True, 'title': 'Moods: #125 to #130 in one',
+                                                       'merged_by': {'login': 'jMyles'}},
+                  'repository': {'full_name': 'jMyles/memory-lane'}}
+        raw = urlencode({'payload': json.dumps(merged)}).encode()
+        signature = 'sha256=' + hmac.new(SECRET.encode(), raw, hashlib.sha256).hexdigest()
+        with mock.patch.object(todo, '_raw', return_value=PAGE), mock.patch.object(todo, '_github', mock.Mock(return_value=None)), \
+                mock.patch.object(todo, '_in_background', lambda fn, *args: fn(*args)):
+            answer = self.client.post('/api/github/hook/', raw, content_type='application/x-www-form-urlencoded',
+                                      HTTP_X_HUB_SIGNATURE_256=signature, HTTP_X_GITHUB_EVENT='pull_request')
+            self.assertEqual(answer.json(), {'ticked': 'jMyles/memory-lane#131'})
+            again = self.client.post('/api/github/hook/', raw, content_type='application/x-www-form-urlencoded',
+                                     HTTP_X_HUB_SIGNATURE_256=signature, HTTP_X_GITHUB_EVENT='pull_request')
+            self.assertEqual(again.status_code, 200)
+            told = self.client.get('/api/moods/magenta-interface/todo/').json()
+        self.assertEqual(told['hook']['outcome'], 'ticked jMyles/memory-lane#131')
+        events = [e for e in self.client.get('/api/moods/magenta-interface/turns/').json()['events'] if e['type'] == 'merged']
+        self.assertEqual([(e['title'], e['by'], e['about']) for e in events],
+                         [('Moods: #125 to #130 in one', 'jMyles', 'Merge memory-lane#131')])  # once, sent twice
 
     def test_only_with_the_signature(self):
         body = {'action': 'closed', 'pull_request': {'number': 1, 'merged': True}, 'repository': {'full_name': 'a/b'}}
