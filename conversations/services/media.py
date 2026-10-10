@@ -13,7 +13,10 @@ text, an image pasted twice is stored once, and every view already knows
 how to show a link.
 
 Only PNG, JPEG, GIF and WebP, decided by their first bytes. SVG is never
-accepted: it can carry script. Audio -- voice memos, messages read aloud --
+accepted: it can carry script. A HEIC/HEIF photo -- what an iPhone's camera
+takes -- is turned into a JPEG on the way in (jpeg_from_heif), since most
+browsers can't show HEIC: upright, at most MAX_EDGE on its long side, and
+without its metadata, so a phone photo's GPS position isn't published. Audio -- voice memos, messages read aloud --
 only where it's asked for (store(..., audio=True)), never lifted from a
 transcript.
 """
@@ -21,6 +24,7 @@ transcript.
 import base64
 import binascii
 import hashlib
+import io
 import json
 import re
 
@@ -30,6 +34,12 @@ MAX_BYTES = 8 * 1024 * 1024
 # the picture to PickiPedia (services/wiki_upload.py).
 LICENSES = {'cc-by-sa-4.0': 'CC BY-SA 4.0', 'cc0': 'CC0'}
 MAX_AUDIO_BYTES = 25 * 1024 * 1024
+# The ftyp brands of HEIC/HEIF stills (ISO/IEC 23008-12): heic is what an
+# iPhone writes; mif1/msf1 are the general HEIF image brands.
+HEIF_BRANDS = {b'heic', b'heix', b'heim', b'heis', b'hevc', b'hevx', b'mif1', b'msf1'}
+# A converted photo's longest side, in pixels: a 48 MP phone photo would make
+# a JPEG bigger than anything else stored here, for no gain on a screen.
+MAX_EDGE = 4096
 
 _SIGNATURES = (
     (b'\x89PNG\r\n\x1a\n', 'image/png'),
@@ -68,13 +78,45 @@ def sniff(data):
     return None
 
 
+def is_heif(data):
+    """A HEIC/HEIF still image, by its ftyp box."""
+    return data[4:8] == b'ftyp' and data[8:12] in HEIF_BRANDS
+
+
+def jpeg_from_heif(data):
+    """JPEG bytes for a HEIC/HEIF photo, or None if it can't be read.
+
+    Upright (libheif applies the photo's rotation; exif_transpose catches an
+    EXIF one), no larger than MAX_EDGE, and with no metadata carried over.
+    Encoding is deterministic, so the same photo sent twice is stored once.
+    """
+    try:
+        import pillow_heif
+        from PIL import Image, ImageOps
+        pillow_heif.register_heif_opener()
+        with Image.open(io.BytesIO(data)) as opened:
+            picture = ImageOps.exif_transpose(opened)
+            if picture.mode not in ('RGB', 'L'):
+                picture = picture.convert('RGB')
+            picture.thumbnail((MAX_EDGE, MAX_EDGE))
+            out = io.BytesIO()
+            picture.save(out, 'JPEG', quality=88, optimize=True)
+            return out.getvalue()
+    except Exception:
+        return None
+
+
 def store(data, added_by=None, audio=False):
     """The Media for these bytes, stored if new; None if not an image (or,
-    with audio=True, a sound) we take."""
+    with audio=True, a sound) we take. A HEIC photo is stored as a JPEG."""
     from conversations.models import Media
 
     if not data or len(data) > (MAX_AUDIO_BYTES if audio else MAX_BYTES):
         return None
+    if not audio and is_heif(data):
+        data = jpeg_from_heif(data)
+        if data is None:
+            return None
     mime = sniff_audio(data) if audio else sniff(data)
     if mime is None:
         return None

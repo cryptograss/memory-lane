@@ -18,3 +18,7 @@ requests>=2.31.0
 pywebpush==2.5.0
 # A Mood's to-do list, YAML on PickiPedia (conversations/services/todo.py).
 PyYAML>=6.0,<7
+# iPhone photos (HEIC) turned into JPEG as they're attached (conversations/services/media.py).
+# Both ship manylinux wheels with their libraries inside: nothing to apt-get.
+Pillow>=11,<13
+pillow-heif>=1.0,<2
