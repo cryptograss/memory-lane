@@ -438,6 +438,12 @@
   /* The license a picture of yours goes out under, said as it's attached (services/media.LICENSES). */
   #licenseBar { max-width: 760px; margin: 0 auto; padding: 6px 16px 0; font-size: 12.5px; color: var(--muted); }
   #licenseBar[hidden] { display: none; }
+  #videoBar { max-width: 760px; margin: 0 auto; padding: 6px 16px 0; font-size: 12.5px; color: var(--muted); }
+  #videoBar[hidden] { display: none; }
+  #videoBar .track { display: inline-block; vertical-align: middle; width: 120px; height: 4px; margin: 0 6px;
+                     background: var(--rule, #ddd); border-radius: 2px; overflow: hidden; }
+  #videoBar .fill { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  #videoBar button { font: inherit; border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline; }
   #licenseBar button { font: inherit; border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline; }
   a.permalink:hover time { text-decoration: underline; }
   a.permalink[data-copied]::after { content: ' link copied'; color: var(--accent); font-size: 11px; }
@@ -906,6 +912,7 @@
     <div id="activity"><span class="dot"></span><span id="activityText"></span><button type="button" id="stopBtn" title="Stop it, as Esc does in a terminal (Esc in the message box does the same). What was said stays; add to it and it reads both." hidden>■ stop</button></div>
     <div class="hush" id="hush"></div>
     <div id="licenseBar" hidden><span class="what"></span> <button type="button" id="licenseFlip"></button></div>
+    <div id="videoBar" hidden><span class="what"></span><span class="track"><span class="fill"></span></span><span class="pct"></span> <button type="button" id="videoCancel">cancel</button></div>
     <div id="replying" hidden><span class="what"></span><button type="button" id="replyCancel" title="Don't reply (Esc)" aria-label="Cancel the reply">✕</button></div>
     <form id="composer" autocomplete="off">
       <div id="suggest"></div>
@@ -949,6 +956,7 @@
   const keyHolder = !!viewer && viewerTier === 'key';
   const wikiSignin = {{ wiki_signin|yesno:"true,false" }};
   const wikiUpload = {{ wiki_upload|yesno:"true,false" }};  // "→ PickiPedia" on pictures (services/wiki_upload.py)
+  const dkUpload = {{ dk_upload|yesno:"true,false" }};  // videos to delivery-kid, then a ReleaseDraft (services/delivery_kid.py)
   const viewerAdmin = {{ viewer_admin|yesno:"true,false" }};  // may delete anyone's message (services/retract.py)
   // Our VAPID key's public half, for pushes with magenta closed (services/push.py); '' if push is off.
   const PUSH_KEY = "{{ push_key|escapejs }}";
@@ -2071,6 +2079,15 @@
       const commit = e.commit ? ` (<a href="${esc(e.commit_url || '#')}" target="_blank" rel="noopener"><code>${esc(e.commit.slice(0, 7))}</code></a>)` : '';
       el.innerHTML = `✓ <a href="${esc(e.page || '#')}" target="_blank" rel="noopener" title="${esc(e.title || '')}">${esc(e.pull || e.title || 'a pull request')}</a>${commit} merged`
         + (e.by ? ` by <b>${esc(shown(e.by))}</b>` : '') + (e.about ? `: ticks “${todoText(e.about)}”` : '') + ` · ${esc(stamp(e.created_at))}`;
+      container.appendChild(el);
+      prev = null;
+      return;
+    }
+    if (e.type === 'release-draft') {  // a video sent to delivery-kid, with its draft page (services/delivery_kid.py)
+      el.className = 'event';
+      el.innerHTML = `🎬 <b>${esc(shown(e.by || 'someone'))}</b> sent a video to delivery-kid: `
+        + `<a href="${esc(e.page || '#')}" target="_blank" rel="noopener">${esc(e.title || 'its ReleaseDraft')}</a>`
+        + ` · title it, review it and finalize it there · ${esc(stamp(e.created_at))}`;
       container.appendChild(el);
       prev = null;
       return;
@@ -3736,15 +3753,92 @@
     sayBox.selectionStart = sayBox.selectionEnd = at + text.length;
   }
   function imagesIn(list) { return [...(list || [])].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type)); }
+  // Videos, where delivery-kid takes them (services/delivery_kid.py): not stored here, but sent from this
+  // browser straight to delivery-kid with a token this server minted, then given a ReleaseDraft page on
+  // PickiPedia, written as their sender once PickiPedia says yes.
+  function videosIn(list) { return dkUpload ? [...(list || [])].filter(f => /^video\//.test(f.type)) : []; }
+  const videoBar = document.getElementById('videoBar');
+  let videoSending = null;  // the upload under way, if any: one at a time
+  function videoSays(what, pct) {
+    videoBar.hidden = false;
+    videoBar.querySelector('.what').textContent = what;
+    videoBar.querySelector('.track').style.display = pct == null ? 'none' : '';
+    videoBar.querySelector('.fill').style.width = (pct || 0) + '%';
+    videoBar.querySelector('.pct').textContent = pct == null ? '' : pct + '%';
+  }
+  function dkError(xhr) {
+    try {
+      const body = JSON.parse(xhr.responseText);
+      const d = body.detail ?? body;
+      return (d && (d.error || d.message)) || (typeof d === 'string' ? d : JSON.stringify(d)).slice(0, 200);
+    } catch (e) { return `${xhr.status} ${xhr.statusText}`.trim() || 'no answer'; }
+  }
+  function sizeOf(n) { return n > 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n / 1e6)) + ' MB'; }
+  async function sendVideo(file) {
+    if (videoSending) { showError('video: one at a time; this one waits until the last is in'); return; }
+    const name = file.name || 'video';
+    videoSending = {};
+    videoSays(`Sending ${name} (${sizeOf(file.size)}) to delivery-kid…`, 0);
+    try {
+      const r = await fetch('/api/moods/' + encodeURIComponent(current) + '/video/ticket/', {
+        method: 'POST', headers: { 'X-CSRFToken': csrf() } });
+      const ticket = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(ticket.error || r.status);
+      const draft = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        videoSending.xhr = xhr;
+        xhr.open('POST', ticket.url);
+        for (const [k, v] of Object.entries(ticket.headers || {})) xhr.setRequestHeader(k, v);
+        xhr.upload.addEventListener('progress', e => {
+          if (e.lengthComputable) videoSays(`Sending ${name}: ${sizeOf(e.loaded)} of ${sizeOf(e.total)}`, Math.round(100 * e.loaded / e.total));
+        });
+        xhr.upload.addEventListener('load', () => videoSays(`${name} is on delivery-kid; it's looking it over…`, null));
+        xhr.addEventListener('load', () => {
+          if (xhr.status !== 200) return reject(new Error(`delivery-kid said ${xhr.status}: ${dkError(xhr)}`));
+          try { resolve(JSON.parse(xhr.responseText)); } catch (e) { reject(new Error("delivery-kid's answer wasn't readable")); }
+        });
+        xhr.addEventListener('error', () => reject(new Error('the connection dropped before it was all sent')));
+        xhr.addEventListener('abort', () => reject(new Error('cancelled')));
+        const form = new FormData();
+        form.append('files', file);
+        xhr.send(form);
+      });
+      videoSays(`${name} is on delivery-kid. Off to PickiPedia to make its draft page, as you…`, null);
+      const r2 = await fetch('/api/moods/' + encodeURIComponent(current) + '/video/draft/', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+        body: JSON.stringify({ draft: draft.draft_id, title: name.replace(/\.[^.]+$/, '') }) });
+      const body = await r2.json().catch(() => ({}));
+      if (!r2.ok) throw new Error(body.error || r2.status);
+      videoSending = null;
+      saveDraft();
+      location.href = body.go;  // back in this Mood once the page is written, with a line saying so
+    } catch (e) {
+      videoSending = null;
+      videoBar.hidden = true;
+      showError('video: ' + e.message);
+    }
+  }
+  document.getElementById('videoCancel').addEventListener('click', () => videoSending?.xhr?.abort());
+  // Leaving mid-upload loses it: say so first.
+  window.addEventListener('beforeunload', e => { if (videoSending) { e.preventDefault(); e.returnValue = ''; } });
+  if (dkUpload) {
+    fileInput.accept += ',video/*';
+    document.getElementById('attach').title = 'Add an image or a video (or paste or drop one). Videos go to delivery-kid '
+      + 'and get a ReleaseDraft page on PickiPedia; pictures stay here, under CC BY-SA 4.0 or CC0 if you choose.';
+  }
   // Android hands an image-only picker to its photo picker (Google Photos); with
   // no filter it offers its full chooser -- Files, Camera, Photos. Only images are taken either way.
   if (/Android/i.test(navigator.userAgent)) fileInput.removeAttribute('accept');
   document.getElementById('attach').addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', () => {
-    const skipped = [...fileInput.files].length - imagesIn(fileInput.files).length;
-    if (skipped) showError(`only images can be added (PNG, JPEG, GIF, WebP): ${skipped} file${skipped > 1 ? 's' : ''} left out`);
+    const skipped = [...fileInput.files].length - imagesIn(fileInput.files).length - videosIn(fileInput.files).length;
+    if (skipped) showError(`only ${dkUpload ? 'images and videos' : 'images'} can be added (PNG, JPEG, GIF, WebP${dkUpload ? ', video' : ''}): ${skipped} file${skipped > 1 ? 's' : ''} left out`);
   });
-  fileInput.addEventListener('change', () => { imagesIn(fileInput.files).forEach(upload); fileInput.value = ''; });
+  fileInput.addEventListener('change', () => {
+    imagesIn(fileInput.files).forEach(upload);
+    videosIn(fileInput.files).forEach(sendVideo);
+    fileInput.value = '';
+  });
   sayBox.addEventListener('paste', e => {
     const files = imagesIn([...(e.clipboardData?.items || [])].map(i => i.getAsFile()).filter(Boolean));
     if (files.length) { e.preventDefault(); files.forEach(upload); }
@@ -3754,7 +3848,8 @@
   composer.addEventListener('drop', e => {
     composer.classList.remove('dropping');
     const files = imagesIn(e.dataTransfer?.files);
-    if (files.length) { e.preventDefault(); files.forEach(upload); }
+    const videos = videosIn(e.dataTransfer?.files);
+    if (files.length || videos.length) { e.preventDefault(); files.forEach(upload); videos.forEach(sendVideo); }
   });
 
   // A voice memo: recorded here, and in the box the moment it's stopped, ready
