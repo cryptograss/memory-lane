@@ -47,13 +47,13 @@ class Fakes:
     """PickiPedia's OAuth 2 and action API, and delivery-kid's draft endpoint, which shows a draft
     only to whoever uploaded it."""
 
-    def __init__(self, user='JMyles', uploaded_by='JMyles'):
-        self.user, self.uploaded_by = user, uploaded_by
+    def __init__(self, user='JMyles', uploaded_by='JMyles', groups=('user', 'autoconfirmed')):
+        self.user, self.uploaded_by, self.groups = user, uploaded_by, list(groups)
         self.headers, self.edits, self.dk_asked = {}, [], []
 
     def get(self, url, params=None, timeout=None, headers=None):
         if url.endswith('/oauth2/resource/profile'):
-            return Answer({'username': self.user, 'blocked': False})
+            return Answer({'username': self.user, 'blocked': False, 'groups': self.groups})
         if url.startswith('https://dk.example/draft-content/'):
             self.dk_asked.append(headers)
             if not dk_verify(headers):
@@ -77,6 +77,7 @@ class DeliveryKidTest(TestCase):
         cache.clear()
         self.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
         self.skyler = ThinkingEntity.objects.create(name='skyler', is_biological_human=True)
+        self.magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
         self.mood = Mood.objects.create(slug='uploads-and-embeds', title='uploads-and-embeds')
         names = mock.patch('conversations.services.wiki_auth.names', return_value={'justin': 'JMyles'})
         names.start()
@@ -199,6 +200,24 @@ class DeliveryKidTest(TestCase):
         stale = client.get('/moods/auth/wiki/upload?code=code-1&state=nothing-like-it')
         self.assertEqual(stale.status_code, 400)
         self.assertFalse(Message.objects.filter(source_file='release-draft').exists())
+
+    def test_people_only(self):
+        # An agent's device: no token, no page, whatever name it has.
+        with mock.patch('conversations.services.wiki_auth.names', return_value={'justin': 'JMyles', 'magent': 'Magent'}):
+            agent = self.client_for(self.magent)
+            self.assertEqual(self.ticket(agent).status_code, 403)
+            self.assertIn('people', self.ticket(agent).json()['error'])
+            self.assertEqual(self.draft(agent).status_code, 403)
+        # A PickiPedia bot account, signed in to magenta: the wiki says so, and no page is written.
+        fakes = Fakes(groups=('user', 'bot'))
+        client = self.client_for(self.justin)
+        with mock.patch('requests.Session', lambda: fakes), mock.patch('requests.post', fakes.post), \
+                mock.patch('requests.get', fakes.get):
+            state = parse_qs(urlparse(self.draft(client).json()['go']).query)['state'][0]
+            refused = client.get(f'/moods/auth/wiki/upload?code=code-1&state={state}')
+        self.assertEqual(refused.status_code, 403)
+        self.assertIn('bot account', refused.content.decode())
+        self.assertEqual((fakes.edits, fakes.dk_asked), ([], []))
 
     def test_the_page_says_whether_videos_can_go(self):
         client = self.client_for(self.justin)

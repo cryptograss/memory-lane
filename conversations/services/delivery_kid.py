@@ -21,6 +21,10 @@ Finalizing stays on the ReleaseDraft page for now, under the wiki's own
 finalize-release right; delivery-kid runs it as a job of its own
 (maybelle-config#175), so nobody has to keep a tab open.
 
+People only. An agent's device gets no token, and a PickiPedia account in
+the wiki's bot group gets no page (Justin, 10 Oct: human PickiPedians). What
+the band's videos are is decided by the people in it.
+
 Unset (no DELIVERY_KID_API_KEY, or no "magenta uploads" consumer), videos
 can't be sent and the composer takes pictures only, as before.
 """
@@ -51,6 +55,12 @@ def enabled():
 
 def base_url():
     return settings.DELIVERY_KID_URL.rstrip('/')
+
+
+def person_only(device):
+    """UploadError unless the device belongs to a person here."""
+    if not getattr(getattr(device, 'entity', None), 'is_biological_human', False):
+        raise UploadError('videos are sent by people; agents bring them in through a person', status=403)
 
 
 def wiki_name_for(device):
@@ -84,6 +94,7 @@ def ticket(device):
     """Where the browser sends the video, and with what: {'url', 'headers'}."""
     if not enabled():
         raise UploadError("sending videos to delivery-kid isn't set up here", status=503)
+    person_only(device)
     wiki_name = wiki_name_for(device)
     if not wiki_name:
         raise UploadError("magenta doesn't know your PickiPedia name, which delivery-kid records uploads under: "
@@ -153,6 +164,7 @@ def begin(draft_id, title, device, mood, redirect_uri):
     draft_id = str(draft_id or '').lower()
     if not _DRAFT_ID.match(draft_id):
         raise UploadError('not a delivery-kid draft id')
+    person_only(device)
     wiki_name = wiki_name_for(device)
     if not wiki_name:
         raise UploadError("magenta doesn't know your PickiPedia name", status=403)
@@ -195,6 +207,10 @@ def finish(state, code, entity, redirect_uri, http=None):
         raise UploadError(str(e), status=502)
     if profile.get('blocked'):
         raise UploadError('that PickiPedia account is blocked', status=403)
+    if 'bot' in (profile.get('groups') or []):
+        # The wiki's own word for an account that isn't a person.
+        raise UploadError(f'{profile["username"]} is a bot account on PickiPedia; videos are sent as a person',
+                          status=403)
     if wiki_auth.local_name_for(profile['username']) != name_here:
         raise UploadError(f"you're signed in to PickiPedia as {profile['username']}, which isn't {name_here}'s account "
                           "here: sign in there as yourself (or ask an admin to map your account), then try again",
