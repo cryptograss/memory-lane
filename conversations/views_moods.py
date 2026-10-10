@@ -73,10 +73,17 @@ def push_key():
 
 @functools.cache
 def page_version():
-    """This page's code as served now. A page left open compares it (api/servers) and offers a reload."""
+    """This page's code as served now, and the code that renders what it shows (a message's HTML is
+    made on the server). A page left open compares it (api/servers) and offers a reload; a browser's
+    kept copy of a Mood made under another version is dropped, not drawn (a fixed player would
+    otherwise stay broken in it)."""
     from django.template.loader import get_template
-    with open(get_template('conversations/moods.html').origin.name, 'rb') as f:
-        return hashlib.sha256(f.read()).hexdigest()[:12]
+    from .services import embeds, mood_view
+    digest = hashlib.sha256()
+    for path in (get_template('conversations/moods.html').origin.name, mood_view.__file__, embeds.__file__):
+        with open(path, 'rb') as f:
+            digest.update(f.read())
+    return digest.hexdigest()[:12]
 
 
 @require_GET

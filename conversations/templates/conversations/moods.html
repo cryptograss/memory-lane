@@ -632,7 +632,7 @@
     display: flex; gap: 8px; align-items: flex-end; padding: 6px 8px; border-radius: 6px;
     background: rgba(12, 10, 14, .62); color: #ece7e1; backdrop-filter: blur(3px);
     opacity: 0; transition: opacity .2s; }
-  :is(.turn, .event.release) .body .embed .player:hover .dkmask, :is(.turn, .event.release) .body .embed .player:focus-within .dkmask { opacity: 1; }
+  :is(.turn, .event.release) .body .embed .player.awake .dkmask { opacity: 1; }  /* as the controls: on a moving pointer, or a tap */
   :is(.turn, .event.release) .body .embed .dkmask pre { margin: 0; font-size: 2.1px; line-height: 1.05; letter-spacing: 0; color: inherit;
     font-family: ui-monospace, Menlo, Consolas, monospace; }
   :is(.turn, .event.release) .body .embed .dkmask b { font: 600 12px/1.2 ui-monospace, Menlo, Consolas, monospace; letter-spacing: .02em; }
@@ -1480,6 +1480,25 @@
       + '<span><b>delivery-kid</b><small>pinned on IPFS</small></span>';
     return mask;
   }
+  // The mark comes and goes as the controls do: shown while the pointer moves over the
+  // video (or for a moment after a tap), gone after a still moment while it plays, and
+  // when the pointer leaves.
+  const AWAKE_MS = 2500;
+  function wakeWithPointer(player, v) {
+    let timer = null, touch = false;
+    const sleep = () => { clearTimeout(timer); player.classList.remove('awake'); };
+    const wake = e => {
+      if (e && e.pointerType) touch = e.pointerType !== 'mouse';
+      player.classList.add('awake');
+      clearTimeout(timer);
+      // A mouse resting over a paused video keeps it; a tap shows it for a moment either way.
+      timer = setTimeout(() => { if (touch || !v.paused) sleep(); }, AWAKE_MS);
+    };
+    player.addEventListener('pointermove', wake);
+    player.addEventListener('pointerdown', wake);
+    player.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') sleep(); });
+    v.addEventListener('play', () => { if (player.classList.contains('awake')) wake(); });  // its clock, from now
+  }
   async function attachRelease(v) {
     if (v._attached) return;
     v._attached = true;
@@ -1487,6 +1506,7 @@
       const player = Object.assign(document.createElement('span'), { className: 'player' });
       v.replaceWith(player);
       player.append(v, dkMask());
+      wakeWithPointer(player, v);
       v.addEventListener('mouseenter', () => {  // the art, if the servers hadn't been asked yet when it was made
         const pre = player.querySelector('.dkmask pre');
         if (!pre) { player.querySelector('.dkmask').replaceWith(dkMask()); }
@@ -2887,11 +2907,17 @@
   // for what's new and what changed since (as switching back to a Mood does).
   const KEPT_ITEMS = 150, KEPT_MOODS = 6;
   const KEPT_KINDS = ['turns', 'steps', 'quiet', 'thoughts', 'compactions', 'events'];
-  function keptOf(slug) { return store.get('kept.' + slug, null); }
+  // Kept as the server rendered it, so kept under the version that rendered it: after a
+  // deploy that changes how messages are drawn, an older copy is dropped and asked for again.
+  const KEPT_VERSION = "{{ page_version|escapejs }}";
+  function keptOf(slug) {
+    const kept = store.get('kept.' + slug, null);
+    return kept && kept.version === KEPT_VERSION ? kept : null;
+  }
   function keep(slug, data, full) {
     let kept = full ? null : keptOf(slug);
     if (!full && !kept) return;  // grown only from a whole first page
-    kept = kept || { has_earlier: !!data.has_earlier };
+    kept = kept || { has_earlier: !!data.has_earlier, version: KEPT_VERSION };
     if (data.mood) kept.mood = data.mood;
     for (const k of KEPT_KINDS) {
       const byId = new Map((kept[k] || []).map(v => [v.id, v]));
