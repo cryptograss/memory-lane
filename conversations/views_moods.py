@@ -678,15 +678,16 @@ def notices_for(name, since, limit=NOTICES_MAX):
 
 @require_GET
 def api_yarn(request, clip):
-    """A Yarn clip's video, kept here (services/yarn_kept.py): {"url"}. Not kept yet, a signed-in
+    """A Yarn clip's video, kept here (services/yarn_kept.py): {"url", "still"?}, its picture too if kept. Not kept yet, a signed-in
     device has it fetched now (an anonymous one doesn't set the server fetching); 404 if Yarn won't give it."""
     from .services import mood_auth, yarn_kept
-    url = yarn_kept.kept(clip)
-    if url is None and mood_auth.device_for(request) is not None:
-        url = yarn_kept.keep(clip)
+    url, still = yarn_kept.kept_still(clip)
+    if (url is None or still is None) and mood_auth.device_for(request) is not None:
+        url = yarn_kept.keep(clip)  # the video if need be, and its picture
+        url, still = yarn_kept.kept_still(clip)
     if url is None:
         return JsonResponse({'error': 'not kept here, and Yarn would not give it'}, status=404)
-    return JsonResponse({'url': url})
+    return JsonResponse({'url': url, **({'still': still} if still else {})})
 
 @require_GET
 def api_wiki_preview(request):

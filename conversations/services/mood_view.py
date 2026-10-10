@@ -500,9 +500,9 @@ def _link_url(match):
     clip = yarn_clip(url)
     if clip:
         # Kept here already (services/yarn_kept.py): ▶ plays our copy, never asking Yarn.
-        from .yarn_kept import kept
-        here = kept(clip)
-        played = f' data-kept="{here}"' if here else ''
+        from .yarn_kept import kept_still
+        here, still = kept_still(clip)
+        played = (f' data-kept="{here}"' if here else '') + (f' data-still="{still}"' if still else '')
         return f'<a class="yarn" href="{url}" data-yarn="{clip}"{played}{_OUT}>▶ Yarn clip</a>{tail}'
     page = pickipedia_page(url)
     if page:
