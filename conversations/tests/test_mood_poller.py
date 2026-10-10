@@ -347,13 +347,15 @@ class StreamPosterTest(TestCase):
         poster.put({'type': 'system', 'subtype': 'init'})  # about the run, not the turn
         poster.put({'type': 'assistant', 'uuid': 'a'})
         poster.put({'type': 'result', 'uuid': 'r'})
+        # A background task's end, which -p reports only here, after the result.
+        poster.put({'type': 'system', 'subtype': 'task_notification', 'task_id': 'b1', 'status': 'stopped'})
         poster.close()
         url, body, headers = http.posts[0]
         self.assertEqual(url, 'https://ml.test/api/moods/m26/stream/')
         self.assertEqual(headers, {'Authorization': 'Bearer k'})
         self.assertEqual(body['session_id'], 'sess-1')
-        self.assertEqual([e['type'] for p in http.posts for e in p[1]['events']], ['assistant', 'result'])
-        self.assertEqual((poster.sent, poster.failed), (2, 0))
+        self.assertEqual([e['type'] for p in http.posts for e in p[1]['events']], ['assistant', 'result', 'system'])
+        self.assertEqual((poster.sent, poster.failed), (3, 0))
 
     def test_a_refusal_is_not_retried_and_a_failure_is(self):
         import requests

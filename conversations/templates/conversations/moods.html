@@ -559,7 +559,15 @@
   #tasks { display: none; flex-wrap: wrap; gap: 6px; padding: 6px 16px 0; font-size: 12.5px; color: var(--muted);
            max-width: 760px; margin: 0 auto; }
   #tasks.on { display: flex; }
-  #tasks .task { background: var(--code); border-radius: 10px; padding: 1px 9px; }
+  #tasks .task { background: var(--code); border-radius: 10px; padding: 1px 9px; border: 0; font: inherit; color: inherit; cursor: pointer; }
+  #tasks .task:hover, #tasks .task.on { color: var(--ink); }
+  #tasks .task.on { box-shadow: inset 0 0 0 1px var(--line); }
+  #tasks .detail { flex-basis: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  #tasks .detail[hidden] { display: none; }
+  #tasks .detail pre { max-height: 220px; overflow: auto; white-space: pre-wrap; margin: 4px 0 0; font-size: 12px; }
+  #tasks .detail .dim { color: #9a948b; }
+  #tasks .detail a { color: inherit; }
+  .step.flash { animation: flash 2.4s ease-out; }
   #tasks .sum { cursor: pointer; }
   #tasks .sum:hover { color: var(--ink); }
   #tasks .list { display: none; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
@@ -2826,10 +2834,13 @@
     if (!id) return false;
     stopSettling();  // taken to a message: the newest no longer pulls
     for (let i = 0; i < 12; i++) {
-      const el = document.getElementById('m-' + id);
+      // A message, or a step (a tool call), shown in its opened group.
+      const el = document.getElementById('m-' + id) || document.querySelector(`.step[data-id="${CSS.escape(id)}"]`);
       if (el) {
         const folded = el.closest('.aturn.folded');
         if (folded) { folded.classList.remove('folded'); drawBlockHead(folded); }
+        const work = el.classList.contains('step') && el.closest('.work');
+        if (work) work.classList.add('open');
         el.scrollIntoView({ block: 'center' });
         el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
         return true;
@@ -3350,18 +3361,58 @@
 
   // What an agent left running in the background, as in its terminal.
   let tasks = [];
+  let taskShown = null;          // the task whose detail is open
+  const taskCalls = new Map();   // step id -> the call that started it, as fetched ('loading', 'failed' meanwhile)
   const tasksEl = document.getElementById('tasks');
-  // One line -- how many, and the longest-running -- opened on demand.
+  tasksEl.innerHTML = '<span class="sum" title="show them"></span><span class="list"></span><div class="detail" hidden></div>';
+  // One line -- how many, and the longest-running -- opened on demand; each
+  // task opens to what it is. Redrawn every second for its clock, all but the
+  // detail, which is drawn only when it changes (so it can be read and scrolled).
   function renderTasks() {
     tasksEl.classList.toggle('on', tasks.length > 0);
-    if (!tasks.length) { tasksEl.innerHTML = ''; return; }
+    if (taskShown && !tasks.some(t => t.id === taskShown)) { taskShown = null; drawTaskDetail(); }
+    if (!tasks.length) return;
     const oldest = Math.min(...tasks.map(t => t.since));
-    tasksEl.innerHTML = `<span class="sum" title="show them">⚙ ${tasks.length} running · longest ${elapsed(oldest)} ${tasksEl.classList.contains('open') ? '▾' : '▸'}</span>`
-      + `<span class="list">${tasks.map(t =>
-        `<span class="task ${t.kind === 'helper' ? 'helper' : ''}" title="${esc(t.kind)} ${esc(t.id)}">${esc(t.label)} · ${elapsed(t.since)}</span>`).join('')}</span>`;
+    tasksEl.querySelector('.sum').textContent = `⚙ ${tasks.length} running · longest ${elapsed(oldest)} ${tasksEl.classList.contains('open') ? '▾' : '▸'}`;
+    tasksEl.querySelector('.list').innerHTML = tasks.map(t =>
+      `<button type="button" class="task ${t.kind === 'helper' ? 'helper' : ''}${t.id === taskShown ? ' on' : ''}" data-id="${esc(t.id)}" title="what it is">${esc(t.label)} · ${elapsed(t.since)}</button>`).join('');
+  }
+  function drawTaskDetail() {
+    const box = tasksEl.querySelector('.detail');
+    const t = tasks.find(x => x.id === taskShown);
+    box.hidden = !t;
+    if (!t) { box.innerHTML = ''; return; }
+    const call = t.step ? taskCalls.get(t.step) : null;
+    const what = !t.step ? '' : call === 'failed' ? `<div class="dim">couldn't load what started it</div>`
+      : !call || call === 'loading' ? '<div class="dim">loading…</div>' : taskCall(call);
+    box.innerHTML = `<div class="label">${t.kind === 'helper' ? 'A helper agent' : 'A command'} in the background · started ${esc(stamp(new Date(t.since * 1000).toISOString()))}`
+      + (t.step ? ` · <a href="#" data-step="${esc(t.step)}">where it started</a>` : '') + '</div>' + what;
+  }
+  function taskCall(d) {
+    const a = d.input || {};
+    if (d.tool === 'Bash') return `<pre><span class="dim">$ </span>${esc(a.command || '')}</pre>`;
+    if (a.prompt) return pre(a.prompt);
+    return pre(JSON.stringify(a, null, 2));
+  }
+  async function showTask(id) {
+    taskShown = taskShown === id ? null : id;
+    renderTasks(); drawTaskDetail();
+    const t = tasks.find(x => x.id === taskShown);
+    if (!t || !t.step || taskCalls.has(t.step)) return;
+    taskCalls.set(t.step, 'loading');
+    try {
+      const r = await fetch(`/api/moods/${encodeURIComponent(current)}/steps/${encodeURIComponent(t.step)}/`);
+      if (!r.ok) throw new Error(r.status);
+      taskCalls.set(t.step, await r.json());
+    } catch (err) { taskCalls.set(t.step, 'failed'); }
+    drawTaskDetail();
   }
   tasksEl.addEventListener('click', e => {
-    if (e.target.closest('.sum')) { tasksEl.classList.toggle('open'); renderTasks(); }
+    if (e.target.closest('.sum')) { tasksEl.classList.toggle('open'); renderTasks(); return; }
+    const task = e.target.closest('.task');
+    if (task) { showTask(task.dataset.id); return; }
+    const where = e.target.closest('[data-step]');
+    if (where) { e.preventDefault(); reveal(where.dataset.step); }
   });
   setInterval(renderTasks, 1000);
 

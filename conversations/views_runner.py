@@ -55,7 +55,10 @@ def stream_line(event, now_iso):
     Claude Code's stream events hold the same message objects as its
     transcript lines, under slightly different names. Only messages become
     lines; the init, rate-limit and result events are about the run.
+    A background task's end becomes the notice a transcript would have.
     """
+    if isinstance(event, dict) and event.get('type') == 'system' and event.get('subtype') == 'task_notification':
+        return task_notice_line(event, now_iso)
     if not isinstance(event, dict) or event.get('type') not in ('assistant', 'user'):
         return None
     if not isinstance(event.get('message'), dict) or not event.get('uuid'):
@@ -75,6 +78,26 @@ def stream_line(event, now_iso):
     if 'tool_use_result' in event:
         line['toolUseResult'] = event['tool_use_result']
     return json.dumps(line)
+
+
+def task_notice_line(event, now_iso):
+    """The queue-operation line Claude Code writes when a background task
+    ends, for a stream's task_notification event; None if it names no task.
+
+    A turn run with -p stops the tasks it left running when it ends, and
+    says so only on its stream, after the result: without this, a helper or
+    command it started looked to be running for hours. Keyed by the event's
+    uuid, so posting it again finds the same row.
+    """
+    import re
+    task, status = str(event.get('task_id') or ''), str(event.get('status') or '')
+    if not re.fullmatch(r'\w+', task) or not re.fullmatch(r'\w+', status) or not event.get('uuid'):
+        return None
+    content = (f"<task-notification>\n<task-id>{task}</task-id>\n<tool-use-id>{event.get('tool_use_id') or ''}</tool-use-id>\n"
+               f"<status>{status}</status>\n<summary>{event.get('summary') or ''}</summary>\n</task-notification>")
+    return json.dumps({'type': 'queue-operation', 'operation': 'enqueue', 'uuid': event['uuid'],
+                       'timestamp': event.get('timestamp') or now_iso, 'sessionId': event.get('session_id'),
+                       'content': content})
 
 
 def finish_turn(mood, session_id, agent, result):
