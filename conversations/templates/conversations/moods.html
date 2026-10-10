@@ -1075,6 +1075,7 @@
   // and when the page is looked at again (an edit on PickiPedia, perhaps).
   const todoEl = document.getElementById('todo');
   let todoShown = null;  // the list as last drawn, for its Mood
+  let todoFor = null;    // which Mood that was
   function linkOf(link) {
     if (/^https?:\/\//i.test(link)) return link;
     if (/^#m-[0-9a-f-]{8,36}$/i.test(link)) return link;
@@ -1096,6 +1097,19 @@
     return `<li id="${esc(id)}"><span class="box">${it.done ? '☑' : '☐'}</span><div><span class="task">${task}</span>`
       + (meta ? `<div class="meta">${meta}</div>` : '') + (it.note ? `<div class="why">${todoText(it.note)}</div>` : '') + '</div>'
       + `<a class="todolink" href="#${esc(id)}" title="This item's link: click to copy">#</a></li>`;
+  }
+  // While a Mood's list is on its way: not the last Mood's list, and not "no list here" --
+  // either reads as this Mood's, and the second as if there were nothing to do.
+  function renderTodoWaiting(note) {
+    todoShown = null;
+    todoEl.querySelector('#todoTab .n').textContent = '';
+    todoEl.querySelector('#todoTab').setAttribute('aria-label', 'To do');
+    document.getElementById('todoNote').textContent = note;
+    document.getElementById('todoList').innerHTML = '';
+    const fold = document.getElementById('todoDone');
+    delete fold.dataset.n;
+    fold.querySelector('summary').textContent = 'Done';
+    fold.querySelector('ul').innerHTML = '';
   }
   function renderTodo(t) {
     todoShown = t;
@@ -1143,12 +1157,18 @@
   async function loadTodo(fresh) {
     const slug = current;
     if (!slug) return;
+    const another = todoFor !== slug;  // a Mood just opened: what's shown is the last one's
+    todoFor = slug;
+    if (another) renderTodoWaiting('Loading the list…');
     try {
       const r = await fetch(`/api/moods/${encodeURIComponent(slug)}/todo/${fresh ? '?fresh=1' : ''}`);
-      if (!r.ok) return;
+      if (!r.ok) throw new Error(r.status);
       const t = await r.json();
       if (slug === current) renderTodo(t);
-    } catch (e) {}
+    } catch (e) {
+      // Nothing heard: say so, rather than leave "Loading…" (or an empty list) standing.
+      if (slug === current && !todoShown) renderTodoWaiting("The list couldn't be reached just now; it's asked for again in a minute.");
+    }
   }
   function openTodo(open) {
     todoEl.classList.toggle('open', open);
