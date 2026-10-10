@@ -96,6 +96,18 @@
   #serverPop pre.art { margin: 0; flex: none; font-size: 2.6px; line-height: 1.05; letter-spacing: 0; color: var(--ink);
                        font-family: ui-monospace, Menlo, Consolas, monospace; }
   #serverPop .role { font-style: italic; color: var(--muted); }
+  /* A PickiPedia link, previewed on hover (services/wiki_preview.py). */
+  #wikiPreview { position: fixed; z-index: 60; display: flex; gap: 10px; max-width: 360px; padding: 10px 12px;
+                 background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+                 box-shadow: 0 6px 20px rgba(0,0,0,.18); font-size: 12.5px; line-height: 1.4; pointer-events: none; }
+  #wikiPreview[hidden] { display: none; }
+  #wikiPreview img { width: 72px; height: 72px; object-fit: cover; border-radius: 4px; flex: none; }
+  #wikiPreview pre.art { margin: 0; flex: none; font-size: 1.7px; line-height: 1.05; letter-spacing: 0; color: var(--ink);
+                         font-family: ui-monospace, Menlo, Consolas, monospace; }
+  #wikiPreview p { margin: 4px 0 0; }
+  #wikiPreview dl { margin: 6px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 1px 8px; font-size: 11.5px; }
+  #wikiPreview dt { color: var(--muted); }
+  #wikiPreview dd { margin: 0; overflow-wrap: anywhere; }
   #serverPop a { color: inherit; }
   #serverPop .note { color: var(--muted); font-size: 12px; }
   .deploynote { font-style: italic; }  /* a deploy's note that isn't its log: why there isn't one */
@@ -3335,6 +3347,57 @@
   // [[ suggests PickiPedia titles, as the wiki's own editor does (LinkSuggest).
   // Its API answers any origin, so the browser asks the wiki directly.
   const WIKI = "{{ pickipedia_url|escapejs }}" || 'https://pickipedia.xyz';
+
+  // A link to PickiPedia, previewed: rest the mouse on it and a card says what's there --
+  // its art or picture, its opening, a few infobox lines (services/wiki_preview.py).
+  // Mouse only: on a phone, a tap opens the link as it always did.
+  const previews = new Map();  // title -> the card's data, asked for once a page view (null: nothing)
+  const previewCard = Object.assign(document.createElement('div'), { id: 'wikiPreview', hidden: true });
+  previewCard.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(previewCard);
+  let previewTimer = null, previewFor = null;
+  function wikiTitleOf(a) {
+    let url;
+    try { url = new URL(a.href, location.href); } catch (e) { return ''; }
+    if (url.origin !== new URL(WIKI).origin || !url.pathname.startsWith('/wiki/')) return '';
+    const title = decodeURIComponent(url.pathname.slice(6)).replace(/_/g, ' ');
+    return /^(Special|File):/i.test(title) ? '' : title;  // a special page has nothing to say; a file shows itself
+  }
+  function previewOf(title) {
+    if (!previews.has(title)) previews.set(title, fetch('/api/wiki/preview/?title=' + encodeURIComponent(title))
+      .then(r => r.ok ? r.json() : null).catch(() => null));
+    return previews.get(title);
+  }
+  function showPreview(a, p) {
+    previewCard.innerHTML = (p.art ? `<pre class="art">${esc(p.art)}</pre>` : p.image ? `<img src="${esc(p.image)}" alt="">` : '')
+      + `<div><b>${esc(p.title)}</b>${p.summary ? `<p>${esc(p.summary)}</p>` : ''}`
+      + ((p.facts || []).length ? `<dl>${p.facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>` : '')
+      + '</div>';
+    previewCard.hidden = false;
+    const r = a.getBoundingClientRect(), w = previewCard.offsetWidth, h = previewCard.offsetHeight;
+    previewCard.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+    previewCard.style.top = (r.bottom + 6 + h < innerHeight ? r.bottom + 6 : Math.max(8, r.top - h - 6)) + 'px';
+  }
+  function hidePreview() { clearTimeout(previewTimer); previewFor = null; previewCard.hidden = true; }
+  document.addEventListener('pointerover', e => {
+    if (e.pointerType !== 'mouse') return;
+    const a = e.target.closest && e.target.closest('a[href]');
+    if (!a || a === previewFor) return;
+    const title = wikiTitleOf(a);
+    if (!title) return;
+    hidePreview();
+    previewFor = a;
+    previewTimer = setTimeout(async () => {
+      const p = await previewOf(title);
+      if (previewFor === a && p) showPreview(a, p);
+    }, 350);
+  });
+  document.addEventListener('pointerout', e => {
+    const a = e.target.closest && e.target.closest('a[href]');
+    if (a && a === previewFor && !a.contains(e.relatedTarget)) hidePreview();
+  });
+  addEventListener('scroll', hidePreview, true);
+
   const wikiCache = new Map();
   let wikiTimer = null;
   function titleCase(s) { return s.replace(/(^|[\s:_(-])([a-z])/g, (m, p, c) => p + c.toUpperCase()); }
