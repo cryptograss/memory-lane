@@ -401,11 +401,16 @@
   #msgMenu hr { border: 0; border-top: 1px solid var(--line); margin: 3px 4px; }
   /* Edited and deleted (services/retract.py). */
   .turn .edited { color: var(--muted); font-size: 11.5px; margin-left: 4px; }
-  /* A follow-on message has no heading to hold ✎ 🗑: they sit at its top right, as its # does at the side. */
-  .turn.cont > .acts { position: absolute; right: 2px; top: 0; z-index: 2; background: var(--bg); border-radius: 4px; }
-  .turn.cont:hover > .acts button { opacity: 1; }
+  /* A follow-on message has no heading to hold ↩ 🙂 ⋯: they're a small toolbar on its top edge, there
+     only while it's hovered (or a button in it has focus) -- never a box over its words otherwise. */
+  .turn.cont > .acts { position: absolute; right: 2px; top: -26px; z-index: 2; visibility: hidden; padding: 1px 2px;
+                       background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,.08); }
+  .turn.cont:hover > .acts, .turn.cont > .acts:focus-within { visibility: visible; }
+  .turn.cont:hover > .acts button, .turn.cont > .acts button:focus { opacity: 1; }
+  .turn.cont > .edited { display: block; margin: 2px 0 0; }
   /* On a touch screen ▶ floats at the top right of a follow-on message: the row floats beside it, not under it. */
-  @media (pointer: coarse) { .turn.cont > .acts { position: static; float: right; margin: 6px 0 4px 4px; background: none; } }
+  @media (pointer: coarse) { .turn.cont > .acts { position: static; float: right; margin: 6px 0 4px 4px; background: none;
+                                                  visibility: visible; border: 0; box-shadow: none; padding: 0; } }
   .turn .body.gone { color: var(--muted); font-style: italic; font-size: 13px; }
   /* Sent, not yet in the record: shown at once, faint, till the record has it (say). */
   .turn.pending { opacity: .55; }
@@ -1772,14 +1777,16 @@
       : t.restored ? `<span class="edited" title="put back ${esc(stamp(t.restored))}, with the recovery key${seeThem}"${versions}>(restored)</span>` : '';
     const answers = t.reply ? `<a class="replyto" href="#m-${esc(t.reply.id)}" data-reveal="${esc(t.reply.id)}" title="Go to the message this replies to">`
       + `↩ ${icon(t.reply.sender, human[t.reply.sender] !== false)}<b>${esc(shown(t.reply.sender))}</b> ${esc(t.reply.snippet || '(a message)')}</a>` : '';
-    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${cont ? '' : edited}${how(t)}${signed}${replyBtn}${cont ? '' : reactBtn + moreBtn}</div>`
+    el.innerHTML = `<div class="who"><span class="name">${icon(t.sender, t.is_human)}${named}</span>${tier}${phone}<a class="permalink" href="#m-${esc(t.id)}" title="This message's link: click to copy (paste it with an @mention to have an agent read from here)"><time datetime="${t.created_at}">${stamp(t.created_at)}</time></a>${cont ? '' : edited}${how(t)}${signed}${cont ? '' : replyBtn + reactBtn + moreBtn}</div>`
       + answers
       + `<a class="permalink mini" href="#m-${esc(t.id)}" title="${esc(stamp(t.created_at))} · this message's link: click to copy">#</a>`
       + (voiceOn && viewer && !t.deleted ? speakButton(t, true) : '')
       // After ▶: on a touch screen both float right, ▶ at the edge where it always is, 🙂 ⋯ beside it.
-      + (cont && (edited || reactBtn || moreBtn) ? `<span class="acts">${edited}${reactBtn}${moreBtn}</span>` : '')
+      // A follow-on message: ↩ 🙂 ⋯ as a toolbar on hover; its (edited) under its words, always in view.
+      + (cont && (replyBtn || reactBtn || moreBtn) ? `<span class="acts">${replyBtn}${reactBtn}${moreBtn}</span>` : '')
       + (t.deleted ? `<div class="body gone"${versions}${seeThem ? ` title="${esc(seeThem.slice(2))}"` : ''}>message deleted by ${esc(shown(t.deleted.by))} · ${esc(stamp(t.deleted.at))}</div>`
-                   : `<div class="body">${t.html}</div>`);
+                   : `<div class="body">${t.html}</div>`)
+      + (cont ? edited : '');
     if (t.deleted) el.classList.add('deleted');
     el._text = t.text;
     el.dataset.sender = t.sender;
