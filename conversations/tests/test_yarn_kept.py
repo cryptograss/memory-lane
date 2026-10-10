@@ -12,19 +12,25 @@ from conversations.services.mood_view import render_html
 CLIP = 'ffb40a1a-a936-49ee-962a-ef53e0cb7237'
 MP4 = b'\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2avc1mp41' + b'\x00' * 200
 CHALLENGE = b'<!DOCTYPE html><html><head><title>Just a moment...</title>'
+GIF = b'GIF89a' + b'\x00' * 100
 
 
 class Yarn:
-    """Yarn's two addresses, each answering as told; what was asked, kept."""
+    """Yarn's two addresses, each answering as told (its video; its GIF); the videos asked for, kept."""
 
-    def __init__(self, getyarn=MP4, yarnco=MP4):
+    def __init__(self, getyarn=MP4, yarnco=MP4, gif=GIF):
         self.answers = {'y.getyarn.io': getyarn, 'y.yarn.co': yarnco}
-        self.asked = []
+        self.gif = gif
+        self.asked, self.stills = [], []
 
     def get(self, url, **kwargs):
         host = url.split('/')[2]
-        self.asked.append(host)
-        body = self.answers[host]
+        if url.endswith('_text.gif'):
+            self.stills.append(host)
+            body = self.gif
+        else:
+            self.asked.append(host)
+            body = self.answers[host]
         return mock.Mock(status_code=403 if body is None else 200,
                          iter_content=lambda n: [body or b''])
 
@@ -56,11 +62,26 @@ class KeepTest(TestCase):
         self.assertEqual(yarn.asked, ['y.getyarn.io', 'y.yarn.co'])
         self.assertFalse(Media.objects.exists())
 
-    def test_the_card_plays_our_copy_once_kept(self):
+    def test_the_card_plays_our_copy_and_shows_our_picture_once_kept(self):
         link = f'https://getyarn.io/yarn-clip/{CLIP}'
         self.assertNotIn('data-kept', render_html(link))
-        url = yarn_kept.keep(CLIP, http=Yarn())
-        self.assertIn(f'data-yarn="{CLIP}" data-kept="{url}"', render_html(link))
+        yarn = Yarn()
+        url = yarn_kept.keep(CLIP, http=yarn)
+        _, still = yarn_kept.kept_still(CLIP)
+        self.assertRegex(still, r'^/moods/media/[0-9a-f]{64}\.gif$')
+        self.assertEqual(yarn.stills, ['y.getyarn.io'])
+        self.assertIn(f'data-yarn="{CLIP}" data-kept="{url}" data-still="{still}"', render_html(link))
+        self.assertEqual(YarnClip.objects.get(clip=CLIP).still.license, '')
+
+    def test_a_clip_kept_before_stills_gets_its_picture_once(self):
+        yarn = Yarn(gif=CHALLENGE)  # the GIF stopped, the video not
+        yarn_kept.keep(CLIP, http=yarn)
+        self.assertEqual(yarn_kept.kept_still(CLIP)[1], None)
+        cache.clear()  # an hour later
+        yarn.gif = GIF
+        self.assertIsNotNone(yarn_kept.keep(CLIP, http=yarn))
+        self.assertIsNotNone(yarn_kept.kept_still(CLIP)[1])
+        self.assertEqual(yarn.asked, ['y.getyarn.io'])  # the video wasn't asked for again
 
     def test_clips_in_what_was_said(self):
         text = f'ha https://getyarn.io/yarn-clip/{CLIP}. and https://example.com/x'
@@ -85,6 +106,7 @@ class ServedTest(TestCase):
             self.assertEqual(Client().get(f'/api/yarn/{CLIP}/').status_code, 404)
             self.assertEqual(yarn.asked, [])
             got = self.signed_in().get(f'/api/yarn/{CLIP}/').json()
+            self.assertEqual(set(got), {'url', 'still'})
             self.assertEqual(Client().get(f'/api/yarn/{CLIP}/').json(), got)  # kept: anyone may have it
         self.assertEqual(yarn.asked, ['y.getyarn.io'])
 

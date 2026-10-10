@@ -1473,6 +1473,8 @@ class YarnClip(models.Model):
 
     clip = models.UUIDField(primary_key=True)
     media = models.ForeignKey(Media, models.CASCADE, related_name='yarn_clips')
+    # Its captioned GIF, the card's picture: kept too, as Yarn's Cloudflare stops it as it stops the video.
+    still = models.ForeignKey(Media, models.SET_NULL, null=True, blank=True, related_name='yarn_stills')
     kept_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -1669,8 +1669,19 @@
     const img = document.createElement('img');
     img.loading = 'lazy';
     img.alt = 'Yarn clip: press to play';
-    img.src = `https://y.yarn.co/${id}_text.gif`;
-    img.addEventListener('error', () => { a.classList.remove('thumb'); a.textContent = label; });
+    // Our copy of its picture (services/yarn_kept.py) if kept; else Yarn's, which Yarn's
+    // Cloudflare may stop -- then the server is asked for it once, before the card gives up.
+    const KEPT_STILL = /^\/moods\/media\/[0-9a-f]{64}\.(gif|jpg|png|webp)$/;
+    img.src = KEPT_STILL.test(a.dataset.still || '') ? a.dataset.still : `https://y.yarn.co/${id}_text.gif`;
+    let asked = KEPT_STILL.test(a.dataset.still || '');
+    img.addEventListener('error', async () => {
+      if (!asked) {
+        asked = true;
+        const got = await fetch(`/api/yarn/${id}/`).then(r => r.ok ? r.json() : null).catch(() => null);
+        if (got && KEPT_STILL.test(got.still || '')) { img.src = got.still; return; }
+      }
+      a.classList.remove('thumb'); a.textContent = label;
+    });
     const play = document.createElement('span');
     play.className = 'yarnplay'; play.textContent = '▶'; play.setAttribute('aria-hidden', 'true');
     a.textContent = '';
