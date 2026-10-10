@@ -71,6 +71,7 @@ urlpatterns = [
     path('api/wikilinks/', views_moods.api_wikilinks, name='api_wikilinks'),
     path('api/mentions/<slug:name>/', views_moods.api_mentions, name='api_mentions'),
     path('api/wiki/preview/', views_moods.api_wiki_preview, name='api_wiki_preview'),
+    path('api/yarn/<uuid:clip>/', views_moods.api_yarn, name='api_yarn'),
     path('api/notices/<slug:name>/', views_moods.api_notices, name='api_notices'),
     path('api/moods/new/', views_auth.api_new_mood, name='api_moods_new'),
     path('api/seen/', views_auth.api_seen, name='api_seen'),

@@ -234,6 +234,8 @@ def api_say(request, slug):
     message = post(text)
     if text.startswith('/clips '):
         clips.forget_cached()  # the library has a new save, or one fewer
+    from .services import yarn_kept
+    yarn_kept.keep_later(text)  # a Yarn clip said here is fetched once, now, and played from here
     return JsonResponse({'id': str(message.id), **({'note': note} if note else {})}, status=201)
 
 

@@ -1457,11 +1457,26 @@ class Media(models.Model):
     EXTENSIONS = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp',
                   # Voice memos, and messages read aloud (services/voice.py).
                   'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3',
-                  'audio/wav': 'wav'}
+                  'audio/wav': 'wav',
+                  # A Yarn clip, kept here (services/yarn_kept.py).
+                  'video/mp4': 'mp4'}
 
     @property
     def url(self):
         return f'/moods/media/{self.sha256}.{self.EXTENSIONS[self.mime]}'
+
+
+class YarnClip(models.Model):
+    """A Yarn clip kept here: its id on Yarn, and the copy of its video stored as Media.
+    Fetched once, by the server (services/yarn_kept.py), so pressing ▶ doesn't send a
+    browser to Yarn, whose Cloudflare stops people with a human check."""
+
+    clip = models.UUIDField(primary_key=True)
+    media = models.ForeignKey(Media, models.CASCADE, related_name='yarn_clips')
+    kept_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'yarn_clips'
 
 
 class MessageChange(models.Model):

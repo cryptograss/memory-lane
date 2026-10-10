@@ -1659,8 +1659,8 @@
   // which the browser fetches only as it nears the screen; if it won't load,
   // the card is plain text again. Pressed, the card becomes the clip's video
   // file, playing, in the browser's own player (Yarn's player refuses to be
-  // framed). Built from the id alone; a file that won't play from either of
-  // Yarn's addresses becomes a link.
+  // framed): magenta's own copy of it (services/yarn_kept.py), else Yarn's.
+  // A file that won't play from anywhere becomes a link.
   const YARN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   function decorateYarn(a) {
     const id = a.dataset.yarn;
@@ -1687,15 +1687,27 @@
     const box = document.createElement('div');
     box.className = 'yarnbox';
     const video = document.createElement('video');
-    // Where Yarn's own player gets the clip (y.getyarn.io) first, then its older
-    // address (y.yarn.co); only if neither plays does the card become a link.
+    // Our copy (services/yarn_kept.py) if the server has kept it; else the server is asked
+    // to fetch it now; only if it can't, Yarn's own addresses (y.getyarn.io, then the older
+    // y.yarn.co) -- where Cloudflare may stop a browser with a human check, which a video
+    // can't pass; then the card becomes a link.
     const sources = [`https://y.getyarn.io/${id}.mp4`, `https://y.yarn.co/${id}.mp4`];
-    video.src = sources.shift();
     video.controls = true;
     video.autoplay = true;  // pressed to play: a click lets it start with sound
     video.playsInline = true;
+    const next = () => { video.src = sources.shift(); video.play().catch(() => {}); };
+    if (/^\/moods\/media\/[0-9a-f]{64}\.mp4$/.test(a.dataset.kept || '')) {
+      video.src = a.dataset.kept;  // set within the click: Safari lets it play with sound
+    } else {
+      fetch(`/api/yarn/${id}/`).then(r => r.ok ? r.json() : null).catch(() => null).then(got => {
+        if (got && /^\/moods\/media\/[0-9a-f]{64}\.mp4$/.test(got.url || '')) {
+          video.src = got.url;
+          video.play().catch(() => {});
+        } else next();
+      });
+    }
     video.addEventListener('error', () => {
-      if (sources.length) { video.src = sources.shift(); video.play().catch(() => {}); return; }
+      if (sources.length) { next(); return; }
       const why = document.createElement('a');
       why.className = 'yarn';
       why.href = a.href; why.target = '_blank'; why.rel = 'noopener';

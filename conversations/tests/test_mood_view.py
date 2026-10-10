@@ -63,7 +63,8 @@ class RenderHtmlTest(TestCase):
         allowed = {'p': set(), 'br': set(), 'strong': set(), 'em': set(), 'code': set(), 'pre': set(),
                    'ul': set(), 'ol': set(), 'li': set(), 'h4': set(), 'table': set(), 'thead': set(),
                    'tbody': set(), 'tr': set(), 'th': set(), 'td': set(),
-                   'a': {'href', 'class', 'target', 'rel', 'data-yarn', 'data-who', 'data-mood', 'data-reveal', 'data-full'},
+                   'a': {'href', 'class', 'target', 'rel', 'data-yarn', 'data-who', 'data-mood', 'data-reveal', 'data-full',
+                         'data-kept'},
                    'span': {'class', 'data-who'},
                    'img': {'src', 'alt', 'loading'},
                    'video': {'controls', 'preload', 'playsinline', 'src', 'poster', 'data-hls', 'data-src'},
@@ -86,6 +87,8 @@ class RenderHtmlTest(TestCase):
                     if name in ('data-hls', 'data-src'):  # the page plays it: delivery-kid's gateway, nothing else
                         case.assertRegex(value, r'^https://ipfs\.delivery-kid\.cryptograss\.live/ipfs/[A-Za-z0-9]{46,64}'
                                                 r'(/master\.m3u8)?$', (source, out))
+                    if name == 'data-kept':  # the page plays it: a clip kept here, nothing else
+                        case.assertRegex(value, r'^/moods/media/[0-9a-f]{64}\.mp4$', (source, out))
                     if name == 'data-mood':  # the page opens it
                         case.assertRegex(value, r'^[a-z0-9-]+$', (source, out))
                     if name == 'data-reveal':
