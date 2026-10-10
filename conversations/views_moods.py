@@ -18,7 +18,7 @@ from django.core.exceptions import ValidationError
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import Message, Mood, ThinkingEntity, mood_slug
-from .services import push, wiki_auth, wiki_feed, wiki_upload
+from .services import push, servers, wiki_auth, wiki_feed, wiki_upload
 from .services import mood_auth
 from .services.mood_view import (
     from_wiki_tier,
@@ -139,7 +139,11 @@ def api_mood_turns(request, slug):
                                                    'kind', 'title', 'user', 'comment', 'delta', 'revid', 'at',
                                                    'who', 'tier', 'label', 'device', 'devices', 'file', 'page', 'sha',
                                                    'message', 'already', 'author', 'for', 'from_mood', 'to_mood', 'about', 'context',
-                                                   'pulled', 'pull', 'commit_url')},
+                                                   'pulled', 'pull', 'commit_url', 'cid')},
+                               # A deploy's server, linked to its page; a release, with its player.
+                               **({'server_url': servers.page_url(text.get('server'))} if text.get('type') == 'deploy' else {}),
+                               **({'html': render_html(f"[[Release:{text['cid']}]]")}
+                                  if text.get('type') == 'release' and text.get('cid') else {}),
                                # A handoff's context, as a message is shown (services/handoff.py).
                                **({'html': render_html(text.get('context') or '')} if text.get('type') == 'handoff' else {})})
         elif kind == 'compaction':

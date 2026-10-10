@@ -58,6 +58,16 @@ def probe(check, timeout=4):
         return False, round((time.monotonic() - start) * 1000)
 
 
+def page_url(name):
+    """A server's PickiPedia page (the wiki's front page, for the wiki itself); '' for one not listed."""
+    from conversations.services.mood_view import pickipedia_url
+    server = next((s for s in SERVERS if s['name'] == name), None)
+    if server is None:
+        return ''
+    title = server.get('page') or ''
+    return f"{pickipedia_url()}/wiki/{title.replace(' ', '_')}" if title else f'{pickipedia_url()}/'
+
+
 def wiki_card(server):
     """{'url', 'role', 'art'} from a server's PickiPedia page: the ASCII art
     and role in its infobox, so the dots' popover shows what the wiki does.
