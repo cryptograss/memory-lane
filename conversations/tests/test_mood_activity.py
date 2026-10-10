@@ -134,6 +134,30 @@ class ActivityTest(TestCase):
         self.add(system, 4, '')  # Claude Code's turn-duration line
         self.assertIsNone(self.now())
 
+    def compacted(self, seconds_ago):
+        """/compact's lines as Claude Code writes them once the summary is done."""
+        stdout = ConversationParticipant.objects.get_or_create(name='stdout', defaults={'participant_type': 'system'})[0]
+        self.add(self.justin, seconds_ago, '<local-command-caveat>The command below was run directly in Claude Code'
+                                           '</local-command-caveat>')
+        self.add(self.justin, seconds_ago, {'type': 'slash_command', 'command_name': '/compact',
+                                            'command_message': 'compact', 'command_args': 'great run'})
+        self.add(self.magent, seconds_ago, 'This session is being continued from a previous conversation that ran '
+                                           'out of context. The summary below covers the earlier portion.')
+        self.add(stdout, seconds_ago, {'type': 'command_output', 'stdout': 'Compacted '})
+
+    def test_a_compaction_once_done_is_not_thinking(self):
+        self.add(self.magent, 900, [{'type': 'text', 'text': 'done'}], stop_reason='end_turn')
+        self.add(self.justin, 70, '/compact great run @magent', source_file='mood-web')
+        self.assertEqual(self.now()['doing'], 'waking')  # while it compacts
+        self.compacted(5)
+        self.assertIsNone(self.now())
+
+    def test_a_turn_after_a_compaction_counts_from_its_own_start(self):
+        self.compacted(300)
+        self.add(self.justin, 40, '<mood-wake mood="m26" reason="quiet">nothing said lately</mood-wake>')
+        self.add(self.magent, 30, [{'type': 'thinking'}], model=Thought, stop_reason='tool_use')
+        self.assertEqual(self.now(), {'agent': 'magent', 'doing': 'thinking', 'since': NOW - 40})
+
     def test_a_web_post_naming_an_agent_is_waking_it(self):
         self.add(self.justin, 3, '@magent can you see?', source_file='mood-web')
         self.assertEqual(self.now(), {'agent': 'magent', 'doing': 'waking', 'since': NOW - 3})
