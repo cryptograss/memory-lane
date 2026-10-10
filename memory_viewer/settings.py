@@ -240,10 +240,11 @@ PICKIPEDIA_OAUTH_CLIENT_SECRET = os.getenv('PICKIPEDIA_OAUTH_CLIENT_SECRET', '')
 PICKIPEDIA_UPLOAD_CLIENT_ID = os.getenv('PICKIPEDIA_UPLOAD_CLIENT_ID', '')
 PICKIPEDIA_UPLOAD_CLIENT_SECRET = os.getenv('PICKIPEDIA_UPLOAD_CLIENT_SECRET', '')
 # A video sent into a Mood goes to delivery-kid (conversations/services/delivery_kid.py): this
-# server mints each upload's token with delivery-kid's key, as the wiki does, and the browser
-# sends the bytes there itself. Needs the "magenta uploads" consumer above too, for the
+# server mints each upload's token, as the wiki does, and the browser sends the bytes there
+# itself. The key is delivery-kid's upload-only one (its upload_key): it signs upload tokens
+# and nothing else, never a finalize. Needs the "magenta uploads" consumer above too, for the
 # ReleaseDraft page. Unset: the composer takes pictures only.
-DELIVERY_KID_API_KEY = os.getenv('DELIVERY_KID_API_KEY', '')
+DELIVERY_KID_UPLOAD_KEY = os.getenv('DELIVERY_KID_UPLOAD_KEY', '')
 DELIVERY_KID_URL = os.getenv('DELIVERY_KID_URL', '')
 # Each person's PickiPedia name, from hunter's inventory: "<name> <WikiName>" lines.
 MOOD_WIKI_NAMES = os.getenv('MOOD_WIKI_NAMES', '')

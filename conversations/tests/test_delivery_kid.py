@@ -20,7 +20,7 @@ from conversations.services import delivery_kid, mood_auth
 
 DRAFT = '4377f026-4b91-4b9e-9b89-24166905b7c3'
 SETUP = {'PICKIPEDIA_UPLOAD_CLIENT_ID': 'uploads-id', 'PICKIPEDIA_UPLOAD_CLIENT_SECRET': 'uploads-secret',
-         'DELIVERY_KID_API_KEY': 'dk-key', 'DELIVERY_KID_URL': 'https://dk.example/'}
+         'DELIVERY_KID_UPLOAD_KEY': 'dk-upload-key', 'DELIVERY_KID_URL': 'https://dk.example/'}
 ANALYSED = {'draft_id': DRAFT, 'commit': '6075344a', 'status': 'uploaded', 'files': [{
     'original_filename': 'moos-hallway-water-jam-1.MOV', 'detected_title': 'moos hallway water jam 1',
     'media_type': 'video', 'format': 'MOV', 'duration_seconds': 157.978333, 'width': 1920, 'height': 1080,
@@ -32,7 +32,7 @@ def dk_verify(headers, action='upload'):
     """delivery-kid's own check (pinning-service/app/auth.py: create_upload_token), restated."""
     message = f"{action}:{headers['X-Upload-User']}:{headers['X-Upload-Timestamp']}"
     return hmac.compare_digest(headers['X-Upload-Token'],
-                               hmac.new(b'dk-key', message.encode(), hashlib.sha256).hexdigest())
+                               hmac.new(b'dk-upload-key', message.encode(), hashlib.sha256).hexdigest())
 
 
 class Answer:
@@ -110,7 +110,7 @@ class DeliveryKidTest(TestCase):
         self.assertTrue(dk_verify(body['headers']))
         self.assertFalse(dk_verify(body['headers'], action='finalize'), 'an upload token must not finalize')
         self.assertLess(abs(int(body['headers']['X-Upload-Timestamp']) - time.time() * 1000), 5000)
-        self.assertNotIn('dk-key', answer.content.decode())
+        self.assertNotIn('dk-upload-key', answer.content.decode())
 
     def test_a_pickipedia_sign_in_uploads_under_its_own_name(self):
         client = self.client_for(self.skyler, 'wiki', 'PickiPedia sign-in (SkymanJenkins, Firefox on Android)')
@@ -119,7 +119,7 @@ class DeliveryKidTest(TestCase):
     def test_no_name_no_sign_in_or_not_set_up_means_no_token(self):
         self.assertEqual(self.ticket(Client()).status_code, 401)
         self.assertEqual(self.ticket(self.client_for(self.skyler)).status_code, 403)  # key device, no mapped name
-        with override_settings(DELIVERY_KID_API_KEY=''):
+        with override_settings(DELIVERY_KID_UPLOAD_KEY=''):
             self.assertEqual(self.ticket(self.client_for(self.justin)).status_code, 503)
         with override_settings(PICKIPEDIA_UPLOAD_CLIENT_ID=''):  # nowhere to write its page
             self.assertEqual(self.ticket(self.client_for(self.justin)).status_code, 503)
@@ -222,5 +222,5 @@ class DeliveryKidTest(TestCase):
     def test_the_page_says_whether_videos_can_go(self):
         client = self.client_for(self.justin)
         self.assertIn('const dkUpload = true;', client.get(f'/moods/{self.mood.slug}/').content.decode())
-        with override_settings(DELIVERY_KID_API_KEY=''):
+        with override_settings(DELIVERY_KID_UPLOAD_KEY=''):
             self.assertIn('const dkUpload = false;', client.get(f'/moods/{self.mood.slug}/').content.decode())

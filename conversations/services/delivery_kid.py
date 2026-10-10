@@ -7,9 +7,13 @@ finalized. This is the wiki's own Special:DeliverVideo, from a Mood:
 
 1. **The bytes go from the browser straight to delivery-kid,** never through
    here. What this server does is mint the per-upload token the wiki mints
-   (an HMAC of "upload:<PickiPedia name>:<ms>" under delivery-kid's key,
-   settings.DELIVERY_KID_API_KEY), so the key never reaches a browser.
-   delivery-kid records the upload as wiki:<their PickiPedia name>.
+   (an HMAC of "upload:<PickiPedia name>:<ms>"), so the key never reaches a
+   browser. delivery-kid records the upload as wiki:<their PickiPedia name>.
+   The key is delivery-kid's *upload-only* key (settings.
+   DELIVERY_KID_UPLOAD_KEY; delivery-kid's upload_key), not its API key: it
+   signs upload tokens and nothing else, and delivery-kid lets them live a
+   day. Finalizing is the wiki's finalize-release right, and magenta holds
+   no authority that could exercise it (Justin, 10 Oct).
 2. **The ReleaseDraft page is made as them,** through PickiPedia's "may
    magenta edit for you?" (the "magenta uploads" consumer that puts pictures
    on PickiPedia: services/wiki_upload.py), and the permission is dropped
@@ -17,7 +21,7 @@ finalized. This is the wiki's own Special:DeliverVideo, from a Mood:
    delivery-kid itself, asked here, not from the browser.
 3. **A line in the Mood** (a 'release-draft' event) links the draft.
 
-Finalizing stays on the ReleaseDraft page for now, under the wiki's own
+Finalizing stays on the ReleaseDraft page, under the wiki's own
 finalize-release right; delivery-kid runs it as a job of its own
 (maybelle-config#175), so nobody has to keep a tab open.
 
@@ -25,7 +29,7 @@ People only. An agent's device gets no token, and a PickiPedia account in
 the wiki's bot group gets no page (Justin, 10 Oct: human PickiPedians). What
 the band's videos are is decided by the people in it.
 
-Unset (no DELIVERY_KID_API_KEY, or no "magenta uploads" consumer), videos
+Unset (no DELIVERY_KID_UPLOAD_KEY, or no "magenta uploads" consumer), videos
 can't be sent and the composer takes pictures only, as before.
 """
 
@@ -49,7 +53,7 @@ TITLE_MAX = 200
 
 def enabled():
     from . import wiki_upload
-    return bool(getattr(settings, 'DELIVERY_KID_API_KEY', '') and getattr(settings, 'DELIVERY_KID_URL', '')
+    return bool(getattr(settings, 'DELIVERY_KID_UPLOAD_KEY', '') and getattr(settings, 'DELIVERY_KID_URL', '')
                 and wiki_upload.enabled())
 
 
@@ -82,10 +86,14 @@ def wiki_name_for(device):
     return None
 
 
-def token_headers(wiki_name, action='upload', now_ms=None):
-    """The headers delivery-kid checks (its auth.verify_upload_token), as the wiki makes them."""
+def token_headers(wiki_name, now_ms=None):
+    """An upload token, in the headers delivery-kid checks (its auth.verify_upload_token).
+
+    Upload only: there is no other kind to ask for here, and the key couldn't
+    sign one delivery-kid would take.
+    """
     stamp = int(now_ms if now_ms is not None else time.time() * 1000)
-    signed = hmac.new(settings.DELIVERY_KID_API_KEY.encode(), f'{action}:{wiki_name}:{stamp}'.encode(),
+    signed = hmac.new(settings.DELIVERY_KID_UPLOAD_KEY.encode(), f'upload:{wiki_name}:{stamp}'.encode(),
                       hashlib.sha256).hexdigest()
     return {'X-Upload-Token': signed, 'X-Upload-User': wiki_name, 'X-Upload-Timestamp': str(stamp)}
 
