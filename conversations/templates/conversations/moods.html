@@ -1659,7 +1659,8 @@
   // which the browser fetches only as it nears the screen; if it won't load,
   // the card is plain text again. Pressed, the card becomes the clip's video
   // file, playing, in the browser's own player (Yarn's player refuses to be
-  // framed). Built from the id alone; a file that won't play becomes a link.
+  // framed). Built from the id alone; a file that won't play from either of
+  // Yarn's addresses becomes a link.
   const YARN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   function decorateYarn(a) {
     const id = a.dataset.yarn;
@@ -1686,11 +1687,15 @@
     const box = document.createElement('div');
     box.className = 'yarnbox';
     const video = document.createElement('video');
-    video.src = `https://y.yarn.co/${id}.mp4`;
+    // Where Yarn's own player gets the clip (y.getyarn.io) first, then its older
+    // address (y.yarn.co); only if neither plays does the card become a link.
+    const sources = [`https://y.getyarn.io/${id}.mp4`, `https://y.yarn.co/${id}.mp4`];
+    video.src = sources.shift();
     video.controls = true;
     video.autoplay = true;  // pressed to play: a click lets it start with sound
     video.playsInline = true;
     video.addEventListener('error', () => {
+      if (sources.length) { video.src = sources.shift(); video.play().catch(() => {}); return; }
       const why = document.createElement('a');
       why.className = 'yarn';
       why.href = a.href; why.target = '_blank'; why.rel = 'noopener';
