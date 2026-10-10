@@ -1025,6 +1025,15 @@ def latest_interrupt(mood, agent=None):
     return None
 
 
+def _command_output(msg):
+    """Whether this is the output of a command typed into Claude Code itself
+    (/compact, /context): written when the command has finished, so it ends
+    whatever was under way. /compact's "Compacted" is the newest line once
+    the summary is written; read as work, it showed the agent thinking for
+    ten minutes after every compaction."""
+    return isinstance(msg.content, dict) and msg.content.get('type') == 'command_output'
+
+
 def _activity(mood, now=None):
     """What an agent in this Mood is doing now, or None if nothing is underway.
 
@@ -1078,12 +1087,14 @@ def _activity(mood, now=None):
     if (newest.sender_id in agents and newest.stop_reason is None and now - _when(newest) > 30
             and not hasattr(newest, 'tooluse') and not hasattr(newest, 'thought')):
         return None
+    if _command_output(newest):
+        return None
 
     streak = []
     for msg in recent:
         if msg.sender_id in agents and msg.stop_reason in TURN_ENDS:
             break
-        if msg.source_file in POSTED:
+        if msg.source_file in POSTED or _command_output(msg):
             break
         streak.append(msg)
     agent = next((m.sender_id for m in streak if m.sender_id in agents), None) or sorted(agents or {'magent'})[0]
@@ -1094,7 +1105,8 @@ def _activity(mood, now=None):
         from django.db.models import Q
         mine = mood.messages.filter(is_sidechain=False)
         boundary = (mine.filter(created_at__lt=start.created_at)
-                    .filter(Q(sender_id__in=agents, stop_reason__in=TURN_ENDS) | Q(source_file__in=POSTED))
+                    .filter(Q(sender_id__in=agents, stop_reason__in=TURN_ENDS) | Q(source_file__in=POSTED)
+                            | Q(content__type='command_output'))
                     .order_by('-created_at').first())
         if boundary is not None:
             start = mine.filter(created_at__gt=boundary.created_at).order_by('created_at').first() or start
