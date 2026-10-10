@@ -3763,7 +3763,11 @@
   // Videos, where delivery-kid takes them (services/delivery_kid.py): not stored here, but sent from this
   // browser straight to delivery-kid with a token this server minted, then given a ReleaseDraft page on
   // PickiPedia, written as their sender once PickiPedia says yes.
-  function videosIn(list) { return dkUpload ? [...(list || [])].filter(f => /^video\//.test(f.type)) : []; }
+  // By type, or by name where the browser gives none (an .mkv often has no type).
+  const VIDEO_NAME = /\.(mp4|m4v|mov|webm|mkv|avi|mts|m2ts|3gp)$/i;
+  function videosIn(list) {
+    return dkUpload ? [...(list || [])].filter(f => /^video\//.test(f.type) || (!f.type && VIDEO_NAME.test(f.name || ''))) : [];
+  }
   const videoBar = document.getElementById('videoBar');
   let videoSending = null;  // the upload under way, if any: one at a time
   function videoSays(what, pct) {
@@ -3829,7 +3833,9 @@
   // Leaving mid-upload loses it: say so first.
   window.addEventListener('beforeunload', e => { if (videoSending) { e.preventDefault(); e.returnValue = ''; } });
   if (dkUpload) {
-    fileInput.accept += ',video/*';
+    // video/* alone isn't enough everywhere: Sky's Mac greyed out videos in the
+    // picker with it (10 Oct). Extensions are what every picker understands.
+    fileInput.accept += ',video/*,.mp4,.m4v,.mov,.webm,.mkv,.avi,.mts,.m2ts,.3gp';
     document.getElementById('attach').title = 'Add an image or a video (or paste or drop one). Videos go to delivery-kid '
       + 'and get a ReleaseDraft page on PickiPedia; pictures stay here, under CC BY-SA 4.0 or CC0 if you choose.';
   }
