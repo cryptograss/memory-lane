@@ -1219,14 +1219,27 @@ def wiki_upload_return(request):
     from .views_admin import locked_response
     if locked_response():
         return locked_response()
+    from django.core.cache import cache
     from .services import delivery_kid
-    expected = request.COOKIES.get(wiki_upload.STATE_COOKIE, '')
-    # A video's ReleaseDraft page (services/delivery_kid.py) comes back this way too.
-    video = delivery_kid.pending(expected) is not None
-    back = delivery_kid.place(expected) if video else wiki_upload.place(expected)
     device = mood_auth.device_for(request)
+    # Normally this browser started the round trip, and its cookies say who
+    # and which. But magenta installed as an app (a Mac's Dock, a phone's home
+    # screen) sends PickiPedia to the default browser, and it comes back
+    # there, with neither cookie (Sky, 10 Oct: a 401 every time). Then the
+    # state PickiPedia hands back says which round trip this is, and whose:
+    # it's unguessable, used once, and finish() still requires the PickiPedia
+    # account that said yes to be that same person's, so nobody else's yes
+    # can complete it.
+    expected = request.COOKIES.get(wiki_upload.STATE_COOKIE, '') or request.GET.get('state', '')
+    # A video's ReleaseDraft page (services/delivery_kid.py) comes back this way too.
+    pending = delivery_kid.pending(expected)
+    video = pending is not None
+    if pending is None and expected:
+        pending = cache.get(f'wiki-upload:{expected}')
+    back = delivery_kid.place(expected) if video else wiki_upload.place(expected)
+    who = device.entity_id if device is not None else (pending or {}).get('by')
     try:
-        if device is None:
+        if who is None:
             raise wiki_upload.UploadError('this browser is signed out of magenta', status=401)
         if request.GET.get('error') == 'access_denied':
             raise wiki_upload.UploadError("You didn't allow it on PickiPedia, so nothing went up."
@@ -1238,7 +1251,7 @@ def wiki_upload_return(request):
         if not expected or request.GET.get('state') != expected or not request.GET.get('code'):
             raise wiki_upload.UploadError('that went stale; press → PickiPedia again')
         finish = delivery_kid.finish if video else wiki_upload.finish
-        done = finish(expected, request.GET['code'], device.entity_id, _wiki_upload_return(request))
+        done = finish(expected, request.GET['code'], who, _wiki_upload_return(request))
     except wiki_upload.UploadError as e:
         response = render(request, 'conversations/mood_login.html',
                           {'state': 'upload-refused', 'why': str(e), 'back': back}, status=e.status)

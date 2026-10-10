@@ -253,3 +253,57 @@ class EndpointsTest(TestCase):
         self.assertIn('const wikiUpload = true;', Client().get('/moods/').content.decode())
         with override_settings(PICKIPEDIA_UPLOAD_CLIENT_ID=''):
             self.assertIn('const wikiUpload = false;', Client().get('/moods/').content.decode())
+
+
+@override_settings(**CONSUMER)
+class ReturnInAnotherBrowserTest(TestCase):
+    """magenta installed as an app sends PickiPedia to the default browser, and the
+    way back lands there, without magenta's cookies (Sky, 10 Oct: a 401 every time).
+    The state PickiPedia hands back is enough, because the PickiPedia account that
+    said yes must still be the person who asked."""
+
+    def setUp(self):
+        cache.clear()
+        self.skyler = ThinkingEntity.objects.create(name='skyler', is_biological_human=True)
+        self.justin = ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        self.mood = Mood.objects.create(slug='general', title='general')
+        self.picture = media.store(PNG, added_by=self.skyler)
+        names = mock.patch('conversations.services.wiki_auth.names',
+                           return_value={'skyler': 'SkymanJenkins', 'justin': 'JMyles'})
+        names.start()
+        self.addCleanup(names.stop)
+
+    def start(self, wiki, who):
+        _, token = mood_auth.enrol_device(who, 'the app', tier='key')
+        app = Client()
+        app.cookies[mood_auth.COOKIE] = token
+        with mock.patch('requests.Session', lambda: wiki):
+            asked = app.post(f'/api/media/{self.picture.sha256}/pickipedia/', json.dumps(
+                {'mood': 'general', 'message': str(uuid.uuid4()), 'name': 'New bass', 'description': ''}),
+                content_type='application/json')
+        return parse_qs(urlparse(asked.json()['go']).query)['state'][0]
+
+    def come_back(self, wiki, state):
+        browser = Client()  # the default browser: no magenta cookies at all
+        with mock.patch('requests.Session', lambda: wiki), mock.patch('requests.post', wiki.post), \
+                mock.patch('requests.get', wiki.get):
+            return browser.get(f'/moods/auth/wiki/upload?code=code-1&state={state}')
+
+    def test_it_goes_up_from_the_other_browser(self):
+        wiki = FakePickiPedia(user='SkymanJenkins')
+        back = self.come_back(wiki, self.start(wiki, self.skyler))
+        self.assertEqual(back.status_code, 302)
+        self.assertEqual(wiki.uploads[0]['as'], 'Bearer token-for-SkymanJenkins')
+        self.assertTrue(Message.objects.filter(source_file='wiki-upload', content__by='skyler').exists())
+
+    def test_but_only_with_the_askers_own_pickipedia_yes(self):
+        wiki = FakePickiPedia(user='JMyles')  # someone else said yes in that browser
+        back = self.come_back(wiki, self.start(wiki, self.skyler))
+        self.assertEqual(back.status_code, 403)
+        self.assertEqual(wiki.uploads, [])
+
+    def test_and_a_made_up_state_is_still_signed_out(self):
+        wiki = FakePickiPedia(user='SkymanJenkins')
+        back = self.come_back(wiki, 'nothing-anyone-started')
+        self.assertEqual(back.status_code, 401)
+        self.assertEqual(wiki.uploads, [])
