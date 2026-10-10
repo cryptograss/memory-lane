@@ -7,6 +7,7 @@ the conversation.
 
 import functools
 import hashlib
+import re
 
 from django.conf import settings
 from django.db.models import Max
@@ -260,14 +261,32 @@ def _message_or_none(raw):
 
 @require_GET
 def media_file(request, sha256, ext):
-    """A stored image. Immutable by construction: the name is its hash."""
+    """A stored picture, sound or clip. Immutable by construction: the name is its hash.
+    A sound or a clip answers a byte range (Range: bytes=a-b), as Safari insists on for media."""
     from django.http import HttpResponse
     from .models import Media
 
     item = Media.objects.filter(sha256=sha256).first()
     if item is None or Media.EXTENSIONS.get(item.mime) != ext:
         raise Http404('no such image')
-    response = HttpResponse(bytes(item.data), content_type=item.mime)
+    data = bytes(item.data)
+    wanted = re.match(r'^bytes=(\d*)-(\d*)$', request.headers.get('Range', '').strip())
+    if wanted and item.mime.startswith(('video/', 'audio/')) and (wanted[1] or wanted[2]):
+        if wanted[1]:
+            start, end = int(wanted[1]), int(wanted[2]) if wanted[2] else len(data) - 1
+        else:  # bytes=-N: the last N
+            start, end = max(0, len(data) - int(wanted[2])), len(data) - 1
+        if start >= len(data) or start > end:
+            response = HttpResponse(status=416)
+            response['Content-Range'] = f'bytes */{len(data)}'
+            return response
+        end = min(end, len(data) - 1)
+        response = HttpResponse(data[start:end + 1], status=206, content_type=item.mime)
+        response['Content-Range'] = f'bytes {start}-{end}/{len(data)}'
+    else:
+        response = HttpResponse(data, content_type=item.mime)
+    if item.mime.startswith(('video/', 'audio/')):
+        response['Accept-Ranges'] = 'bytes'
     response['Cache-Control'] = 'public, max-age=31536000, immutable'
     response['X-Content-Type-Options'] = 'nosniff'
     response['Content-Security-Policy'] = "default-src 'none'; sandbox"
@@ -655,6 +674,19 @@ def notices_for(name, since, limit=NOTICES_MAX):
     return found
 
 
+
+
+@require_GET
+def api_yarn(request, clip):
+    """A Yarn clip's video, kept here (services/yarn_kept.py): {"url"}. Not kept yet, a signed-in
+    device has it fetched now (an anonymous one doesn't set the server fetching); 404 if Yarn won't give it."""
+    from .services import mood_auth, yarn_kept
+    url = yarn_kept.kept(clip)
+    if url is None and mood_auth.device_for(request) is not None:
+        url = yarn_kept.keep(clip)
+    if url is None:
+        return JsonResponse({'error': 'not kept here, and Yarn would not give it'}, status=404)
+    return JsonResponse({'url': url})
 
 @require_GET
 def api_wiki_preview(request):

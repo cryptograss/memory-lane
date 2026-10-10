@@ -499,7 +499,11 @@ def _link_url(match):
         return card + tail
     clip = yarn_clip(url)
     if clip:
-        return f'<a class="yarn" href="{url}" data-yarn="{clip}"{_OUT}>▶ Yarn clip</a>{tail}'
+        # Kept here already (services/yarn_kept.py): ▶ plays our copy, never asking Yarn.
+        from .yarn_kept import kept
+        here = kept(clip)
+        played = f' data-kept="{here}"' if here else ''
+        return f'<a class="yarn" href="{url}" data-yarn="{clip}"{played}{_OUT}>▶ Yarn clip</a>{tail}'
     page = pickipedia_page(url)
     if page:
         title, section = page
