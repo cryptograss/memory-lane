@@ -159,7 +159,8 @@ def task_notification(line):
 
     Claude Code queues these as queue-operation lines, which carry no uuid,
     so the id is derived from what the line says: a replay finds the same
-    row. The Mood's list of running tasks reads them.
+    row. One made from a runner's stream (views_runner.task_notice_line)
+    brings its event's uuid. The Mood's list of running tasks reads them.
     """
     if '"queue-operation"' not in line or 'task-notification' not in line:
         return None
@@ -172,7 +173,10 @@ def task_notification(line):
             or not isinstance(content, str) or '<task-notification>' not in content):
         return None
     session_id = event.get('sessionId')
-    msg_uuid = uuid_lib.uuid5(uuid_lib.NAMESPACE_URL, f"task-notification:{session_id}:{event.get('timestamp')}:{content}")
+    try:
+        msg_uuid = uuid_lib.UUID(str(event['uuid']))
+    except (KeyError, ValueError):
+        msg_uuid = uuid_lib.uuid5(uuid_lib.NAMESPACE_URL, f"task-notification:{session_id}:{event.get('timestamp')}:{content}")
     timestamp = None
     if event.get('timestamp'):
         timestamp = int(datetime.fromisoformat(event['timestamp'].replace('Z', '+00:00')).timestamp() * 1000)

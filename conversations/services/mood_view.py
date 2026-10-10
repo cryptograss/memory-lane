@@ -1107,7 +1107,8 @@ _TASK_STARTED = re.compile(r'Command running in background with ID: (\w+)|Async 
 _TASK_ENDED = re.compile(r'<task-id>(\w+)</task-id>.*?<status>(\w+)</status>', re.S)
 TASK_ENDINGS = {'completed', 'failed', 'stopped', 'killed', 'error', 'cancelled'}
 # A task older than this with no word of its end is presumed gone: its notice
-# can be lost when the session that started it exits first. A background
+# can be lost when the session that started it exits first (in a terminal;
+# a runner's turns are handled exactly, below). A background
 # command can't outlive Claude Code's two-hour cap on its timeout; a helper
 # agent has no cap, so it gets longer.
 TASK_HORIZONS = {'command': 2.5 * 3600, 'helper': 12 * 3600}
@@ -1155,9 +1156,26 @@ def background_tasks(mood, now=None):
             'kind': 'helper' if match.group(2) else 'command',
             'label': (args.get('description') or args.get('command') or args.get('prompt') or task_id)[:120],
             'since': _when(msg),
+            'step': str(use.pk) if use is not None else None,  # the call that started it, shown on demand
+            '_session': msg.session_id, '_at': msg.created_at,
         }
-    return [task for task_id, task in started.items()
-            if task_id not in ended and task['since'] >= now - TASK_HORIZONS[task['kind']]]
+    # A turn the runner launched (claude -p) stops whatever it left running
+    # when it ends, so a task started before its session's turn-result
+    # (views_runner.finish_turn) is over, whether or not its notice arrived.
+    over = {}
+    sessions = {t['_session'] for t in started.values() if t['_session']}
+    for session, at in (mood.messages.filter(sender_id='system', session_id__in=sessions, content__type='turn-result')
+                        .values_list('session_id', 'created_at')):
+        over[session] = max(at, over.get(session, at))
+    running = []
+    for task_id, task in started.items():
+        session, at = task.pop('_session'), task.pop('_at')
+        if task_id in ended or task['since'] < now - TASK_HORIZONS[task['kind']]:
+            continue
+        if session in over and over[session] >= at:
+            continue
+        running.append(task)
+    return running
 
 
 def models_q(**kwargs):

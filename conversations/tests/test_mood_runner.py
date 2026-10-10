@@ -143,6 +143,48 @@ class StreamTest(TestCase):
         self.post([helper])
         self.assertTrue(Message.objects.get(id=helper['uuid']).is_sidechain)
 
+    def launched(self, tool, tool_id, args, result_text):
+        s = self.session
+        use = event('assistant', [{'type': 'tool_use', 'id': tool_id, 'name': tool, 'input': args}], session_id=s)
+        result = event('user', [{'type': 'tool_result', 'tool_use_id': tool_id, 'content': result_text}],
+                       session_id=s, tool_use_result={'type': 'text'})
+        return use, result
+
+    def test_a_task_that_ends_on_the_stream_ends_in_the_mood(self):
+        from conversations.services.mood_view import background_tasks
+        s = self.session
+        use, result = self.launched('Agent', 'toolu_a1', {'description': 'Map the upload paths', 'prompt': 'map them'},
+                                    'Async agent launched successfully.\nagentId: a1ea9e0b8e4239091 (internal ID)')
+        self.post([use, result])
+        [task] = background_tasks(self.mood)
+        self.assertEqual((task['id'], task['kind'], task['label'], task['step']),
+                         ('a1ea9e0b8e4239091', 'helper', 'Map the upload paths', use['uuid']))
+        # What Claude Code's stream says when it finishes -- the transcript's
+        # copy reaches only a watcher, if one is watching.
+        notice = {'type': 'system', 'subtype': 'task_notification', 'task_id': 'a1ea9e0b8e4239091',
+                  'tool_use_id': 'toolu_a1', 'status': 'completed', 'output_file': '/tmp/x.output',
+                  'summary': 'Agent "Map the upload paths" finished', 'uuid': str(uuid.uuid4()), 'session_id': s}
+        self.post([notice])
+        self.assertEqual(background_tasks(self.mood), [])
+        count = Message.objects.count()
+        self.post([notice])  # posted again: the same row
+        self.assertEqual(Message.objects.count(), count)
+        # One that names no task is no notice.
+        self.post([{**notice, 'task_id': 'a b', 'uuid': str(uuid.uuid4())}])
+        self.assertEqual(Message.objects.count(), count)
+
+    def test_a_turn_that_ends_stops_what_it_left_running(self):
+        from conversations.services.mood_view import background_tasks
+        use, result = self.launched('Bash', 'toolu_b1', {'command': 'sleep 600', 'description': 'Wait ten minutes'},
+                                    'Command running in background with ID: bq7. Output is being written to: /tmp/q')
+        self.post([use, result])
+        self.assertEqual([t['id'] for t in background_tasks(self.mood)], ['bq7'])
+        # claude -p stops it with the turn, and its notice of that can be lost:
+        # the turn's end is enough.
+        *_, done = self.turn()
+        self.post([done])
+        self.assertEqual(background_tasks(self.mood), [])
+
     def test_a_commands_output_is_shown_and_leaves_the_pie_alone(self):
         # /context's answer is a "<synthetic>" message that read nothing.
         Message.objects.create(id=uuid.uuid4(), sender_id='magent', mood=self.mood, session_id=str(uuid.uuid4()),

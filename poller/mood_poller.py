@@ -196,6 +196,10 @@ def end_process_group(proc):
 
 # Events worth posting to the Mood: what was said and done, and the end.
 STREAMED = ('assistant', 'user', 'result')
+# System events worth posting too: a background task's end. A turn run with
+# -p stops whatever it left running when it ends, and says so only here,
+# after its result -- the transcript never hears of it.
+STREAMED_SYSTEM = ('task_notification',)
 
 
 class StreamPoster:
@@ -220,7 +224,9 @@ class StreamPoster:
         self.thread.start()
 
     def put(self, event):
-        if isinstance(event, dict) and event.get('type') in STREAMED:
+        if not isinstance(event, dict):
+            return
+        if event.get('type') in STREAMED or (event.get('type') == 'system' and event.get('subtype') in STREAMED_SYSTEM):
             self.queue.put(event)
 
     def close(self, wait=60):
