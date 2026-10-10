@@ -3718,11 +3718,13 @@
       if (!r.ok) throw new Error(body.error || r.status);
       sayBox.value = sayBox.value.replace(marker, body.markdown);
       if (body.mine) { sharing.add(body.sha); licenseNow = body.license; showLicense(); }
+      sayBox.dispatchEvent(new Event('input'));
     } catch (e) {
       sayBox.value = sayBox.value.replace(marker + '\n', '');
+      // The input event first: its listener clears errors, and would take this one with it.
+      sayBox.dispatchEvent(new Event('input'));
       showError('image: ' + e.message);
     }
-    sayBox.dispatchEvent(new Event('input'));
   }
   // Pictures of yours in the box go out CC BY-SA 4.0 unless you make them CC0:
   // said here as they're attached, and changeable until sent (api_media_license).
