@@ -1156,27 +1156,87 @@ def api_media_to_pickipedia(request, sha256):
     return response
 
 
+VIDEOS_PER_MINUTE = 6
+
+
+@require_POST
+def api_video_ticket(request, slug):
+    """Where this device's person sends a video, and the token to send it with (services/delivery_kid.py):
+    {"url", "headers", "as"}. The bytes go from the browser to delivery-kid; none of them come here."""
+    from .services import delivery_kid
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = mood_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in to write'}, status=401)
+    Mood.by_slug_or_404(slug)
+    if not _under_limit(f'video:{device.pk}', VIDEOS_PER_MINUTE):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    try:
+        return JsonResponse(delivery_kid.ticket(device))
+    except delivery_kid.UploadError as e:
+        return JsonResponse({'error': str(e)}, status=e.status)
+
+
+@require_POST
+def api_video_draft(request, slug):
+    """{"draft", "title"}: a video now on delivery-kid gets its ReleaseDraft page, written as its sender
+    once PickiPedia says yes. Answers {"go": PickiPedia's "may magenta edit for you?"}, to be sent to."""
+    from .services import delivery_kid
+    from .views_admin import locked_response
+    if locked_response():
+        return locked_response()
+    device = mood_auth.device_for(request)
+    if device is None:
+        return JsonResponse({'error': 'sign in first'}, status=401)
+    if not _under_limit(f'video:{device.pk}', VIDEOS_PER_MINUTE):
+        return JsonResponse({'error': 'slow down'}, status=429)
+    mood = Mood.by_slug_or_404(slug)
+    try:
+        body = json.loads(request.body)
+    except ValueError:
+        return JsonResponse({'error': 'expected JSON'}, status=400)
+    try:
+        done = delivery_kid.begin(body.get('draft'), body.get('title'), device, mood, _wiki_upload_return(request))
+    except delivery_kid.UploadError as e:
+        return JsonResponse({'error': str(e)}, status=e.status)
+    from .services import wiki_upload
+    response = JsonResponse({'go': done['go']})
+    # The same way back as a picture's (the consumer has one callback); the state says which it was.
+    response.set_cookie(wiki_upload.STATE_COOKIE, done['state'], max_age=wiki_upload.PENDING_FOR, httponly=True,
+                        secure=not settings.DEBUG, samesite='Lax')
+    return response
+
+
 @require_GET
 def wiki_upload_return(request):
-    """Back from PickiPedia with its yes (or not): upload as them, then back to the picture."""
+    """Back from PickiPedia with its yes (or not): upload a picture, or write a video's ReleaseDraft page, as
+    them; then back to where it was sent."""
     from .services import wiki_upload
     from .views_admin import locked_response
     if locked_response():
         return locked_response()
+    from .services import delivery_kid
     expected = request.COOKIES.get(wiki_upload.STATE_COOKIE, '')
-    back = wiki_upload.place(expected)
+    # A video's ReleaseDraft page (services/delivery_kid.py) comes back this way too.
+    video = delivery_kid.pending(expected) is not None
+    back = delivery_kid.place(expected) if video else wiki_upload.place(expected)
     device = mood_auth.device_for(request)
     try:
         if device is None:
             raise wiki_upload.UploadError('this browser is signed out of magenta', status=401)
         if request.GET.get('error') == 'access_denied':
-            raise wiki_upload.UploadError("You didn't allow it on PickiPedia, so nothing went up.")
+            raise wiki_upload.UploadError("You didn't allow it on PickiPedia, so nothing went up."
+                                          + (' The video did reach delivery-kid, but has no ReleaseDraft page.'
+                                             if video else ''))
         if request.GET.get('error'):
             raise wiki_upload.UploadError('PickiPedia gave no permission, so nothing went up: '
                                           + (request.GET.get('error_description') or request.GET['error']))
         if not expected or request.GET.get('state') != expected or not request.GET.get('code'):
             raise wiki_upload.UploadError('that went stale; press → PickiPedia again')
-        done = wiki_upload.finish(expected, request.GET['code'], device.entity_id, _wiki_upload_return(request))
+        finish = delivery_kid.finish if video else wiki_upload.finish
+        done = finish(expected, request.GET['code'], device.entity_id, _wiki_upload_return(request))
     except wiki_upload.UploadError as e:
         response = render(request, 'conversations/mood_login.html',
                           {'state': 'upload-refused', 'why': str(e), 'back': back}, status=e.status)
