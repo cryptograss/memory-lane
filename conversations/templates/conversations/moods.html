@@ -924,7 +924,7 @@
       <button type="button" id="agentsBtn" title="Agents here: listening, model, effort" aria-label="Agent settings" aria-expanded="false">⚙</button>
       <button type="button" id="attach" title="Add an image (or paste or drop one). Your pictures are shared under CC BY-SA 4.0, or CC0 if you choose." aria-label="Add an image">＋</button>
       <button type="button" id="memoBtn" title="Record a voice memo: tap to start, tap again to stop. It's ready to send at once; its words are written in when it's sent." aria-label="Record a voice memo" hidden>🎙</button>
-      <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
+      <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp,image/heic,image/heif,.heic,.heif" multiple hidden>
       <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
       <button type="submit" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z" fill="currentColor"/></svg></button>
     </form>
@@ -3761,7 +3761,12 @@
     sayBox.value = sayBox.value.slice(0, at) + text + sayBox.value.slice(sayBox.selectionEnd ?? at);
     sayBox.selectionStart = sayBox.selectionEnd = at + text.length;
   }
-  function imagesIn(list) { return [...(list || [])].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type)); }
+  // HEIC (an iPhone's photos) too: the server turns it into a JPEG (services/media.py). Some
+  // browsers give a .heic no type at all, so its name counts.
+  function imagesIn(list) {
+    return [...(list || [])].filter(f => /^image\/(png|jpeg|gif|webp|heic|heif)$/.test(f.type)
+                                         || (!f.type && /\.(heic|heif)$/i.test(f.name || '')));
+  }
   // Videos, where delivery-kid takes them (services/delivery_kid.py): not stored here, but sent from this
   // browser straight to delivery-kid with a token this server minted, then given a ReleaseDraft page on
   // PickiPedia, written as their sender once PickiPedia says yes.
@@ -3847,7 +3852,7 @@
   document.getElementById('attach').addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', () => {
     const skipped = [...fileInput.files].length - imagesIn(fileInput.files).length - videosIn(fileInput.files).length;
-    if (skipped) showError(`only ${dkUpload ? 'images and videos' : 'images'} can be added (PNG, JPEG, GIF, WebP${dkUpload ? ', video' : ''}): ${skipped} file${skipped > 1 ? 's' : ''} left out`);
+    if (skipped) showError(`only ${dkUpload ? 'images and videos' : 'images'} can be added (PNG, JPEG, GIF, WebP, HEIC${dkUpload ? ', video' : ''}): ${skipped} file${skipped > 1 ? 's' : ''} left out`);
   });
   fileInput.addEventListener('change', () => {
     imagesIn(fileInput.files).forEach(upload);

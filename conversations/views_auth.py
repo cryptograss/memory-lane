@@ -139,7 +139,7 @@ def api_media(request, slug):
         return JsonResponse({'error': 'slow down'}, status=429)
     stored = media.store(request.body, added_by=device.entity)
     if stored is None:
-        return JsonResponse({'error': 'not a PNG, JPEG, GIF or WebP image'}, status=400)
+        return JsonResponse({'error': 'not a PNG, JPEG, GIF, WebP or HEIC image'}, status=400)
     # Their own: told it's CC BY-SA 4.0, with CC0 a press away (api_media_license).
     return JsonResponse({'url': stored.url, 'markdown': media.markdown(stored), 'sha': stored.sha256,
                          'license': stored.license, 'mine': stored.added_by_id == device.entity_id}, status=201)
