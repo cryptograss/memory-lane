@@ -8,7 +8,7 @@ from unittest import mock
 from constant_sorrow.constants import EVENT_TYPE_WE_DO_NOT_HANDLE_YET
 from django.test import TestCase, override_settings
 
-from conversations.models import Message, ToolResult
+from conversations.models import Message, ThinkingEntity, ToolResult
 
 KEY = 'k' * 64
 
@@ -116,3 +116,36 @@ class IngestRedactionTest(TestCase):
             self.post(down, {'SCRUBBER_URL': 'http://scrubber.test'})
         stored = ToolResult.objects.get(id=down['uuid'])
         self.assertEqual((stored.tool_use_id, stored.content), ('toolu_b', ''))
+
+
+class IngestAgentTest(TestCase):
+    """A watcher in another agent's container files that agent's sessions as its own."""
+
+    def post(self, lines, **body):
+        with mock.patch.dict(os.environ, {'INGEST_API_KEY': KEY}):
+            os.environ.pop('SCRUBBER_URL', None)
+            return self.client.post('/api/ingest/', data=json.dumps({'lines': lines, 'source': 'test', **body}),
+                                    content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {KEY}')
+
+    def reply(self, session):
+        return json.dumps({'type': 'assistant', 'uuid': str(uuid.uuid4()), 'parentUuid': None, 'sessionId': session,
+                           'timestamp': '2026-10-11T03:00:00.000Z',
+                           'message': {'role': 'assistant', 'model': 'claude-opus-5-5', 'id': 'msg_1',
+                                       'content': [{'type': 'text', 'text': 'The tests ran at 03:00.'}]}})
+
+    def test_an_agent_named_in_the_body_is_the_sender(self):
+        ThinkingEntity.objects.create(name='re', is_biological_human=False)
+        session = str(uuid.uuid4())
+        self.assertEqual(self.post([self.reply(session)], agent='re').json()['imported'], 1)
+        self.assertEqual(Message.objects.get(session_id=session).sender_id, 're')
+
+    def test_without_an_agent_it_is_magents_as_before(self):
+        session = str(uuid.uuid4())
+        self.post([self.reply(session)])
+        self.assertEqual(Message.objects.get(session_id=session).sender_id, 'magent')
+
+    def test_an_agent_the_record_does_not_know_is_refused(self):
+        ThinkingEntity.objects.create(name='justin', is_biological_human=True)
+        self.assertEqual(self.post([self.reply(str(uuid.uuid4()))], agent='ree').status_code, 400)
+        self.assertEqual(self.post([self.reply(str(uuid.uuid4()))], agent='justin').status_code, 400)
+        self.assertFalse(ThinkingEntity.objects.filter(name='ree').exists())

@@ -15,7 +15,8 @@ from .models import (
     Thought,
     ToolUse,
     ToolResult,
-    Era
+    Era,
+    ThinkingEntity,
 )
 
 logger = logging.getLogger(__name__)
@@ -917,7 +918,8 @@ def ingest(request):
         "lines": ["jsonl line 1", "jsonl line 2", ...],
         "username": "justin",  # optional, defaults to "justin"
         "era_name": "Current Working Era",  # optional
-        "source": "hunter-watcher"  # optional, for logging
+        "source": "hunter-watcher",  # optional, for logging
+        "agent": "magent"  # optional: whose session this is; must be an agent the record knows
     }
 
     Or single line:
@@ -953,6 +955,11 @@ def ingest(request):
     username = data.get('username', 'justin')
     era_name = data.get('era_name', 'Current Working Era (Era N)')
     source = data.get('source', 'unknown')
+    # A watcher in another agent's container files its sessions as that
+    # agent's. Only an existing agent, so a typo can't make a new one.
+    agent = data.get('agent', 'magent')
+    if 'agent' in data and not ThinkingEntity.objects.filter(name=agent, is_biological_human=False).exists():
+        return JsonResponse({'error': f'no agent named {agent!r}'}, status=400)
 
     # Get lines - support both single line and batch
     lines = data.get('lines', [])
@@ -962,7 +969,7 @@ def ingest(request):
     if not lines:
         return JsonResponse({'error': 'No lines provided'}, status=400)
 
-    imported, skipped, errors = import_lines(lines, era_name=era_name, source=source, username=username)
+    imported, skipped, errors = import_lines(lines, era_name=era_name, source=source, username=username, agent=agent)
     return JsonResponse({
         'imported': imported,
         'skipped': skipped,
@@ -970,13 +977,13 @@ def ingest(request):
     })
 
 
-def import_lines(lines, *, era_name='Current Working Era (Era N)', source='unknown', username='justin'):
+def import_lines(lines, *, era_name='Current Working Era (Era N)', source='unknown', username='justin', agent='magent'):
     """Scrub, import and heap-assign transcript lines: (imported, skipped, errors).
 
     Every way into the record goes through here -- the watcher's ingest and
     the runner's stream alike -- so a line gets the same redaction, routing
     and storage whichever way it came. Rows are filed as from
-    'ingest-<source>'.
+    'ingest-<source>', and the agent's side of the session as `agent`'s.
     """
     from importers_and_parsers.claude_code_v2 import import_line_from_claude_code_v2
     from watcher.heap_assignment import assign_heap_to_message
@@ -1020,7 +1027,7 @@ def import_lines(lines, *, era_name='Current Working Era (Era N)', source='unkno
 
             # Import the line
             event, created = import_line_from_claude_code_v2(
-                line, era, f"ingest-{source}", username, keep_tool_output=scrubbed
+                line, era, f"ingest-{source}", username, keep_tool_output=scrubbed, agent=agent
             )
 
             if event is EVENT_TYPE_WE_DO_NOT_HANDLE_YET:

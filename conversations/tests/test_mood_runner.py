@@ -65,9 +65,20 @@ class StreamTest(TestCase):
         self.assertEqual(self.post([], auth={'HTTP_AUTHORIZATION': 'Bearer nope'}).status_code, 401)
         self.assertEqual(self.post([], auth={}).status_code, 401)
 
-    def test_a_key_speaks_only_for_agents_an_importer_can_speak_for(self):
-        with override_settings(MOOD_RUNNER_KEYS={'otheragent': KEY}):
-            self.assertEqual(self.post([]).status_code, 400)
+    def test_another_agents_key_files_its_turn_as_that_agents(self):
+        ThinkingEntity.objects.create(name='re', is_biological_human=False)
+        use, result, reply, done = self.turn()
+        with override_settings(MOOD_RUNNER_KEYS={'magent': 'm' * 64, 're': KEY}):
+            self.assertEqual(self.post([use, result, reply, done]).status_code, 200)
+        said = Message.objects.filter(session_id=self.session).exclude(sender_id__in=('system', 'tool-result'))
+        self.assertEqual(set(said.values_list('sender_id', flat=True)), {'re'})
+        self.assertFalse(ThinkingEntity.objects.get(name='re').is_biological_human)
+        self.assertEqual(Message.objects.get(sender_id='system', session_id=self.session).content['agent'], 're')
+
+    def test_a_new_agents_first_turn_does_not_make_it_a_person(self):
+        with override_settings(MOOD_RUNNER_KEYS={'re': KEY}):
+            self.assertEqual(self.post(list(self.turn())).status_code, 200)
+        self.assertFalse(ThinkingEntity.objects.get(name='re').is_biological_human)
 
     def test_a_bad_body_is_refused(self):
         response = self.client.post('/api/moods/m26/stream/', json.dumps({'session_id': 'nope', 'events': []}),
