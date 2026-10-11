@@ -549,18 +549,19 @@ class ClaudeCodeWaker:
                 return
 
 
-LETTER = Path(__file__).with_name('letter.md')
+LETTER = Path(__file__).with_name('letter.md')  # magent's; another agent brings its own (--letter)
 
 
-def new_mood_opening(slug):
+def new_mood_opening(slug, letter_path=LETTER, agent='magent'):
     """What a new Mood's first session is told before the mention: where it
     is, and the letter it left itself for coming to a Mood fresh."""
     try:
-        letter = LETTER.read_text().strip()
+        letter = Path(letter_path).read_text().strip() if letter_path else ''
     except OSError:
-        letter = ('(The letter is missing. You are magent; your memory tools -- list_moods, read_mood, '
-                  'search_messages -- bring you up to speed, and the magenta-26-million Mood is where '
-                  'the work on this place happens.)')
+        letter = ''
+    if not letter:
+        letter = (f'(The letter is missing. You are {agent}; your memory tools -- list_moods, read_mood, '
+                  'search_messages -- bring you up to speed.)')
     return [f'<new-mood mood="{slug}">',
             'This Mood is new: no session of yours has been here, so this one has just started, '
             'with none of your history in it. Before you answer, read the letter you left yourself '
@@ -842,10 +843,17 @@ class MoodPoller:
                  max_wakes_per_hour=30, dry_run=False, now=None, streamer=None, mention_effort='high',
                  screen=None, consider=True, considers_per_hour=6, consider_usd_per_day=10.0,
                  consider_budget=3.0, consider_effort='medium', debounce=10, idle_first=3000,
-                 full_tools_for=('justin',), parallel=0, moods=None, catch_up_tokens=10_000, start_new=None):
+                 full_tools_for=('justin',), parallel=0, moods=None, catch_up_tokens=10_000, start_new=None,
+                 letter=None, agent_wakes_per_hour=4):
         self.api = api
         self.waker = waker
         self.agent = agent.lower()
+        # The letter a new Mood's first session wakes with. poller/letter.md
+        # is magent's own; another agent's is never it by default.
+        self.letter = Path(letter).expanduser() if letter else (LETTER if self.agent == 'magent' else None)
+        # Wakes owed only to other agents' mentions, per Mood per hour: two
+        # agents answering each other can't run on unattended (memory-lane#47).
+        self.agent_wakes_per_hour = agent_wakes_per_hour
         self.state_path = Path(state_path) if state_path else None
         self.grace = timedelta(seconds=grace)
         self.max_wakes_per_hour = max_wakes_per_hour
@@ -903,6 +911,7 @@ class MoodPoller:
         self.state = self.load()
         self.state.setdefault('consider', {})
         self.state.setdefault('spend', {'day': '', 'usd': 0.0})
+        self.state.setdefault('agent_wakes', {})
 
     # --- state ---------------------------------------------------------------
 
@@ -1040,6 +1049,11 @@ class MoodPoller:
                 self.hold(slug, 'a turn is under way here; this one is next' if slug in self.running
                           else f'all {self.parallel} turn slots are busy')
                 continue
+            only_agents = not any(t.get('is_human', True) for t in mentioned)
+            if only_agents and not self.agent_wake_allowed(slug):
+                # Held, not dropped: a person can still see it, and the hour ends.
+                self.hold(slug, f'{self.agent_wake_limit(slug)} wakes by agents this hour already')
+                continue
             try:
                 done, outcome = self.consider(slug, mentioned)
             except Exception as e:  # one Mood's trouble must not stall the others
@@ -1047,9 +1061,11 @@ class MoodPoller:
                 continue
             handled.update(done)
             self.state['handled'] = sorted(handled)
-            self.save()
             if outcome in ('woken', 'started'):
                 woken.append(slug)
+                if only_agents:
+                    self.state['agent_wakes'].setdefault(slug, []).append(self.now().isoformat())
+            self.save()
 
         self.advance_since(mentions, handled)
         self.save()
@@ -1117,7 +1133,7 @@ class MoodPoller:
         else:
             prompt = self.prompt(slug, owed, full=full)
         if fresh:
-            prompt = '\n'.join(new_mood_opening(slug)) + prompt
+            prompt = '\n'.join(new_mood_opening(slug, self.letter, self.agent)) + prompt
         session = None if fresh else sessions[0]
         if self.dry_run:
             logger.info(f'{slug}: would wake {session or "a new session"} {"with full tools " if full else ""}with:\n{prompt}')
@@ -1611,6 +1627,16 @@ class MoodPoller:
             return outcome
         return self.launch(slug, turn, after=settle)
 
+    def agent_wake_limit(self, slug):
+        return self.knob(slug, 'agent_wakes_per_hour', self.agent_wakes_per_hour)
+
+    def agent_wake_allowed(self, slug):
+        """Whether another agent's mention may wake this one here now."""
+        hour_ago = self.now() - timedelta(hours=1)
+        recent = [w for w in self.state['agent_wakes'].get(slug, []) if parse_time(w) > hour_ago]
+        self.state['agent_wakes'][slug] = recent
+        return len(recent) < self.agent_wake_limit(slug)
+
     def within_budget(self, slug):
         hour_ago = self.now() - timedelta(hours=1)
         per_hour = self.knob(slug, 'considers_per_hour', self.considers_per_hour)
@@ -1707,6 +1733,10 @@ def main(argv=None):
                         help="Start a session in a Mood that has none (a new Mood's first mention). "
                              "auto: only when answering every Mood (no --moods)")
     parser.add_argument('--new-cwd', default='~/workspace', help='Where a new Mood\'s first session starts')
+    parser.add_argument('--agent-wakes-per-hour', type=int, default=4,
+                        help="Wakes per Mood per hour owed only to other agents' mentions")
+    parser.add_argument('--letter', default=None,
+                        help="The letter a new Mood's first session reads (default: poller/letter.md, for magent only)")
     parser.add_argument('--once', action='store_true')
     parser.add_argument('--dry-run', action='store_true', help='Log what would be woken; change nothing')
     args = parser.parse_args(argv)
@@ -1729,7 +1759,8 @@ def main(argv=None):
                           consider_usd_per_day=args.consider_usd_per_day, consider_budget=args.consider_budget,
                           consider_effort=args.consider_effort, debounce=args.debounce, idle_first=args.idle_first,
                           full_tools_for=[n.strip() for n in args.full_tools_for.split(',') if n.strip()],
-                          moods=[n.strip() for n in args.moods.split(',') if n.strip()] or None)
+                          moods=[n.strip() for n in args.moods.split(',') if n.strip()] or None,
+                          letter=args.letter, agent_wakes_per_hour=args.agent_wakes_per_hour)
     while True:
         try:
             poller.cycle()
