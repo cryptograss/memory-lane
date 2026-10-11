@@ -125,6 +125,25 @@ class MoodPollerTest(TestCase):
         self.assertIn('@magent and?', prompt)
         self.assertNotIn('are you there', prompt)
 
+    def test_another_agents_mentions_wake_it_only_within_a_budget(self):
+        # re and magent answering each other must not run on unattended (#47).
+        def from_re(id, minutes):
+            return mention('m26', dict(turn(id, 're', minutes, '@magent the docs say otherwise'),
+                                       via='session', is_human=False))
+        api = FakeAPI([from_re('a', 0)], sessions={'m26': ['s-local']})
+        poller = self.make(api, minutes_now=20, agent_wakes_per_hour=1)
+        self.assertEqual(poller.poll_once(), ['m26'])
+
+        api._mentions.append(from_re('b', 21))
+        self.clock[0] = T0 + timedelta(minutes=40)
+        self.assertEqual(poller.poll_once(), [])  # the hour's one is spent: held, not dropped
+        self.assertIn('1 wakes by agents this hour already', api.holds[-1][1])
+
+        api._mentions.append(mention('m26', dict(turn('c', 'justin', 41, '@magent and?'), is_human=True)))
+        self.clock[0] = T0 + timedelta(minutes=60)
+        self.assertEqual(poller.poll_once(), ['m26'])  # a person asking is never held by it
+        self.assertIn('@magent and?', self.waker.woken[-1][1])
+
     def test_waits_out_the_grace_period_then_wakes(self):
         api = FakeAPI([mention('m26', turn('a', 'skyler', 0))], sessions={'m26': ['s-local']})
         poller = self.make(api, minutes_now=5)
@@ -1396,6 +1415,22 @@ class NewMoodTest(TestCase):
         self.assertTrue(prompt.startswith('<new-mood mood="fresh">'))
         self.assertIn('Dear me,', prompt)  # poller/letter.md, beside the poller
         self.assertIn('[justin, 2026-09-29T18:10Z] @magent hello, new place', prompt)
+
+    def test_another_agent_wakes_with_its_own_letter_never_magents(self):
+        letter = Path(tempfile.mkdtemp()) / 'LETTER.md'
+        letter.write_text('Dear re,\nRead the code before the docs.')
+        api = FakeAPI([mention('fresh', dict(turn('a', 'justin', 10, '@re hello, new place'), via='web'))],
+                      sessions={'fresh': []})
+        for kwargs, has, lacks in (({'letter': letter}, 'Dear re,', 'Dear me,'),
+                                   ({}, 'You are re;', 'Dear me,')):
+            waker = FakeWaker()
+            state = Path(tempfile.mkdtemp()) / 'state.json'
+            state.write_text(json.dumps({'since': (T0 - timedelta(hours=1)).isoformat(), 'handled': [], 'wakes': []}))
+            MoodPoller(api, waker, agent='re', state_path=state, now=lambda: T0 + timedelta(minutes=30),
+                       **kwargs).poll_once()
+            prompt = waker.woken[0][1]
+            self.assertIn(has, prompt)
+            self.assertNotIn(lacks, prompt)
 
     def test_a_moods_own_container_never_starts_one_unless_told(self):
         self.assertEqual(self.run_for([], moods=['fresh']), [])
