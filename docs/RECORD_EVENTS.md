@@ -5,7 +5,7 @@ runner translates its harness's output into these events at the edge and
 posts them; memory-lane has one importer, for this format. No harness's file
 layout or wire dialect reaches the record's code.
 
-Status: **proposed**. Written by magent at Ethereum block 26,170,449
+Status: **proposed**; the importer is memory-lane#166. Written by magent at Ethereum block 26,170,449
 (2026-10-11), against memory-lane `1a93f19`, after Justin in the magent-self
 Mood: *"read the files for metadata only, but ensure that the interface
 itself is what we're logging."* Nothing here is built yet.
@@ -37,6 +37,7 @@ everything the turn says; the body cannot change that.
   "format": "events/1",
   "harness": "claude-code 2.1.289",
   "session_id": "<uuid: the session this turn continues or starts>",
+  "forked_from": "<uuid, optional: the session this one was forked from>",
   "events": [ ... ]
 }
 ```
@@ -45,6 +46,8 @@ everything the turn says; the body cannot change that.
   stream, until that path is retired.
 - `harness` is what produced the events, kept as metadata (today's
   `client_version`). It changes nothing about how they are read.
+- `forked_from`: a session forked from another goes on from the history it
+  copied, so its rows continue that session's context heap.
 - At most 500 events per post, in the order they happened. Post as they come.
 
 ## Events
@@ -64,14 +67,14 @@ Types:
 | Type | Fields | Stored as |
 |---|---|---|
 | `turn_started` | `model`, `effort`, `cwd`, `git_branch` (each optional) | not a row: stamps the turn's rows. This is what the transcript files are read for today |
-| `user_message` | `text`, `from` (`mood-poller` for a wake prompt, else the person) | a message from `from` |
+| `user_message` | `text`, `from` (`mood-poller`, the default) | a message from the mood-poller; with `helper`, the agent's own brief to its helper. Any other `from` is refused: people's words reach the record through the Mood, where they typed them, and a runner can't put words in anyone's mouth |
 | `assistant_message` | `text`, optional `model`, `usage` | a message from the agent |
 | `reasoning` | `text`, optional `signature` | a thought. `text` may be empty: some models return only an opaque, vendor-signed block, and the signature is kept as it came |
 | `tool_call` | `call_id`, `name`, `input` (object) | a tool use |
 | `tool_result` | `call_id`, `output` (string or object), `is_error`, optional `images` (base64 with a MIME type) | a tool result. Images become stored media, as today |
 | `compaction` | `trigger` (`manual` or `auto`), `tokens_before`, optional `tokens_after`, `summary` | a compacting action, and the summary as the continuation |
-| `task_notice` | `task_id`, `status`, `summary` | the notice a background task leaves when it ends |
-| `turn_ended` | `outcome` (`completed`, `failed`, `canceled`), `stop_reason`, `usage`, `cost_usd`, `duration_ms`, optional `error` | the turn-result row; stamps the turn's last message with its stop reason, so the Mood stops showing the agent at work |
+| `task_notice` | `task_id`, `status`, `summary`, optional `call_id` | the notice a background task leaves when it ends |
+| `turn_ended` | `outcome` (`completed`, `failed`, `canceled`), `stop_reason`, `usage`, `cost_usd` (this turn's, not the session's running total), `duration_ms`, optional `error` | the turn-result row; stamps the turn's last message with its stop reason, so the Mood stops showing the agent at work |
 
 `usage` is `{"input": n, "output": n, "cache_read": n, "cache_write": n}`,
 any of them absent if the harness doesn't say.
@@ -123,9 +126,11 @@ it.
 ## Open questions
 
 - **Human turns typed into a harness.** In a terminal session a person's
-  words reach the agent without passing through a Mood. If that session is
-  streamed, `user_message` carries them with `from` set to the person; who
-  the person is comes from the runner's config, not from the body.
+  words reach the agent without passing through a Mood. A runner may not
+  name a person as `from`, so such a session can't be streamed as it
+  stands; the watcher still brings it in from its transcript. If it should
+  be streamed, who the person is has to come from the runner's config,
+  never from the body.
 - **Helpers.** Claude Code's subagents arrive inline today (`isSidechain`).
   Pi and Paseo model them as separate sessions. `helper` covers the first;
   the second may want its own session id and a link back.
