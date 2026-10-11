@@ -273,26 +273,28 @@ def poller_or(user, content, event):
     return user
 
 
-def import_line_from_claude_code_v2(line, era, filename, username='justin', keep_tool_output=True):
+def import_line_from_claude_code_v2(line, era, filename, username='justin', keep_tool_output=True, agent='magent'):
         """
         keep_tool_output=False stores tool results with their link but no
         output, whatever TOOL_RESULT_CONTENT_CHARS says; ingest passes it
         when the scrubber could not be reached.
+
+        `agent` is the thinking entity whose session this is: every
+        assistant line, thought and tool call is filed as its own.
         """
         # Every line is pattern-redacted before anything is read from it: the
         # record is public, and this is the one layer that is never down.
         line = redact_line(line)
 
-        # Get entities
-        # Get the user's ThinkingEntity (create if doesn't exist)
+        # Get entities. The agent first: a runner's stream names the agent as
+        # its user too, and an agent must never be created as a person.
+        assistant, _ = ThinkingEntity.objects.get_or_create(
+            name=agent,
+            defaults={'is_biological_human': False}
+        )
         user, _ = ThinkingEntity.objects.get_or_create(
             name=username,
             defaults={'is_biological_human': True}
-        )
-        # magent is always the AI assistant
-        magent, _ = ThinkingEntity.objects.get_or_create(
-            name='magent',
-            defaults={'is_biological_human': False}
         )
 
         # Images become stored media and markdown before anything reads the
@@ -371,7 +373,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
 
         # Create appropriate message type based on event_type
         if event_type == "thought":
-            sender = magent  # TODO: #12
+            sender = assistant  # TODO: #12
             content = event['message']['content']
             signature = content[0]['signature']
             message, created = Thought.objects.get_or_create(
@@ -385,12 +387,12 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
                     **common,
                 }
             )
-            # Thoughts are internal deliberation - magent talking to self
+            # Thoughts are internal deliberation - the agent talking to self
             if created:
-                message.recipients.add(magent)
+                message.recipients.add(assistant)
         elif event_type == "tool use":
             if event['type'] == "assistant" and event['userType'] == "external":
-                sender = magent
+                sender = assistant
             else:
                 assert False
 
@@ -409,14 +411,14 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
                     **common,
                 }
             )
-            # Tool use is magent invoking a tool
+            # Tool use is the agent invoking a tool
             if created:
                 tool_participant = get_or_create_participant(tool_use_item.get('name', 'unknown-tool'), 'tool')
                 message.recipients.add(tool_participant)
 
         elif event_type == "tool use with preamble":
             if event['type'] == "assistant" and event['userType'] == "external":
-                sender = magent
+                sender = assistant
             else:
                 assert False
 
@@ -452,7 +454,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
                     **common,
                 }
             )
-            # Tool use is magent invoking a tool
+            # Tool use is the agent invoking a tool
             if created:
                 tool_participant = get_or_create_participant(tool_use_item.get('name', 'unknown-tool'), 'tool')
                 message.recipients.add(tool_participant)
@@ -460,10 +462,10 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
         elif event_type == "thought-out response":
             if event['type'] == "assistant" and event['userType'] == "external":
                 # Earlier format - with type as assistant?
-                sender = magent
+                sender = assistant
             elif event['type'] == "user" and event['userType'] == "external":
                 # TODO: What's different here that caused this to be "user" - still seems to be a thought and response.
-                sender = magent
+                sender = assistant
             else:
                 assert False
 
@@ -494,7 +496,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
                     **common,
                 }
             )
-            # Thought-out response is magent responding to user
+            # Thought-out response is the agent responding to user
             if created:
                 message.recipients.add(user)
 
@@ -515,9 +517,9 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
                     **common,
                 }
             )
-            # Tool result goes back to magent
+            # Tool result goes back to the agent
             if created:
-                message.recipients.add(magent)
+                message.recipients.add(assistant)
             else:
                 # The old importer stored every result empty. Fill in whatever
                 # is still empty, so a watcher replay repairs the record (and a
@@ -534,11 +536,11 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
                     message.save(update_fields=repaired)
 
         elif event_type == "continuation":
-            # sender and recipient are both magent, like a thought.
+            # sender and recipient are both the agent, like a thought.
             message, created = Message.objects.get_or_create(
                 id=msg_uuid,
                 defaults={
-                    'sender': magent,
+                    'sender': assistant,
                     'source_file': filename,
                     'content': event['message']['content'],
                     'is_continuation_message': True,
@@ -546,7 +548,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
                     **common,
                 }
             )
-            # Continuation is magent to user (resuming after compact)
+            # Continuation is the agent to user (resuming after compact)
             if created:
                 message.recipients.add(user)
         elif event_type == "regular message":
@@ -556,9 +558,9 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
             #### This block is clearly broken - we need real logic for this.
             if role == 'user':
                 sender = poller_or(user, content, event)
-                recipient = magent
+                recipient = assistant
             elif role == 'assistant':
-                sender = magent
+                sender = assistant
                 recipient = user
             else:
                 assert False
@@ -584,7 +586,7 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
             content = event['message']['content']
             if role == "user":
                 sender = poller_or(user, content, event)
-                recipient = magent
+                recipient = assistant
             else:
                 assert False # Not sure what this can be?
 
@@ -611,14 +613,14 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
             message, created = Message.objects.get_or_create(
                 id=msg_uuid,
                 defaults={
-                    'sender': magent,
+                    'sender': assistant,
                     'source_file': filename,
                     'content': content[0]['text'],
                     'timestamp': timestamp,
                     **common,
                 }
             )
-            message.recipients.add(magent)
+            message.recipients.add(assistant)
         elif event_type in ("command", "command result - success"):
             # Parse command XML from event content
             content = event.get('message', {}).get('content', '')
@@ -640,13 +642,13 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
                     sender = get_or_create_participant('stdout', 'system')
                     recipient = user
                 else:
-                    # Meta caveat message - from magent to magent
-                    sender = magent
-                    recipient = magent
+                    # Meta caveat message - from the agent to itself
+                    sender = assistant
+                    recipient = assistant
             else:
                 # Plain text meta message
-                sender = magent
-                recipient = magent
+                sender = assistant
+                recipient = assistant
 
             message, created = Message.objects.get_or_create(
                 id=msg_uuid,

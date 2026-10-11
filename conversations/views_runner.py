@@ -140,9 +140,6 @@ def api_stream(request, slug):
     agent = runner_agent(request)
     if agent is None:
         return JsonResponse({'error': 'unauthorized'}, status=401)
-    # The Claude Code importer speaks for magent; another agent needs its own.
-    if agent != 'magent':
-        return JsonResponse({'error': f'no importer speaks for {agent} yet'}, status=400)
     mood = Mood.by_slug_or_404(slug)
 
     try:
@@ -164,7 +161,7 @@ def api_stream(request, slug):
     from django.utils import timezone
     now_iso = timezone.now().isoformat()
     lines = [line for line in (stream_line(e, now_iso) for e in events) if line]
-    imported, skipped, errors = import_lines(lines, source=SOURCE, username=agent) if lines else (0, 0, [])
+    imported, skipped, errors = import_lines(lines, source=SOURCE, username=agent, agent=agent) if lines else (0, 0, [])
 
     finished = False
     for event in events:
