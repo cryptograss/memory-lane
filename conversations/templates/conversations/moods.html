@@ -931,7 +931,7 @@
       <div id="suggest"></div>
       <button type="button" id="agentsBtn" title="Agents here: listening, model, effort" aria-label="Agent settings" aria-expanded="false">⚙</button>
       <button type="button" id="attach" title="Add an image (or paste or drop one). Your pictures are shared under CC BY-SA 4.0, or CC0 if you choose." aria-label="Add an image">＋</button>
-      <button type="button" id="memoBtn" title="Record a voice memo: tap to start, tap again to stop. It's ready to send at once; its words are written in when it's sent." aria-label="Record a voice memo" hidden>🎙</button>
+      <button type="button" id="memoBtn" title="Record a voice memo: tap to start, tap again to stop and add words, or press Send while it records to send it as it is. Its words are written in on the server." aria-label="Record a voice memo" hidden>🎙</button>
       <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp,image/heic,image/heif,.heic,.heif" multiple hidden>
       <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
       <button type="submit" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z" fill="currentColor"/></svg></button>
@@ -3926,10 +3926,12 @@
   // A voice memo: recorded here, and in the box the moment it's stopped, ready
   // to send. The server hears it meanwhile (voice.hear_later); sent, it's
   // posted as soon as its words are in -- usually already -- and until then
-  // the page says it's on its way (memoOnItsWay).
+  // the page says it's on its way (memoOnItsWay). Send needn't wait for any
+  // of it: pressed while recording, it stops the recording; pressed while it
+  // uploads, it sends once it's up (memoThenSend, in say()).
   const memoBtn = document.getElementById('memoBtn');
   const MEMO_MAX_S = 600;
-  let recorder = null, memoTimer = null;
+  let recorder = null, memoTimer = null, memoSaving = false, memoThenSend = false;
   if (voiceOn && viewer && window.MediaRecorder && navigator.mediaDevices) memoBtn.hidden = false;
   const clock = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
   memoBtn.addEventListener('click', async () => {
@@ -3946,8 +3948,9 @@
       clearInterval(memoTimer);
       stream.getTracks().forEach(t => t.stop());
       const seconds = (Date.now() - started) / 1000;
-      recorder = null;
+      recorder = null; memoSaving = true;
       memoBtn.classList.remove('recording'); memoBtn.classList.add('busy'); memoBtn.textContent = 'saving…';
+      let ready = false;
       try {
         const r = await fetch('/api/moods/' + encodeURIComponent(current) + '/memo/', {
           method: 'POST', headers: { 'X-CSRFToken': csrf() }, body: new Blob(chunks, { type: chunks[0]?.type || type || 'audio/webm' }) });
@@ -3956,12 +3959,20 @@
         insertAtCaret(`🎙 [voice memo · ${clock(seconds)}](${body.url})`);
         sayBox.dispatchEvent(new Event('input'));
         sayBox.focus();
-        composer.insertAdjacentHTML('beforeend', '<span class="note">Ready to send: its words are written in as it goes.</span>');
-      } catch (e) { showError('voice memo: ' + e.message); }
-      finally { memoBtn.classList.remove('busy'); memoBtn.textContent = '🎙'; }
+        ready = true;
+      } catch (e) { memoThenSend = false; showError('voice memo: ' + e.message); }
+      finally { memoSaving = false; memoBtn.classList.remove('busy'); memoBtn.textContent = '🎙'; }
+      composer.querySelectorAll('.note.memo-note').forEach(el => el.remove());
+      if (ready && memoThenSend) { memoThenSend = false; say(); }
+      else if (ready) composer.insertAdjacentHTML('beforeend', '<span class="note memo-note">Ready to send: its words are written in as it goes.</span>');
     });
-    recorder.start(1000);
+    try { recorder.start(1000); }
+    catch (e) {  // a microphone that can't be recorded: nothing under way, nothing for Send to wait on
+      recorder = null; stream.getTracks().forEach(t => t.stop());
+      showError('voice memo: ' + e.message); return;
+    }
     composer.querySelectorAll('.err, .note').forEach(el => el.remove());
+    composer.insertAdjacentHTML('beforeend', '<span class="note memo-note">🎙 Recording: ■ stops it to add words; Send sends it as it is.</span>');
     memoBtn.classList.add('recording');
     memoBtn.textContent = '■ 0:00';
     memoTimer = setInterval(() => {
@@ -4649,6 +4660,14 @@
   const noAgents = document.getElementById('noAgents');
   noAgents.querySelector('button').addEventListener('click', () => { noAgents.close(); sayBox.focus(); });
   async function say() {
+    // A memo still recording or uploading: stop it, and send once it's in the box.
+    if (recorder || memoSaving) {
+      memoThenSend = true;
+      if (recorder) recorder.stop();
+      composer.querySelectorAll('.note.memo-note').forEach(el => el.remove());
+      composer.insertAdjacentHTML('beforeend', '<span class="note memo-note">🎙 Sending as soon as it\'s saved…</span>');
+      return;
+    }
     const text = sayBox.value.trim();
     if (!text || !current) return;
     if (viewerTier === 'wiki') {
