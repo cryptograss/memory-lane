@@ -2376,6 +2376,7 @@
     dot.title = q.by === 'screen'
       ? `screened for ${q.sender}: let pass without waking it · ${stamp(q.created_at)}`
       : `${q.sender} chose not to speak · ${stamp(q.created_at)}`
+        + (q.tools === 'look' ? ' · looking only' : q.tools === 'full' ? ' · with full tools' : '')
         + (q.usd != null ? ` · ${usdText(q.usd)} at API prices (read ${kTokens(q.ctx || 0)}, ${kTokens(q.cached || 0)} of it from the cache)` : '');
     dot.dataset.why = q.reason || '(no reason given)';
     row.appendChild(dot);
@@ -2481,6 +2482,16 @@
     }
     if (v.model) b._how.model = v.model;
     if (v.effort) b._how.effort = v.effort;
+    if (v.tools) b._tools = v.tools;
+  }
+  // Which tools a turn had (mood_view.wake_tools): only looking, or its full tools.
+  const WAKE_MARKS = {
+    look: ['👀', 'Look only: it could read and search, and change nothing (a quiet wake, or a post from a PickiPedia sign-in)'],
+    full: ['🛠️', 'Full tools: shell, editing, the browser and the rest, as in its terminal'],
+  };
+  function wakeMark(tools) {
+    const m = WAKE_MARKS[tools];
+    return m ? ` <span class="wake" title="${esc(m[1])}">${m[0]}</span>` : '';
   }
   // What a turn cost, at API list prices (mood_view.PRICES): on a subscription,
   // what the same work would have cost through the API.
@@ -2497,7 +2508,7 @@
     const costTitle = `At API list prices (${b._how.model || 'this model'}), for ${b._calls} call${b._calls === 1 ? '' : 's'} to the model: `
       + `what this turn would cost through the API. On a subscription it's included. Helpers it started aren't counted.`;
     b.querySelector('.ahead').innerHTML = `<span class="caret">${b.classList.contains('folded') ? '▸' : '▾'}</span>`
-      + `${icon(b._agent, false)}<b>${esc(b._agent)}</b>`
+      + `${icon(b._agent, false)}<b>${esc(b._agent)}</b>${wakeMark(b._tools)}`
       + [took ? elapsed(Date.now() / 1000 - took) : '', how].filter(Boolean).map(x => ' · ' + esc(x)).join('')
       + (added !== null ? ` · <span class="spent" title="${esc(addedTitle)}">+${esc(kTokens(added))} context</span>` : '')
       + (b._priced ? ` · <span class="spent" title="${esc(costTitle)}">${esc(usdText(b._usd))}</span>` : '')

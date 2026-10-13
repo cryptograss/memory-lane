@@ -838,6 +838,29 @@ def call_usd(model, fresh, out, read, written):
     return ((fresh or 0) * rates[0] + (out or 0) * rates[1] + (read or 0) * rates[2] + (written or 0) * rates[3]) / 1e6
 
 
+# --- which tools a turn had ----------------------------------------------------
+# The runner's wake says in its last lines whether the turn may only look
+# (a quiet wake, or a post from a PickiPedia sign-in) or has the agent's full
+# tools; a session with no wake is a terminal's, which has them all.
+WAKE_SENDER = 'mood-poller'
+LOOK_ONLY = 'can look but not touch'
+FULL_TOOLS = 'has your full tools'
+
+
+def wake_tools(session_ids):
+    """{session id: 'look' or 'full'} for agent sessions; a wake that says
+    neither (one from before it was said) is left out."""
+    from conversations.models import Message
+    sids = {s for s in session_ids if s}
+    said = {}
+    for sid, content in (Message.objects.filter(session_id__in=sids, sender_id=WAKE_SENDER)
+                         .order_by('created_at').values_list('session_id', 'content')):
+        if sid not in said:
+            text = prose(content)
+            said[sid] = 'look' if LOOK_ONLY in text else 'full' if FULL_TOOLS in text else None
+    return {sid: said.get(sid, 'full') for sid in sids if said.get(sid, 'full')}
+
+
 def how_payload(msg):
     """Model and effort an agent's message ran on ('' when unknown); what it
     wrote and read, in tokens, and what that cost; and whether it ended its turn.

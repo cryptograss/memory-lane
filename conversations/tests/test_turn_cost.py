@@ -51,3 +51,36 @@ class TurnCostTest(TestCase):
         [quiet] = self.client.get('/api/moods/m26/turns/').json()['quiet']
         self.assertEqual(quiet['reason'], 'nothing new')
         self.assertAlmostEqual(quiet['usd'], 3.36198, places=4)
+
+
+class WakeToolsTest(TestCase):
+    """Which tools an agent's turn had: its wake says, and a terminal has them all."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.magent = ThinkingEntity.objects.create(name='magent', is_biological_human=False)
+        cls.poller = ThinkingEntity.objects.create(name='mood-poller', is_biological_human=False)
+        cls.mood = Mood.objects.create(slug='m26')
+
+    def turn(self, session, wake=None, reply='<silent>nothing new</silent>'):
+        if wake is not None:
+            Message.objects.create(id=uuid.uuid4(), sender=self.poller, mood=self.mood, session_id=session,
+                                   content=f'<mood-wake mood="m26" reason="quiet">\nquiet.\n{wake}\n</mood-wake>')
+        Message.objects.create(id=uuid.uuid4(), sender=self.magent, mood=self.mood, session_id=session,
+                               content=[{'type': 'text', 'text': reply}], stop_reason='end_turn')
+
+    def test_each_turn_says_whether_it_could_only_look(self):
+        from conversations.services.mood_view import wake_tools
+        look, full, old, terminal = (uuid.uuid4() for _ in range(4))
+        self.turn(look, 'This turn can look but not touch: read and search files under ~/workspace.')
+        self.turn(full, 'This turn has your full tools, as in your terminal.')
+        self.turn(old, 'Answer in the Mood by replying normally.')  # from before a wake said
+        self.turn(terminal)
+        self.assertEqual(wake_tools({look, full, old, terminal, None}), {look: 'look', full: 'full', terminal: 'full'})
+
+    def test_the_turns_endpoint_carries_it(self):
+        self.turn(uuid.uuid4(), 'This turn can look but not touch.')
+        self.turn(uuid.uuid4(), 'This turn has your full tools.', reply='Done: #171 is up.')
+        body = self.client.get('/api/moods/m26/turns/').json()
+        self.assertEqual([q.get('tools') for q in body['quiet']], ['look'])
+        self.assertEqual([t.get('tools') for t in body['turns'] if t['sender'] == 'magent'], ['full'])

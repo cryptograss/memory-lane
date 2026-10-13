@@ -23,7 +23,7 @@ from .services import delivery_kid, push, servers, wiki_auth, wiki_feed, wiki_up
 from .services import mood_auth
 from .services.mood_view import (
     from_wiki_tier,
-    MACHINERY_SENDERS, how_payload, activity, background_tasks, is_wrapper, known_names, mentions_in, addressed_in, mood_payload,
+    MACHINERY_SENDERS, how_payload, wake_tools, activity, background_tasks, is_wrapper, known_names, mentions_in, addressed_in, mood_payload,
     prose, render_html, step_detail, step_images, step_payload, timeline, turn_payload, turns, wiki_title, wikilinks_in,
 )
 
@@ -137,7 +137,10 @@ def api_mood_turns(request, slug):
 
     names = known_names()
     turns_out, step_msgs, quiet_out, thoughts_out, compactions_out, events_out = [], [], [], [], [], []
+    session_of = {}  # message id -> its session, for which tools an agent's turn had
     for kind, msg, text in timeline(mood, after=after, before=before, limit=limit, start=start):
+        if msg.session_id:
+            session_of[str(msg.id)] = msg.session_id
         if kind == 'turn':
             turns_out.append(turn_payload(msg, text, names))
         elif kind == 'thought':
@@ -167,6 +170,12 @@ def api_mood_turns(request, slug):
             step_msgs.append(msg)
     images = step_images(step_msgs)
     steps_out = [{**step_payload(m), 'images': images.get(str(m.id), [])} for m in step_msgs]
+    # An agent's turn says whether it could only look or had its full tools.
+    agent_said = [p for p in turns_out if not p['is_human']] + steps_out + quiet_out + thoughts_out
+    tools = wake_tools({session_of.get(p['id']) for p in agent_said})
+    for p in agent_said:
+        if session_of.get(p['id']) in tools:
+            p['tools'] = tools[session_of[p['id']]]
     first = min([i['created_at'] for i in turns_out + steps_out + quiet_out + thoughts_out + compactions_out
                  + events_out], default=None)
     agents = agents_in(mood)
