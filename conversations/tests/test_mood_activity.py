@@ -148,7 +148,7 @@ class ActivityTest(TestCase):
     def test_a_compaction_once_done_is_not_thinking(self):
         self.add(self.magent, 900, [{'type': 'text', 'text': 'done'}], stop_reason='end_turn')
         self.add(self.justin, 70, '/compact great run @magent', source_file='mood-web')
-        self.assertEqual(self.now()['doing'], 'waking')  # while it compacts
+        self.assertEqual(self.now()['doing'], 'compacting')  # while it compacts, not "waking"
         self.compacted(5)
         self.assertIsNone(self.now())
 
@@ -171,6 +171,24 @@ class ActivityTest(TestCase):
         self.assertEqual(self.now()['doing'], 'thinking')  # while the run is still going
         self.ran(9)
         self.assertIsNone(self.now())
+
+    def test_the_runs_own_lines_arriving_after_its_end_dont_start_it_again(self):
+        # 2026-10-15: the watcher brought the /compact's command line from the
+        # transcript 36 ms after the runner's end. Newest to arrive, it read as
+        # thinking; it happened before the end, so it isn't.
+        self.add(self.justin, 70, '@magent /compact keep the list', source_file='mood-web')
+        self.add(self.magent, 10, 'This session is being continued from a previous conversation.')
+        self.ran(9)
+        self.add(self.justin, 60, {'type': 'slash_command', 'command_name': '/compact',
+                                   'command_message': 'compact', 'command_args': 'keep the list'})
+        self.add(self.justin, 60, '<task-notification>\n<status>failed</status>\n</task-notification>')
+        self.assertIsNone(self.now())
+
+    def test_a_compact_typed_into_a_session_is_compacting(self):
+        self.add(self.magent, 900, [{'type': 'text', 'text': 'done'}], stop_reason='end_turn')
+        self.add(self.justin, 20, {'type': 'slash_command', 'command_name': '/compact',
+                                   'command_message': 'compact', 'command_args': ''})
+        self.assertEqual(self.now()['doing'], 'compacting')
 
     def test_a_turn_after_a_runners_turn_counts_from_its_own_start(self):
         self.add(self.magent, 300, 'This session is being continued from a previous conversation.')

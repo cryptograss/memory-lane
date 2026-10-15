@@ -966,8 +966,23 @@ _MCP_WORDS = {'playwright': 'using the browser', 'pickipedia': 'on PickiPedia',
               'magenta-memory-v2': 'remembering', 'magenta-memory': 'remembering'}
 
 
+# What an agent is doing while one of Claude Code's own commands runs: asked
+# from a Mood ("@magent /compact"), or typed into a session ("/compact").
+COMMAND_DOING = {'compact': 'compacting', 'context': 'measuring its context', 'usage': 'checking usage',
+                 'cost': 'checking usage'}
+
+
+def command_doing(text, agent):
+    """'compacting' for a post like "@magent /compact ..."; None for anything else."""
+    rest = re.sub(rf'@{re.escape(agent)}\b', '', text or '').strip()
+    match = re.match(r'/([a-z]+)\b', rest, re.I)
+    return COMMAND_DOING.get(match.group(1).lower()) if match else None
+
+
 def _doing(msg):
     """A few words for what a machinery message says the agent is doing."""
+    if isinstance(msg.content, dict) and msg.content.get('type') == 'slash_command':
+        return COMMAND_DOING.get(str(msg.content.get('command_name', '')).lstrip('/').lower(), 'thinking')
     if hasattr(msg, 'tooluse'):
         name = msg.tooluse.tool_name
         if name.startswith('mcp__'):
@@ -1154,7 +1169,9 @@ def _activity(mood, now=None):
                     'since': _when(newest)}
         if now - _when(newest) > ACTIVITY_WINDOW:
             return None
-        return {'agent': named[0], 'doing': 'waking', 'since': _when(newest)}
+        # "@magent /compact" runs the command, not a turn: say what's happening.
+        return {'agent': named[0], 'doing': command_doing(prose(newest.content), named[0]) or 'waking',
+                'since': _when(newest)}
 
     if now - _when(newest) > ACTIVITY_WINDOW:
         return None
@@ -1162,9 +1179,14 @@ def _activity(mood, now=None):
     # turn is after that. Most turns end on a line that says so too, but a
     # /compact run with -p streams only the summary -- never the "Compacted"
     # a terminal writes -- so the summary was read as the agent thinking.
+    # Compared by when each line happened, not when it reached the record: the
+    # watcher brings the run's own lines from its transcript a moment after the
+    # runner's end -- a /compact's command line, a background task's notice --
+    # and newest-arrived, they read as the agent at work again.
     ended = (mood.messages.filter(sender_id='system', content__type='turn-result')
-             .order_by('-created_at').values_list('created_at', flat=True).first())
-    if ended is not None and ended >= newest.created_at:
+             .order_by('-created_at').first())
+    ended = _when(ended) if ended is not None else None
+    if ended is not None and ended >= _when(newest):
         return None
     if newest.sender_id in agents and newest.stop_reason in TURN_ENDS:
         return None
@@ -1180,7 +1202,7 @@ def _activity(mood, now=None):
     for msg in recent:
         if msg.sender_id in agents and msg.stop_reason in TURN_ENDS:
             break
-        if msg.source_file in POSTED or _command_output(msg) or (ended is not None and msg.created_at <= ended):
+        if msg.source_file in POSTED or _command_output(msg) or (ended is not None and _when(msg) <= ended):
             break
         streak.append(msg)
     agent = next((m.sender_id for m in streak if m.sender_id in agents), None) or sorted(agents or {'magent'})[0]

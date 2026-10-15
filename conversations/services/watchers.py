@@ -54,6 +54,16 @@ def seen(request, slug, now=None):
     cache.set(KEY, watching, WATCHING_FOR * 2)
 
 
+def by_mood(now=None):
+    """slug -> how many are reading it without signing in: counts only, for anyone."""
+    now = now or time.time()
+    counts = {}
+    for w in (cache.get(KEY) or {}).values():
+        if now - w['last'] < WATCHING_FOR:
+            counts[w['slug']] = counts.get(w['slug'], 0) + 1
+    return counts
+
+
 def now_watching(slug, admin=False, now=None):
     """{'here', 'all'} counts, and with `admin` (an SSH-key sign-in) each one: {'ip', 'browser', 'mood', 'since'}."""
     now = now or time.time()

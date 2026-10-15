@@ -967,6 +967,9 @@ def api_moods_live(request):
             act = activity(mood)
             if act and act.get('doing') != 'held':
                 entry['busy'] = act['agent']
+    from .services import watchers
+    for slug, n in watchers.by_mood().items():  # who's reading without signing in: a count beside the Mood
+        live.setdefault(slug, {'speakers': [], 'typing': [], 'busy': None})['watching'] = n
     body = {'moods': live, 'blocks': AROUND_BLOCKS}
     cache.set('moods-live', body, 3)
     return JsonResponse(body)

@@ -39,6 +39,17 @@ class MoodWakeTest(TestCase):
         msg = self.imp(line(self.session, 'user', [{'type': 'text', 'text': WAKE}], entrypoint='sdk-cli'))
         self.assertEqual(msg.sender_id, 'mood-poller')
 
+    def test_a_background_tasks_notice_is_the_harness_not_the_container_owner(self):
+        # As Claude Code writes it: fed back in as a user turn, marked by its origin.
+        notice = '<task-notification>\n<task-id>b1</task-id>\n<status>failed</status>\n</task-notification>'
+        msg = self.imp(line(self.session, 'user', notice, entrypoint='sdk-cli',
+                            origin={'kind': 'task-notification', 'producer': 'session-task'}))
+        self.assertEqual(msg.sender_id, 'system')
+        from conversations.services.mood_view import activity
+        self.assertNotEqual((activity(self.mood) or {}).get('agent'), 'justin')
+        msg = self.imp(line(self.session, 'user', notice))  # no origin, as older transcripts have it
+        self.assertEqual(msg.sender_id, 'system')
+
     def test_a_person_typing_the_wrapper_is_still_that_person(self):
         msg = self.imp(line(self.session, 'user', WAKE, entrypoint='cli'))
         self.assertEqual(msg.sender_id, 'justin')

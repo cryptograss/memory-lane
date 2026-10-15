@@ -557,7 +557,7 @@
   .event .event-reply:hover { color: var(--accent); }
   @media (pointer: coarse) { .event .event-reply { visibility: visible; } }
   .people .who.human { color: var(--human); }
-  .people .who.watchers { color: var(--muted); cursor: help; }
+  .watching { color: var(--muted); cursor: help; white-space: nowrap; }
   .event.access .as-root { color: var(--err, #c0392b); font-weight: 700; }
   .token.blue-railroad { color: #2563b8; font-size: 11px; font-weight: 600; text-decoration: none; margin-left: 5px; white-space: nowrap; }
   .token.blue-railroad .ico { width: 14px; height: 12px; margin-right: 2px; vertical-align: -1px; }
@@ -1108,7 +1108,21 @@
   }
   function peopleLine(slug) {
     const { names, active } = aroundIn(slug);
-    return names.map(n => `<span class="nm${active.has(n) ? ' live' : ''}" data-who="${esc(n)}">${esc(shown(n))}</span>`).join(', ');
+    return names.map(n => `<span class="nm${active.has(n) ? ' live' : ''}" data-who="${esc(n)}">${esc(shown(n))}</span>`).join(', ')
+      + watchingIn(slug);
+  }
+  // Who reads without signing in (services/watchers.py): 👁 and how many, on each
+  // Mood's line. The open Mood's own count is the freshest, and to an SSH-key
+  // sign-in its hover says who each one is.
+  let watchersNow = null;
+  function watchingIn(slug) {
+    const here = slug === current && watchersNow;
+    const n = here ? watchersNow.here : ((liveData[slug] || {}).watching || 0);
+    if (!n) return '';
+    const title = `${n} reading without signing in, in the last minute or so`
+      + (here && watchersNow.who ? '\n\n' + watchersNow.who.filter(x => x.mood === slug)
+           .map(x => `${x.ip} · ${x.browser} · for ${elapsed(x.since)}`).join('\n') : '');
+    return ` <span class="watching" title="${esc(title)}">👁 ${n}</span>`;
   }
   function markLive() {
     nav.querySelectorAll('a.mood').forEach(a => {
@@ -3501,18 +3515,9 @@
   });
   setInterval(renderTasks, 1000);
 
-  // Who reads without signing in (services/watchers.py): 👁 and how many, among the
-  // Mood's people; hovering says how many in all, and to an SSH-key sign-in, each one's address.
   function renderWatchers(w) {
-    const people = document.getElementById('people');
-    if (!people) return;
-    let chip = people.querySelector('.watchers');
-    if (!w || !w.all) { if (chip) chip.remove(); return; }
-    if (!chip) { chip = document.createElement('span'); chip.className = 'who watchers'; people.appendChild(chip); }
-    chip.textContent = w.here ? `👁 ${w.here}` : `👁 ${w.all} elsewhere`;
-    const ago = t => elapsed(t);
-    chip.title = `${w.here} here and ${w.all} in all reading without signing in, in the last minute or so`
-      + (w.who ? '\n\n' + w.who.map(x => `${x.ip} · ${x.browser} · #${x.mood} · for ${ago(x.since)}`).join('\n') : '');
+    watchersNow = w || null;
+    markLive();
   }
 
   const typingEl = document.getElementById('typing');

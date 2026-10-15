@@ -270,6 +270,12 @@ def poller_or(user, content, event):
         block.get('text', '') for block in content if isinstance(block, dict))
     if text.lstrip().startswith(MOOD_WAKE_PREFIX) and event.get('entrypoint') == 'sdk-cli':
         return get_or_create_participant('mood-poller', 'system')
+    # Claude Code feeds a background task's notice back in as a user turn; the
+    # harness said it, not the person. Filed as theirs, it was the newest word
+    # in the Mood, and the page showed the agent at work on it for good.
+    origin = event.get('origin') if isinstance(event.get('origin'), dict) else {}
+    if origin.get('kind') == 'task-notification' or text.lstrip().startswith('<task-notification>'):
+        return get_or_create_participant('system', 'system')
     return user
 
 

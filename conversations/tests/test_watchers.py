@@ -55,3 +55,12 @@ class WatchersTest(TestCase):
         self.look('general')
         self.assertEqual(watchers.now_watching('general')['here'], 1)
         self.assertEqual(watchers.now_watching('general', now=time.time() + watchers.WATCHING_FOR + 1)['here'], 0)
+
+    def test_the_mood_list_shows_each_moods_count_and_no_addresses(self):
+        cache.delete('moods-live')
+        self.look('general')
+        self.look('general', agent=IPHONE, ip='198.51.100.7')
+        self.look('jams', ip='192.0.2.1')
+        live = Client().get('/api/moods/live/').json()['moods']
+        self.assertEqual((live['general']['watching'], live['jams']['watching']), (2, 1))
+        self.assertNotIn('198.51.100.7', str(live))
