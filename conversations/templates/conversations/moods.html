@@ -760,7 +760,13 @@
   /* Folded, an agent is one short line: its pie, its name and the gist; ▸ opens its menus. */
   .hush .fold { border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; padding: 0 2px; }
   .hush .fold:hover { color: var(--accent); }
-  .hush .gist { color: var(--muted); cursor: pointer; }
+  /* The gist reads as a menu (Sky, 16 Oct): bright, boxed like the selects it opens into, with a caret. */
+  .hush .gist { font: inherit; font-size: 12.5px; color: var(--ink); background: var(--panel); cursor: pointer;
+                border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+  .hush .gist::after { content: ' ▾'; color: var(--muted); }
+  .hush .gist:hover, .hush .gist:focus-visible { border-color: var(--accent); }
+  .hush .gist:hover::after { color: var(--accent); }
+  .hush .off .gist { color: var(--accent); }
   .hush .ultra input { vertical-align: -2px; margin: 0 2px 0 0; }
   /* A harness's whole catalog (Pi): the closed menu shows the choice, not the widest of 1,500 names. */
   .hush select.catalog { max-width: 15em; text-overflow: ellipsis; }
@@ -3616,8 +3622,7 @@
       const l = a.listening, ctx = a.context || {};
       const row = `<span class="agent${l.mode === 'on' ? '' : ' off'}" data-who="${esc(agent)}">${icon(agent, false)}${esc(agent)}: `;
       if (!agentOpen[agent]) {
-        return row + `<span class="gist" title="Open ${esc(agent)}'s settings here">${esc(agentGist(a))}</span>`
-          + `<button type="button" class="fold" aria-expanded="false" aria-label="Open ${esc(agent)}'s settings">▸</button></span>`;
+        return row + `<button type="button" class="gist" aria-expanded="false" title="Open ${esc(agent)}'s settings here">${esc(agentGist(a))}</button></span>`;
       }
       const shut = `<button type="button" class="fold" aria-expanded="true" aria-label="Fold ${esc(agent)}'s settings">◂</button>`;
       if (!keyHolder) {
