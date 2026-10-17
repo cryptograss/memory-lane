@@ -672,7 +672,11 @@
   #lightbox { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.86); display: flex; flex-direction: column;
               align-items: center; justify-content: center; gap: 10px; padding: 16px; }
   #lightbox[hidden] { display: none; }
-  #lightbox img { max-width: 94vw; max-height: 80vh; object-fit: contain; border-radius: 6px; box-shadow: 0 6px 30px rgba(0,0,0,.5); }
+  #lightbox img { max-width: 94vw; max-height: 80vh; object-fit: contain; border-radius: 6px; box-shadow: 0 6px 30px rgba(0,0,0,.5); cursor: zoom-in; }
+  /* Tapped: the picture at its own size, scrolled around in, here (not a page of its own); tapped again, fitted. */
+  #lightbox.whole { justify-content: flex-start; align-items: flex-start; overflow: auto; }
+  #lightbox.whole img { max-width: none; max-height: none; cursor: zoom-out; border-radius: 0; margin: auto; }
+  #lightbox.whole .lbfoot { display: none; }
   #lightbox .lbfoot { color: #eee; font-size: 14px; text-align: center; max-width: 90vw; }
   #lightbox .lbfoot a { color: #ffb3d9; margin-left: 10px; white-space: nowrap; }
   /* "→ PickiPedia" where the picture is seen whole: when a pickipedian use for it comes to mind. */
@@ -682,7 +686,7 @@
   #lightbox .lbup[hidden] { display: none; }
   #lightbox .close { position: absolute; top: 10px; right: 14px; font-size: 26px; line-height: 1; color: #fff; background: none;
                      border: 0; cursor: pointer; padding: 6px; }
-  .turn .body a.img { cursor: zoom-in; }
+  .turn .body a.img, .work .thumbs a, .step-detail .shots a { cursor: zoom-in; }
   /* A file or a release, shown where it was linked (mood_view._file_embed, _release_embed). */
   :is(.turn, .event.release) .body .embed { display: block; margin: 6px 0; max-width: 560px; }
   :is(.turn, .event.release) .body .embed video { display: block; width: 100%; max-height: 60vh; border-radius: 6px; background: #000; }
@@ -1502,12 +1506,24 @@
     } finally { b.classList.remove('busy'); }
   });
 
-  // A picture in what was said opens large, here; from there, its page (PickiPedia,
-  // Commons) or, for one sent here, the file itself. ✕, Esc or the dark around it closes.
+  // A picture in what was said -- or a screenshot in an agent's work -- opens large, here;
+  // from there, its page (PickiPedia, Commons) or, for one sent here, the file itself.
+  // Tapped, it's shown at its own size, still here. ✕, Esc, the dark around it, or Back
+  // closes it: open, it's a step in the history, so a phone's back gesture closes the
+  // picture instead of leaving magenta (Justin, 17 Oct: "everything has to reload").
   const lightbox = document.getElementById('lightbox');
-  function closeLightbox() { lightbox.hidden = true; lightbox.querySelector('img').removeAttribute('src'); }
+  const LIGHTBOX_LINKS = '.turn .body a.img, .work .thumbs a, .step-detail .shots a';
+  function closeLightbox(byBack) {
+    if (lightbox.hidden) return;
+    lightbox.hidden = true;
+    lightbox.classList.remove('whole');
+    lightbox.querySelector('img').removeAttribute('src');
+    if (!byBack && history.state && history.state.lightbox) history.back();  // its step in the history goes too
+  }
+  window.addEventListener('popstate', () => closeLightbox(true));
+  lightbox.querySelector('img').addEventListener('click', e => { e.stopPropagation(); lightbox.classList.toggle('whole'); });
   document.addEventListener('click', e => {
-    const a = e.target.closest('.turn .body a.img');
+    const a = e.target.closest(LIGHTBOX_LINKS);
     if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button) return;
     e.preventDefault();
     const img = a.querySelector('img');
@@ -1527,6 +1543,8 @@
     if (onWiki) { page.href = onWiki.href; page.textContent = 'its page on PickiPedia ↗'; }
     lightbox._topp = next && next.classList.contains('topp') ? next : null;
     lightbox.querySelector('.lbup').hidden = !lightbox._topp;
+    lightbox.classList.remove('whole');
+    if (lightbox.hidden) history.pushState({ ...(history.state || {}), lightbox: true }, '', location.href);
     lightbox.hidden = false;
   });
   lightbox.querySelector('.lbup').addEventListener('click', e => {
@@ -5426,6 +5444,7 @@
     e.preventDefault(); open(a.dataset.slug, true);
   });
   window.addEventListener('popstate', e => {
+    if (e.state && e.state.lightbox) return;  // forward into a picture's step: nothing to open
     const slug = (e.state && e.state.slug) || location.pathname.split('/')[2];
     if (slug) open(decodeURIComponent(slug), false);
   });
