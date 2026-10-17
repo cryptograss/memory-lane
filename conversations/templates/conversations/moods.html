@@ -453,14 +453,19 @@
   #replying .what { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #replying button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
   /* Something shared from another app (Android's share sheet), waiting to be put in a Mood. */
-  #shareCard { max-width: 760px; margin: 6px auto 0; padding: 8px 12px; font-size: 13px; display: flex; gap: 10px; align-items: center;
+  #shareCard { max-width: 760px; margin: 6px auto 0; padding: 8px 12px; font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center;
                border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-soft); }
   #shareCard[hidden] { display: none; }
-  #shareCard .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+  /* What came, on a line of its own; under it which Mood it goes into, Add and ✕. */
+  #shareCard .what { flex: 1 1 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
                      -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   #shareHere { flex: none; font: inherit; font-size: 13px; padding: 4px 12px; border: 0; border-radius: 6px;
                background: var(--accent); color: #fff; cursor: pointer; white-space: nowrap; }
   #shareHere:disabled { opacity: .5; cursor: default; }
+  #shareCard .into { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  #shareCard .into[hidden] { display: none; }
+  #shareMood { flex: 1; min-width: 0; max-width: 260px; font: inherit; font-size: 14px; padding: 5px 6px; border: 1px solid var(--line);
+               border-radius: 6px; background: var(--panel); color: var(--ink); }
   #shareDrop { flex: none; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
   /* The license a picture of yours goes out under, said as it's attached (services/media.LICENSES). */
   #licenseBar { max-width: 760px; margin: 0 auto; padding: 6px 16px 0; font-size: 12.5px; color: var(--muted); }
@@ -563,6 +568,33 @@
   /* A word from the page (an error, a note) goes on its own line under the box: beside it, a
      long one squeezed the box to a sliver on a phone, and you couldn't type to clear it. */
   #composer textarea { min-width: 0; }
+  /* The words, ＋ and 🎙 in one rounded field (Signal, WhatsApp): the box is the field, its tools inside it. */
+  #composer .field { flex: 1; min-width: 0; display: flex; align-items: flex-end; gap: 2px; padding: 2px 4px;
+                     border: 1px solid var(--line); border-radius: 22px; background: var(--panel); }
+  #composer .field:focus-within { border-color: var(--accent); }
+  #composer.dropping .field { outline: 2px dashed var(--accent); }
+  #composer .field textarea { border: 0; border-radius: 0; background: none; outline: none; padding: 9px 6px; resize: none; }
+  #composer .field #attach, #composer .field #memoBtn { flex: none; border: 0; border-radius: 50%; background: none;
+                                                        min-width: 38px; height: 38px; padding: 0 8px; margin-bottom: 1px; }
+  #composer .field #memoBtn.recording { border-radius: 19px; }
+  /* Pictures with the words: thumbnails above the field, each with how far up it is and ✕ (renderTray). */
+  #tray { flex: 0 0 100%; display: flex; gap: 8px; overflow-x: auto; padding: 2px 0; scrollbar-width: thin; }
+  #tray[hidden] { display: none; }
+  #tray .att { position: relative; flex: none; width: 76px; height: 76px; border-radius: 10px; overflow: hidden;
+               border: 1px solid var(--line); background: var(--hover); }
+  #tray .att img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #tray .att.up img { opacity: .55; }
+  #tray .att .pct { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+                    font-size: 13px; font-weight: 600; color: #fff; text-shadow: 0 0 4px rgba(0,0,0,.8); }
+  #tray .att:not(.up) .pct, #tray .att:not(.up) .bar { display: none; }
+  #tray .att .bar { position: absolute; left: 0; bottom: 0; height: 4px; width: 0; background: var(--accent); transition: width .2s; }
+  #tray .att .x { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; padding: 0; border-radius: 50%;
+                  background: rgba(0,0,0,.6); color: #fff; font-size: 12px; line-height: 22px; text-align: center; }
+  /* Send pressed while a picture is still going up: it says how far, and sends when it's in. */
+  #send .wait { display: none; font-size: 12px; font-weight: 600; }
+  #send.waiting .label, #send.waiting svg { display: none !important; }
+  #send.waiting .wait { display: inline; }
+  #send.waiting { opacity: .8; cursor: progress; }
   #composer .err, #composer .note { flex: 0 0 100%; order: 10; margin-top: -4px; }
   #composer .err { color: var(--accent); font-size: 12px; }
   /* Not signed in here: said where the box would be, with the way back in, rather than the box just gone. */
@@ -867,15 +899,13 @@
     :root { --text-base: 16.5px; }
     #composer { padding: 6px 8px 8px; gap: 6px; }
     /* No grip: a finger finds it by accident. The box grows with its text instead (fitSay). */
-    #composer textarea { min-height: 38px; padding: 7px 9px; resize: none; }
+    #composer .field textarea { min-height: 38px; padding: 8px 4px; }
     #composer textarea::placeholder { white-space: nowrap; overflow: hidden; }
-    #composer #attach { padding: 8px 9px; }
-    #composer #agentsBtn { display: block; }
-    #composer #send { padding: 8px 10px; }
+    /* Send: a round button beside the field. The agents' settings are the one line above it (▸ opens them). */
+    #composer #send { flex: none; width: 44px; height: 44px; padding: 0; border-radius: 50%; }
     #send .label { display: none; }
     #send svg { display: inline-block; }
-    .hush { display: none; }
-    body.agents-open .hush:not(:empty) { display: flex; padding: 6px 10px 2px; max-height: 40vh; overflow-y: auto; }
+    .hush:has(.fold[aria-expanded="true"]) { max-height: 40vh; overflow-y: auto; }
   }
   /* Signed in, you are who you are: no need to choose whose view to see. */
 </style>
@@ -989,19 +1019,23 @@
     <div id="activity"><span class="dot"></span><span id="activityText"></span><button type="button" id="stopBtn" title="Stop it, as Esc does in a terminal (Esc in the message box does the same). What was said stays; add to it and it reads both." hidden>■ stop</button></div>
     <div class="hush" id="hush"></div>
     <div id="licenseBar" hidden><span class="what"></span> <button type="button" id="licenseFlip"></button>
-      <label id="stripLocation" title="Phone photos carry where they were taken (GPS), the camera and the time. Ticked, that's removed before anyone sees it; unticked, it stays (a HEIC photo's carried into its JPEG)."><input type="checkbox" checked> Remove location (GPS)</label></div>
+      <label id="stripLocation" title="Phone photos carry where and when they were taken (GPS), and the camera. They go with the picture unless this is ticked; ticked, all of it is removed before anyone sees it (a HEIC photo's carried into its JPEG)."><input type="checkbox"> Remove photo details (place, time, camera)</label></div>
     <div id="videoCards"></div>
     <div id="videoBar" hidden><span class="what"></span><span class="track"><span class="fill"></span></span><span class="pct"></span> <button type="button" id="videoCancel">cancel</button></div>
-    <div id="shareCard" hidden><span class="what"></span><button type="button" id="shareHere"></button><button type="button" id="shareDrop" title="Don't share it" aria-label="Don't share it">✕</button></div>
+    <div id="shareCard" hidden><span class="what"></span><label class="into">into <select id="shareMood" aria-label="Which Mood it goes to"></select></label><button type="button" id="shareHere"></button><button type="button" id="shareDrop" title="Don't share it" aria-label="Don't share it">✕</button></div>
     <div id="replying" hidden><span class="what"></span><button type="button" id="replyCancel" title="Don't reply (Esc)" aria-label="Cancel the reply">✕</button></div>
     <form id="composer" autocomplete="off">
       <div id="suggest"></div>
       <button type="button" id="agentsBtn" title="Agents here: listening, model, effort" aria-label="Agent settings" aria-expanded="false">⚙</button>
-      <button type="button" id="attach" title="Add an image (or paste or drop one). Your pictures are shared under CC BY-SA 4.0, or CC0 if you choose." aria-label="Add an image">＋</button>
-      <button type="button" id="memoBtn" title="Record a voice memo: tap to start, tap again to stop and add words, or press Send while it records to send it as it is. Its words are written in on the server." aria-label="Record a voice memo" hidden>🎙</button>
+      <div id="tray" hidden></div>
       <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp,image/heic,image/heif,.heic,.heif" multiple hidden>
-      <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
-      <button type="submit" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z" fill="currentColor"/></svg></button>
+      <!-- One field, as Signal and WhatsApp have it: ＋ and 🎙 inside it, the words between. -->
+      <div class="field">
+        <button type="button" id="attach" title="Add an image (or paste or drop one). Your pictures are shared under CC BY-SA 4.0, or CC0 if you choose." aria-label="Add an image">＋</button>
+        <textarea id="say" placeholder="Say something. @name to address someone; [[Page]] links PickiPedia. Enter sends; Ctrl+Enter for a new line." rows="2"></textarea>
+        <button type="button" id="memoBtn" title="Record a voice memo: tap to start, tap again to stop and add words, or press Send while it records to send it as it is. Its words are written in on the server." aria-label="Record a voice memo" hidden>🎙</button>
+      </div>
+      <button type="submit" id="send" aria-label="Send"><span class="label">Send</span><span class="wait"></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z" fill="currentColor"/></svg></button>
     </form>
     <div id="signedOut" hidden></div>
     </div>
@@ -3682,9 +3716,10 @@
   // The agents' settings, in this browser: folded by default to one line -- each
   // agent's model and effort in its own colour, its name on hover -- so a Mood with
   // several agents doesn't spend a third of the screen on their menus; ▸ opens them
-  // all, an agent to a row. A phone shows them only when ⚙ is pressed, and whole.
-  let agentsOpen = store.get('agentsOpen', false);
-  const agentsWhole = () => agentsOpen || matchMedia(PHONE).matches;
+  // all, an agent to a row. Open is remembered on a computer; a phone always starts on
+  // the one line, which is all the room it has above the box (and there's no ⚙ any more).
+  let agentsOpen = matchMedia(PHONE).matches ? false : store.get('agentsOpen', false);
+  const agentsWhole = () => agentsOpen;
   function agentGist(a) {
     const ctx = a.context || {};
     const model = a.model ? shortModel(a.model.split('/').pop()) : ctx.model ? shortModel(ctx.model.split('/').pop()) : 'default';
@@ -3695,15 +3730,14 @@
   document.addEventListener('click', e => {
     if (!e.target.closest('#hush .fold, #hush .gist')) return;
     agentsOpen = !agentsOpen;
-    store.set('agentsOpen', agentsOpen);
+    if (!matchMedia(PHONE).matches) store.set('agentsOpen', agentsOpen);
     agentsShown = '';
     renderAgents(agentsNow);
   });
   function agentRows(agents) {
     if (!Object.keys(agents).length) return '';
     const whole = agentsWhole();
-    const fold = matchMedia(PHONE).matches ? ''
-      : `<button type="button" class="fold" aria-expanded="${whole}" aria-label="${whole ? 'Fold the agents\' settings to one line' : 'Open the agents\' settings'}"`
+    const fold = `<button type="button" class="fold" aria-expanded="${whole}" aria-label="${whole ? 'Fold the agents\' settings to one line' : 'Open the agents\' settings'}"`
         + ` title="${whole ? 'Fold to one line' : 'Open the agents\' settings'}">${whole ? '▾' : '▸'}</button>`;
     if (!whole) {
       return fold + Object.entries(agents).map(([agent, a]) =>
@@ -4183,69 +4217,141 @@
     setTimeout(() => note && note.remove(), ms || 8000);
   }
   const fileInput = document.getElementById('file');
-  // Pictures still on their way up, and whether Send was pressed meanwhile: it waits for
-  // them (say()), and sends once the last is in the box -- not the placeholder. One that
-  // fails leaves the box to its person, the error in view, and sends nothing.
-  let picturesUp = 0, picturesThenSend = false, pictureFailed = false;
+  // Pictures with the words: thumbnails in a tray above the box, as Signal and WhatsApp
+  // have them -- not markdown in it -- each saying how far up it is, with ✕ to take it out.
+  // Sent, their markdown follows the words. A Mood's tray is kept with its draft; one still
+  // going up when its Mood is left lands in that Mood's draft when it's in.
+  const trayEl = document.getElementById('tray');
+  let tray = [];               // {file, name, preview, pct, xhr, sha, markdown, url, mine, mood, el}
+  const flying = new Set();    // pictures still going up, whichever Mood they're for
+  // Send pressed while a picture here is still going up: it says how far, and sends once
+  // they're all in. One that fails leaves the box to its person, the error in view.
+  let picturesThenSend = false, pictureFailed = false;
+  const goingUp = () => tray.filter(a => !a.markdown);
+  const urlOf = markdown => (String(markdown).match(/\]\(([^)\s]+)/) || [])[1] || '';
+  function attEl(a) {
+    if (!a.el) {
+      a.el = document.createElement('div');
+      a.el.className = 'att';
+      const img = document.createElement('img');
+      img.alt = a.name || 'picture';
+      img.src = a.preview || a.url || '';
+      // A HEIC this browser can't show: the server's JPEG of it, once it's up.
+      img.onerror = () => { if (a.url && !img.src.endsWith(a.url)) img.src = a.url; };
+      const x = document.createElement('button');
+      x.type = 'button'; x.className = 'x'; x.textContent = '✕';
+      x.title = 'Take it out'; x.setAttribute('aria-label', 'Take out ' + (a.name || 'the picture'));
+      x.addEventListener('click', () => dropAttachment(a));
+      a.el.append(img, Object.assign(document.createElement('span'), { className: 'pct' }),
+                  Object.assign(document.createElement('span'), { className: 'bar' }), x);
+      a.el._img = img;
+    }
+    a.el.classList.toggle('up', !a.markdown);
+    a.el.querySelector('.pct').textContent = a.pct >= 100 ? '…' : (a.pct || 0) + '%';
+    a.el.querySelector('.bar').style.width = (a.pct || 0) + '%';
+    if (a.markdown && !a.preview && a.url && !a.el._img.src) a.el._img.src = a.url;
+    return a.el;
+  }
+  function renderTray() {
+    trayEl.hidden = !tray.length;
+    trayEl.replaceChildren(...tray.map(attEl));
+    renderSendWait();
+  }
+  function renderSendWait() {
+    const up = goingUp();
+    const waiting = picturesThenSend && up.length > 0;
+    sendBtn.classList.toggle('waiting', waiting);
+    if (waiting) sendBtn.querySelector('.wait').textContent = Math.round(up.reduce((n, a) => n + (a.pct || 0), 0) / up.length) + '%';
+  }
+  // The last picture in (or taken out): if Send is waiting, send now -- unless one failed.
+  function picturesSettled() {
+    if (!picturesThenSend || goingUp().length) return;
+    picturesThenSend = false;
+    renderSendWait();
+    composer.querySelectorAll('.note.picture-note').forEach(el => el.remove());
+    if (!pictureFailed) say();
+    pictureFailed = false;
+  }
+  function dropAttachment(a) {
+    a.dropped = true;
+    if (!a.markdown && a.xhr) a.xhr.abort();
+    tray = tray.filter(x => x !== a);
+    if (a.sha) sharing.delete(a.sha);
+    if (a.preview) URL.revokeObjectURL(a.preview);
+    renderTray(); saveDraft(); showLicense();
+    picturesSettled();
+  }
   async function upload(file) {
-    const marker = `![uploading ${file.name || 'image'}…]()`;
-    insertAtCaret(marker + '\n');
-    picturesUp++;
+    const a = { file, name: file.name || 'picture', preview: URL.createObjectURL(file), pct: 0, mood: current };
+    tray.push(a); flying.add(a);
+    renderTray();
     try {
-      const body = await sendPicture(file);
-      sayBox.value = sayBox.value.replace(marker, body.markdown);
-      if (body.mine) { sharing.add(body.sha); attachedFiles.set(body.sha, { file, markdown: body.markdown }); licenseNow = body.license; showLicense(); }
-      sayBox.dispatchEvent(new Event('input'));
+      const body = await sendPicture(file, pct => { a.pct = pct; attEl(a); renderSendWait(); }, a);
+      if (a.dropped) return;
+      Object.assign(a, { sha: body.sha, markdown: body.markdown, url: urlOf(body.markdown), mine: !!body.mine, pct: 100 });
+      if (body.mine) { sharing.add(body.sha); licenseNow = body.license; }
+      if (tray.includes(a)) { attEl(a); saveDraft(); showLicense(); }
+      else keepInDraft(a);  // its Mood was left meanwhile: it waits in that Mood's draft
     } catch (e) {
-      sayBox.value = sayBox.value.replace(marker + '\n', '');
-      // The input event first: its listener clears errors, and would take this one with it.
-      sayBox.dispatchEvent(new Event('input'));
+      if (a.dropped) return;
+      tray = tray.filter(x => x !== a);
+      renderTray();
       showError('image: ' + e.message);
       pictureFailed = true;
     } finally {
-      picturesUp--;
-      if (!picturesUp && picturesThenSend) {
-        picturesThenSend = false;
-        if (pictureFailed) composer.querySelectorAll('.note.picture-note').forEach(el => el.remove());
-        else say();
-      }
-      if (!picturesUp) pictureFailed = false;
+      flying.delete(a);
+      picturesSettled();
     }
   }
-  async function sendPicture(file) {
-    const keep = stripBox.checked ? '' : '?keep=location';
-    const r = await fetch('/api/moods/' + encodeURIComponent(current) + '/media/' + keep, {
-      method: 'POST', headers: { 'X-CSRFToken': csrf(), 'Content-Type': 'application/octet-stream' }, body: file,
-    });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body.error || r.status);
-    return body;
+  function keepInDraft(a) {
+    const d = store.get('draft:' + a.mood, null) || { text: '', reply: null };
+    d.tray = [...(d.tray || []), { sha: a.sha, markdown: a.markdown, url: a.url, mine: a.mine, name: a.name }];
+    d.at = Date.now();
+    store.set('draft:' + a.mood, d);
   }
-  // Where a photo was taken goes unless they untick "Remove location" (media.without_metadata;
-  // Justin and Sky, 15 Oct). Unticked or ticked again, the pictures in the box are sent again
-  // the new way and their links swapped, so what's sent is what the box says. Remembered here.
+  // Sent as the bytes go, so it can say how far it's got (fetch can't).
+  function sendPicture(file, onProgress, holder) {
+    const keep = stripBox.checked ? '' : '?keep=location';
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      if (holder) holder.xhr = xhr;
+      xhr.open('POST', '/api/moods/' + encodeURIComponent((holder && holder.mood) || current) + '/media/' + keep);
+      xhr.setRequestHeader('X-CSRFToken', csrf());
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.upload.onprogress = e => { if (e.lengthComputable && onProgress) onProgress(Math.round(100 * e.loaded / e.total)); };
+      xhr.onload = () => {
+        let body = {};
+        try { body = JSON.parse(xhr.responseText); } catch (e) {}
+        if (xhr.status >= 200 && xhr.status < 300) resolve(body);
+        else reject(new Error(body.error || xhr.status));
+      };
+      xhr.onerror = () => reject(new Error("it didn't go up: no connection?"));
+      xhr.onabort = () => reject(new Error('taken out'));
+      xhr.send(file);
+    });
+  }
+  // A photo keeps its details -- where and when, the camera -- unless they tick "Remove photo
+  // details" (media.without_metadata, which takes all of them). Justin and Sky, 17 Oct: keep
+  // everything by default, so a show photo can find its show. Ticked or unticked again, the
+  // pictures in the tray are sent again the new way, so what's sent is what was chosen.
+  // Remembered here: '0' is someone who chose to remove them, and stays so.
   const stripBox = document.querySelector('#stripLocation input');
-  const attachedFiles = new Map();  // sha -> {file, markdown}: what was picked, to send again
-  try { stripBox.checked = localStorage.getItem('keep-location') !== '1'; } catch (e) {}
+  try { stripBox.checked = localStorage.getItem('keep-location') === '0'; } catch (e) {}
   stripBox.addEventListener('change', async () => {
     try { localStorage.setItem('keep-location', stripBox.checked ? '0' : '1'); } catch (e) {}
-    for (const sha of [...sharing]) {
-      const was = attachedFiles.get(sha);
-      if (!was) continue;
+    for (const a of tray.filter(x => x.mine && x.file && x.markdown)) {
       try {
-        const body = await sendPicture(was.file);
-        sayBox.value = sayBox.value.split(was.markdown).join(body.markdown);
-        attachedFiles.delete(sha);
-        sharing.delete(sha);
+        const body = await sendPicture(a.file);
+        sharing.delete(a.sha);
         sharing.add(body.sha);
-        attachedFiles.set(body.sha, { file: was.file, markdown: body.markdown });
+        Object.assign(a, { sha: body.sha, markdown: body.markdown, url: urlOf(body.markdown) });
         if (licenseNow !== body.license) {  // the new copy goes out under the license already chosen
           await fetch(`/api/media/${body.sha}/license/`, { method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify({ license: licenseNow }) });
         }
       } catch (e) { showError('image: ' + e.message); }
     }
-    sayBox.dispatchEvent(new Event('input'));
+    saveDraft(); showLicense();
   });
   // Pictures of yours in the box go out CC BY-SA 4.0 unless you make them CC0:
   // said here as they're attached, and changeable until sent (api_media_license).
@@ -4257,7 +4363,7 @@
   const sharing = new Set();
   let licenseNow = 'cc-by-sa-4.0';
   function showLicense() {
-    for (const sha of [...sharing]) if (!sayBox.value.includes(sha)) sharing.delete(sha);
+    for (const sha of [...sharing]) if (!tray.some(a => a.sha === sha) && !sayBox.value.includes(sha)) sharing.delete(sha);
     licenseBar.hidden = !sharing.size;
     if (!sharing.size) return;
     const [said, flip] = LICENSE_SAID[licenseNow] || LICENSE_SAID['cc-by-sa-4.0'];
@@ -4549,6 +4655,8 @@
   const sharing_ = sharedAs.get('shared');
   let shared = null;  // {title, text, url, files, lost}
   const shareCard = document.getElementById('shareCard'), shareHere = document.getElementById('shareHere');
+  const shareMood = document.getElementById('shareMood');
+  shareMood.addEventListener('change', () => { if (shareMood.value && shareMood.value !== current) open(shareMood.value, true); });
   function shareDb() {
     return new Promise((resolve, reject) => {
       const open = indexedDB.open('magenta-share', 1);
@@ -4594,8 +4702,13 @@
     shareCard.querySelector('.what').textContent = 'Shared: ' + (what.join(' · ') || 'nothing')
       + (shared.lost ? ` · ${count(shared.lost, 'file', 'files')} didn't come through: share again` : '');
     shareHere.disabled = !viewer;
-    shareHere.textContent = viewer ? `Add to #${current}` : 'Sign in to add it';
-    shareHere.title = viewer ? 'Into the box here, to send; or open another Mood first to put it there' : 'It waits here until you do';
+    shareHere.textContent = viewer ? 'Add' : 'Sign in to add it';
+    shareHere.title = viewer ? 'Into the box, to send' : 'It waits here until you do';
+    // Which Mood: this one, or any other -- choosing one opens it, and Add puts it there.
+    const into = shareCard.querySelector('.into');
+    into.hidden = !viewer;
+    const choices = moods.filter(m => !m.archived || m.slug === current);
+    shareMood.innerHTML = choices.map(m => `<option value="${esc(m.slug)}"${m.slug === current ? ' selected' : ''}>#${esc(m.slug)}</option>`).join('');
   }
   shareHere.addEventListener('click', async () => {
     if (!shared || !viewer) return;
@@ -4603,8 +4716,8 @@
     shared = null; renderShare();
     await sharedKept(true);
     const words = sharedWords(sh), files = sh.files || [];
-    if (words) {  // on a line of its own, and the pictures each on theirs below
-      insertAtCaret((sayBox.value && !/\s$/.test(sayBox.value) ? '\n' : '') + words + (files.length ? '\n' : ''));
+    if (words) {  // on a line of its own; the pictures go to the tray
+      insertAtCaret((sayBox.value && !/\s$/.test(sayBox.value) ? '\n' : '') + words);
       sayBox.dispatchEvent(new Event('input'));
     }
     imagesIn(files).forEach(upload);
@@ -5304,7 +5417,8 @@
   function saveDraft() {
     if (!current) return;
     const text = sayBox.value;
-    store.set('draft:' + current, text.trim() || replyTo ? { text, reply: replyTo, at: Date.now() } : null);
+    const pictures = tray.filter(a => a.markdown).map(({ sha, markdown, url, mine, name }) => ({ sha, markdown, url, mine, name }));
+    store.set('draft:' + current, text.trim() || replyTo || pictures.length ? { text, reply: replyTo, tray: pictures, at: Date.now() } : null);
   }
   function restoreDraft() {
     const d = current && store.get('draft:' + current, null);
@@ -5312,6 +5426,11 @@
     sayBox.value = fresh ? d.text || '' : '';
     fitSay();
     if (fresh && d.reply && d.reply.id) showReply(d.reply);
+    // Its pictures: those kept with the draft, and any still going up for it.
+    tray = [...(fresh && d.tray || []).map(a => ({ ...a, pct: 100 })), ...[...flying].filter(a => a.mood === current)];
+    for (const a of tray) if (a.mine && a.sha) sharing.add(a.sha);
+    picturesThenSend = false; pictureFailed = false;
+    renderTray();
   }
   sayBox.addEventListener('input', saveDraft);
   document.addEventListener('click', e => {
@@ -5337,14 +5456,18 @@
       composer.insertAdjacentHTML('beforeend', '<span class="note memo-note">🎙 Sending as soon as it\'s saved…</span>');
       return;
     }
-    // A picture still uploading: sent once it's in the box (upload()), never its placeholder.
-    if (picturesUp) {
+    // A picture still going up: sent once it's in (picturesSettled), the Send button saying how far.
+    const up = goingUp().length;
+    if (up) {
       picturesThenSend = true;
+      renderSendWait();
       composer.querySelectorAll('.note.picture-note').forEach(el => el.remove());
-      composer.insertAdjacentHTML('beforeend', `<span class="note picture-note">🖼 Sending as soon as ${picturesUp > 1 ? 'the pictures are' : 'the picture is'} up…</span>`);
+      composer.insertAdjacentHTML('beforeend', `<span class="note picture-note">🖼 Sending as soon as ${up > 1 ? 'the pictures are' : 'the picture is'} up…</span>`);
       return;
     }
-    const text = sayBox.value.trim();
+    // The words, then the tray's pictures, each on its own line.
+    const words = sayBox.value.trim(), sentTray = tray.filter(a => a.markdown);
+    const text = [words, ...sentTray.map(a => a.markdown)].filter(Boolean).join('\n');
     // A video waiting as a card: Send makes its draft page too, as its button does, and then
     // opens that page (Sky, 15 Oct); after what's typed is sent, since it leaves for PickiPedia.
     const makeDraft = document.querySelector('#videoCards .vcard .make:not(:disabled)');
@@ -5364,6 +5487,7 @@
     // Shown at once, faint, while it's on its way; the box is free for the next.
     const pending = showPending(text);
     sayBox.value = ''; fitSay();
+    tray = []; renderTray(); saveDraft();
     try {
       const r = await fetch('/api/moods/' + encodeURIComponent(current) + '/say/', {
         method: 'POST',
@@ -5389,7 +5513,9 @@
       if (makeDraft && makeDraft.isConnected) sendOn();
     } catch (e) {
       if (pending) pending.remove();
-      if (!sayBox.value.trim()) { sayBox.value = text; fitSay(); }  // not sent: the words back where they were
+      if (!sayBox.value.trim()) { sayBox.value = words; fitSay(); }  // not sent: the words back where they were
+      if (!tray.length) { tray = sentTray; renderTray(); }                // and the pictures
+      saveDraft();
       composer.insertAdjacentHTML('beforeend', `<span class="err">${esc(e.message)}</span>`);
     } finally {
       sendBtn.disabled = false;
