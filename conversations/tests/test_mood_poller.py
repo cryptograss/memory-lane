@@ -1390,6 +1390,14 @@ class CompactTest(TestCase):
         prompts = self.run_for(('justin', '@magent should we /compact soon?'))
         self.assertTrue(prompts[0].startswith('<mood-wake'))
 
+    def test_the_command_right_after_the_mention_whatever_comes_before(self):  # Skyler, 17 Oct
+        said = 'hey @magent /compact - heres what i want to tackle in the next trek'
+        self.assertEqual(self.run_for(('justin', said)), ['/compact heres what i want to tackle in the next trek'])
+        self.assertEqual(self.run_for(('justin', 'ok @magent, /context')), ['/context'])
+        # Named in passing, away from the mention: still a question.
+        self.assertTrue(self.run_for(('justin', 'hey @magent, what does /compact keep?'))[0].startswith('<mood-wake'))
+        self.assertTrue(self.run_for(('justin', '@magent I think /compact is overdue'))[0].startswith('<mood-wake'))
+
 
 class StopAPI(FakeAPI):
     """A Mood where someone pressed stop at `stopped` (minutes after T0)."""

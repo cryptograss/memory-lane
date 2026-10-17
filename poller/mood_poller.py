@@ -871,9 +871,16 @@ COMMANDS = {
 
 def command_request(text, agent):
     """For a post like "@magent /compact [what to keep]": the command line
-    to run ('/compact what to keep'). None if the post asks something else."""
+    to run ('/compact what to keep'). None if the post asks something else.
+
+    The command either starts the post (the mention anywhere), or comes right
+    after the mention, whatever's before it: "hey @magent /compact - here's
+    what to keep" (Skyler, 17 Oct, whose compaction was taken for a message).
+    A command named in passing -- "should we /compact soon?" -- is a question."""
     rest = re.sub(rf'@{re.escape(agent)}\b', '', text or '').strip()
     match = re.match(r'/([a-z]+)(?:\s+(.*))?\Z', rest, re.S | re.I)
+    if not match:
+        match = re.search(rf'@{re.escape(agent)}\b[\s,:]*/([a-z]+)\b(?:[\s:,\-\u2013\u2014]+(.*))?\Z', text or '', re.S | re.I)
     if not match or match.group(1).lower() not in COMMANDS:
         return None
     name, args = match.group(1).lower(), (match.group(2) or '').strip()

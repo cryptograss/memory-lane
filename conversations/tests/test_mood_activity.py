@@ -184,6 +184,12 @@ class ActivityTest(TestCase):
         self.add(self.justin, 60, '<task-notification>\n<status>failed</status>\n</task-notification>')
         self.assertIsNone(self.now())
 
+    def test_compacting_is_said_for_the_command_after_a_greeting_too(self):
+        from conversations.services.mood_view import command_doing
+        self.assertEqual(command_doing('hey @magent /compact - keep the notes', 'magent'), 'compacting')
+        self.assertEqual(command_doing('@magent /compact', 'magent'), 'compacting')
+        self.assertIsNone(command_doing('@magent should we /compact soon?', 'magent'))
+
     def test_a_compact_typed_into_a_session_is_compacting(self):
         self.add(self.magent, 900, [{'type': 'text', 'text': 'done'}], stop_reason='end_turn')
         self.add(self.justin, 20, {'type': 'slash_command', 'command_name': '/compact',

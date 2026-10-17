@@ -998,9 +998,10 @@ COMMAND_DOING = {'compact': 'compacting', 'context': 'measuring its context', 'u
 
 
 def command_doing(text, agent):
-    """'compacting' for a post like "@magent /compact ..."; None for anything else."""
+    """'compacting' for a post like "@magent /compact ..." (or "hey @magent /compact ...",
+    as the poller's command_request reads it); None for anything else."""
     rest = re.sub(rf'@{re.escape(agent)}\b', '', text or '').strip()
-    match = re.match(r'/([a-z]+)\b', rest, re.I)
+    match = re.match(r'/([a-z]+)\b', rest, re.I) or re.search(rf'@{re.escape(agent)}\b[\s,:]*/([a-z]+)\b', text or '', re.I)
     return COMMAND_DOING.get(match.group(1).lower()) if match else None
 
 
