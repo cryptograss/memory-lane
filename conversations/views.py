@@ -995,7 +995,8 @@ def scrub_texts(texts):
     return texts, False
 
 
-def import_lines(lines, *, era_name='Current Working Era (Era N)', source='unknown', username='justin'):
+def import_lines(lines, *, era_name='Current Working Era (Era N)', source='unknown', username='justin',
+                 assistant='magent'):
     """Scrub, import and heap-assign transcript lines: (imported, skipped, errors).
 
     Every way into the record goes through here -- the watcher's ingest and
@@ -1021,7 +1022,7 @@ def import_lines(lines, *, era_name='Current Working Era (Era N)', source='unkno
 
             # Import the line
             event, created = import_line_from_claude_code_v2(
-                line, era, f"ingest-{source}", username, keep_tool_output=scrubbed
+                line, era, f"ingest-{source}", username, keep_tool_output=scrubbed, assistant=assistant
             )
 
             if event is EVENT_TYPE_WE_DO_NOT_HANDLE_YET:

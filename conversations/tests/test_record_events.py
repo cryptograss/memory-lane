@@ -127,16 +127,22 @@ class RecordEventsTest(TestCase):
         self.assertEqual((again['imported'], again['skipped']), (0, 5))
         self.assertEqual(Message.objects.filter(session_id=session).count(), 6)  # five, and the turn-result
 
-    def test_any_agent_posts_events_but_only_magent_posts_claude_codes_stream(self):
+    def test_any_agent_posts_events_or_claude_codes_stream_as_itself(self):
         ThinkingEntity.objects.get_or_create(name='re', defaults={'is_biological_human': False})
-        session = str(uuid.uuid4())
+        session, raw_session = str(uuid.uuid4()), str(uuid.uuid4())
         with override_settings(MOOD_RUNNER_KEYS={'re': KEY}):
             self.assertEqual(self.post(a_turn(), session=session).status_code, 200)
-            raw = self.client.post('/api/moods/m26/stream/', json.dumps({'session_id': session, 'events': []}),
+            # re on Anthropic's models runs on Claude Code (the poller's Harnesses): its stream as it is.
+            reply = {'type': 'assistant', 'uuid': str(uuid.uuid4()), 'session_id': raw_session,
+                     'timestamp': '2026-10-19T18:00:00Z',
+                     'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': 'On Claude Code.'}]}}
+            raw = self.client.post('/api/moods/m26/stream/', json.dumps({'session_id': raw_session,
+                                                                           'events': [reply]}),
                                    content_type='application/json', **AUTH)
-            self.assertEqual(raw.status_code, 400)
-        said = Message.objects.filter(session_id=session, sender_id__in=('re', 'magent'))
+            self.assertEqual(raw.status_code, 200)
+        said = Message.objects.filter(session_id__in=(session, raw_session), sender_id__in=('re', 'magent'))
         self.assertEqual(set(said.values_list('sender_id', flat=True)), {'re'})
+        self.assertTrue(Message.objects.filter(session_id=raw_session, sender_id='re').exists())
         self.assertFalse(ThinkingEntity.objects.get(name='re').is_biological_human)
 
     def test_a_runner_cannot_put_words_in_a_persons_mouth(self):

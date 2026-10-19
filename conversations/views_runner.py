@@ -34,7 +34,7 @@ from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import ConversationParticipant, Message, Mood, MoodSession
+from .models import ConversationParticipant, Message, Mood, MoodSession, ThinkingEntity
 
 SOURCE = 'mood-runner'  # rows are filed as 'ingest-mood-runner'
 MAX_EVENTS = 500
@@ -159,10 +159,12 @@ def api_stream(request, slug):
     events_v1 = body.get('format') == 'events/1'
     if not events_v1 and body.get('harness', 'claude-code') != 'claude-code':
         return JsonResponse({'error': 'a harness other than claude-code posts format events/1'}, status=400)
-    # Claude Code's own stream is filed by the Claude Code importer, which
-    # speaks for magent; any agent can post events/1.
-    if not events_v1 and agent != 'magent':
-        return JsonResponse({'error': f'{agent} posts format events/1'}, status=400)
+    # Claude Code's own stream is filed by the Claude Code importer, as from
+    # the agent whose key posted it (re, on Anthropic's models: the poller's
+    # Harnesses); any agent can post events/1. Either way, one the record
+    # knows: a key alone makes nobody.
+    if not ThinkingEntity.objects.filter(name=agent).exists():
+        return JsonResponse({'error': f'no entity {agent}'}, status=400)
 
     # Launched for this Mood: it belongs here, whatever else might be guessed.
     if MoodSession.mood_for(session_id) != mood:
@@ -179,7 +181,8 @@ def api_stream(request, slug):
     from django.utils import timezone
     now_iso = timezone.now().isoformat()
     lines = [line for line in (stream_line(e, now_iso) for e in events) if line]
-    imported, skipped, errors = import_lines(lines, source=SOURCE, username=agent) if lines else (0, 0, [])
+    imported, skipped, errors = (import_lines(lines, source=SOURCE, username=agent, assistant=agent) if lines
+                                 else (0, 0, []))
     # The effort the runner launched the turn at. Stream events don't carry
     # it, and the transcript that does may never reach a watcher (the turn
     # ran in another container), so the runner says it with each post.

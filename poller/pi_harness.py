@@ -80,6 +80,7 @@ class PiTranslator:
         self.cost = 0.0
         self.usage = {'input': 0, 'output': 0, 'cache_read': 0, 'cache_write': 0}
         self.last_stop = None
+        self.error = None  # the vendor's refusal, when a call failed: Pi keeps it on the message
         self.reply = ''
         self.started = time.monotonic()
         self.settled = False
@@ -108,10 +109,13 @@ class PiTranslator:
         if kind == 'agent_settled':
             self.settled = True
             outcome = ('canceled' if raw.get('aborted') else 'failed' if self.last_stop == 'error' else 'completed')
-            return [self.event('turn_ended', iso(time.time() * 1000), id=str(uuid.uuid4()), outcome=outcome,
+            ended = self.event('turn_ended', iso(time.time() * 1000), id=str(uuid.uuid4()), outcome=outcome,
                                stop_reason=STOP_REASONS.get(self.last_stop, 'end_turn'),
                                cost_usd=round(self.cost, 6), usage=dict(self.usage),
-                               duration_ms=int((time.monotonic() - self.started) * 1000))]
+                               duration_ms=int((time.monotonic() - self.started) * 1000))
+            if outcome == 'failed' and self.error:
+                ended['error'] = self.error
+            return [ended]
         return []
 
     def message(self, message):
@@ -135,6 +139,10 @@ class PiTranslator:
             self.usage[k] += int(v or 0)
         mine['cost'] = round(cost, 6)  # Pi's own price for the call: the vendor's, not a guess
         self.last_stop = message.get('stopReason')
+        if self.last_stop == 'error':
+            # Without this the Mood saw a turn end with no word and no reason: re on Anthropic,
+            # 2026-10-18 and -19 ("400 ... Third-party apps now draw from your extra usage").
+            self.error = str(message.get('errorMessage') or 'the model call failed')[:500]
         model = message.get('model')
         out = []
         blocks = [b for b in message.get('content') or () if isinstance(b, dict)]
@@ -307,6 +315,14 @@ class PiWaker:
     def can_wake(self, session_id):
         return self.find(session_id) is not None
 
+    def last_touched(self, session_id):
+        """When `session_id` last ran (its file's last write), or None."""
+        path = self.find(session_id)
+        try:
+            return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc) if path else None
+        except OSError:
+            return None
+
     def cwd_for(self, session_id):
         path = self.find(session_id)
         if path is None:
@@ -457,5 +473,8 @@ class PiWaker:
             err = (proc.stderr.read() or '').strip()[:500]
             self.last_result = {'subtype': 'error', 'run_cost_usd': translator.cost}
             raise RuntimeError(f'pi exited {proc.returncode} without settling: {err}')
-        self.last_result = {'subtype': 'success', 'run_cost_usd': translator.cost, 'stop_reason': translator.last_stop}
+        self.last_result = {'subtype': 'error' if translator.error else 'success', 'run_cost_usd': translator.cost,
+                            'stop_reason': translator.last_stop}
+        if translator.error:
+            self.last_result['error'] = translator.error
         return new_session_id, translator.reply.strip()

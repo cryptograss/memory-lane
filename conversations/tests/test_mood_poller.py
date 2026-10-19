@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import TestCase
 
-from poller.mood_poller import SILENT, ClaudeCodeWaker, MoodPoller, project_dir_name
+from poller.mood_poller import SILENT, ClaudeCodeWaker, Harnesses, MoodPoller, project_dir_name
 
 T0 = datetime(2026, 9, 29, 18, 0, tzinfo=timezone.utc)
 
@@ -1892,3 +1892,81 @@ class SecondPollerTest(TestCase):
                                      'in_flight': {'fork-x': flight}}))
         poller = MoodPoller(FakeAPI(), FakeWaker(), state_path=state, end_orphans=lambda s: False)
         self.assertEqual(len(poller.state['cut_off']), 1)
+
+
+class HarnessesTest(TestCase):
+    """Two harnesses, the Mood's model choosing: Anthropic's on Claude Code (the subscription
+    refuses Pi), other vendors' on Pi; switching back resumes where that harness left off."""
+
+    def setUp(self):
+        self.code, self.pi = FakeWaker(local=('c-1',), reply='on Claude Code'), FakeWaker(local=('p-2', 'p-1'),
+                                                                                           reply='on Pi')
+        self.code.last_result, self.pi.last_result = {'subtype': 'success'}, {'subtype': 'error', 'error': 'refused'}
+        self.both = Harnesses({'pi': self.pi, 'claude-code': self.code}, 'pi')
+
+    def test_the_model_chooses_the_harness(self):
+        for model, harness in (('', 'pi'), (None, 'pi'), ('openrouter/deepseek/deepseek-v4-pro', 'pi'),
+                               ('opus', 'claude-code'), ('anthropic/claude-sonnet-5-5', 'claude-code'),
+                               ('claude-opus-5-5', 'claude-code'),
+                               ('openrouter/anthropic/claude-opus-5.5', 'pi')):  # OpenRouter's, by the call
+            self.assertEqual(self.both.harness_for(model), harness, model)
+        self.assertEqual(Harnesses({'claude-code': self.code}, 'claude-code').harness_for('moonshotai/kimi-k3'),
+                         'claude-code')  # no Pi here: the agent's own
+
+    def test_each_harness_gets_the_model_as_it_names_it(self):
+        self.both.wake('c-1', 'hi', model='anthropic/claude-opus-5-5')
+        self.assertEqual(self.code.options['model'], 'claude-opus-5-5')
+        self.assertEqual(self.both.last_result, {'subtype': 'success'})
+        self.both.wake('p-1', 'hi', model='openrouter/moonshotai/kimi-k3')
+        self.assertEqual(self.pi.options['model'], 'openrouter/moonshotai/kimi-k3')
+        self.assertEqual(self.both.last_result['error'], 'refused')
+        # A command goes to its session's harness; a model that harness doesn't run is left out.
+        self.both.wake('c-1', '/compact', model='openrouter/moonshotai/kimi-k3', harness='claude-code')
+        self.assertIsNone(self.code.options['model'])
+
+    def test_a_session_is_its_harness(self):
+        self.assertEqual((self.both.owner('c-1'), self.both.owner('p-1'), self.both.owner('x')),
+                         ('claude-code', 'pi', None))
+        self.assertTrue(self.both.can_wake('c-1') and self.both.can_wake('p-2'))
+
+    def poller(self, sessions, model=''):
+        state = Path(tempfile.mkdtemp()) / 'state.json'
+        state.write_text(json.dumps({'since': (T0 - timedelta(hours=1)).isoformat(), 'handled': [], 'wakes': []}))
+        api = FakeAPI([mention('m26', dict(turn('a', 'justin', 0, '@re hello'), via='web'))],
+                      sessions={'m26': sessions})
+        self.streamed = []
+        poller = MoodPoller(api, self.both, agent='re', state_path=state, now=lambda: T0 + timedelta(minutes=5),
+                            streamer=lambda slug, session, forked_from=None, harness=None:
+                            self.streamed.append(harness))
+        poller.settings = {'m26': {'model': model}}
+        return poller
+
+    def test_moving_to_a_harness_with_no_session_here_starts_one_from_the_record(self):
+        self.poller(['p-2', 'p-1'], model='anthropic/claude-opus-5-5').poll_once()
+        self.assertEqual(self.pi.woken, [])
+        session, prompt = self.code.woken[0]
+        self.assertIsNone(session)
+        self.assertTrue(prompt.startswith('<harness-switch mood="m26">'))
+        self.assertIn('through Pi', prompt)
+        self.assertIn('read_mood "m26"', prompt)
+        self.assertEqual(self.streamed, ['claude-code'])
+
+    def test_switching_back_resumes_that_harness_where_it_left_off(self):
+        # Pi, then Claude Code (c-1 is newest), then the menu back to Pi's DeepSeek.
+        self.poller(['c-1', 'p-2', 'p-1'], model='openrouter/deepseek/deepseek-v4-pro').poll_once()
+        self.assertEqual(self.code.woken, [])
+        session, prompt = self.pi.woken[0]
+        self.assertEqual(session, 'p-2')
+        self.assertIn('runs on Pi again', prompt)
+        self.assertIn('through Claude Code', prompt)
+        self.assertEqual(self.streamed, ['pi'])
+
+    def test_staying_on_one_harness_is_as_before(self):
+        self.poller(['p-2', 'p-1']).poll_once()
+        session, prompt = self.pi.woken[0]
+        self.assertEqual(session, 'p-2')
+        self.assertNotIn('harness-switch', prompt)
+
+    def test_the_newest_session_elsewhere_is_still_not_ours(self):
+        self.poller(['remote', 'p-2'], model='opus').poll_once()
+        self.assertEqual((self.code.woken, self.pi.woken), ([], []))

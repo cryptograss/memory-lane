@@ -65,9 +65,19 @@ class StreamTest(TestCase):
         self.assertEqual(self.post([], auth={'HTTP_AUTHORIZATION': 'Bearer nope'}).status_code, 401)
         self.assertEqual(self.post([], auth={}).status_code, 401)
 
-    def test_a_key_speaks_only_for_agents_an_importer_can_speak_for(self):
+    def test_a_key_speaks_only_for_an_agent_the_record_knows(self):
         with override_settings(MOOD_RUNNER_KEYS={'otheragent': KEY}):
             self.assertEqual(self.post([]).status_code, 400)
+        self.assertFalse(ThinkingEntity.objects.filter(name='otheragent').exists())
+
+    def test_another_agents_claude_code_turn_is_filed_as_its_own(self):
+        # re on Anthropic's models runs on Claude Code (the poller's Harnesses), posting with its own key.
+        ThinkingEntity.objects.get_or_create(name='re', defaults={'is_biological_human': False})
+        with override_settings(MOOD_RUNNER_KEYS={'re': KEY}):
+            self.assertEqual(self.post(list(self.turn())).status_code, 200)
+        senders = set(Message.objects.filter(session_id=self.session).values_list('sender_id', flat=True))
+        self.assertIn('re', senders)
+        self.assertNotIn('magent', senders)
 
     # --- a wake with full tools passes them on --------------------------------------
 

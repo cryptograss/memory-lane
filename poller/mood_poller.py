@@ -41,6 +41,8 @@ attributes it to 'mood-poller' rather than to the owner of the container.
 
 Harness independence: everything specific to Claude Code is in
 ClaudeCodeWaker. Another harness needs another waker, nothing else.
+With two (--also-harness), Harnesses chooses between them per turn, by
+the Mood's model: Anthropic's on Claude Code, other vendors' on Pi.
 
     python poller/mood_poller.py --agent magent            # run forever
     python poller/mood_poller.py --agent magent --once --dry-run
@@ -628,6 +630,85 @@ class ClaudeCodeWaker:
                 return
 
 
+# Anthropic's models: the menu's short names, Claude Code's own names, and Pi's
+# (anthropic/<model>). Through OpenRouter (openrouter/anthropic/...) they're
+# OpenRouter's, billed by the call, and run anywhere.
+ANTHROPIC_SHORT = ('opus', 'sonnet', 'fable', 'haiku')
+HARNESS_NAMES = {'claude-code': 'Claude Code', 'pi': 'Pi'}
+
+
+def is_anthropic(model):
+    model = (model or '').strip()
+    return model in ANTHROPIC_SHORT or model.startswith(('anthropic/', 'claude-'))
+
+
+class Harnesses:
+    """Two harnesses behind one waker, chosen per turn by the model asked for.
+
+    Anthropic's models run on Claude Code, on the subscription: Anthropic
+    refuses the subscription to any other harness (through Pi, 400 "Third-party
+    apps now draw from your extra usage": re, 2026-10-18 and -19). Any other
+    vendor's (vendor/model) run on Pi. No model: the agent's own harness, the
+    first. So a Mood's model menu moves an agent between harnesses, and back.
+
+    A session belongs to the harness that keeps it; which one a turn resumes
+    is MoodPoller.session_for's to choose. Otherwise this is a waker like the
+    two it holds."""
+
+    def __init__(self, wakers, default):
+        self.wakers, self.default = dict(wakers), default
+        self._local = threading.local()
+
+    def harness_for(self, model):
+        model = (model or '').strip()
+        if not model:
+            return self.default
+        wanted = 'claude-code' if is_anthropic(model) else 'pi' if '/' in model else self.default
+        return wanted if wanted in self.wakers else self.default
+
+    def owner(self, session_id):
+        """Which harness keeps `session_id` on this machine, or None."""
+        return next((name for name, waker in self.wakers.items() if waker.can_wake(session_id)), None)
+
+    def can_wake(self, session_id):
+        return self.owner(session_id) is not None
+
+    @property
+    def last_result(self):
+        return getattr(self.wakers.get(getattr(self._local, 'harness', None)), 'last_result', None)
+
+    def wake(self, session_id, prompt, model=None, harness=None, **options):
+        """Run one turn on `harness` (or the model's). A model the harness doesn't
+        run (a command sent to a session of the other) is left for its default."""
+        harness = harness or self.harness_for(model)
+        self._local.harness = harness
+        if model and self.harness_for(model) != harness:
+            model = None
+        elif harness == 'claude-code' and model and model.startswith('anthropic/'):
+            model = model[len('anthropic/'):]  # as Claude Code names it
+        return self.wakers[harness].wake(session_id, prompt, model=model, **options)
+
+    def mine(self, session_id, method, default):
+        waker = self.wakers.get(self.owner(session_id))
+        return getattr(waker, method)(session_id) if hasattr(waker, method) else default
+
+    def cold_read_usd(self, session_id):
+        return self.mine(session_id, 'cold_read_usd', 0.0)
+
+    def last_touched(self, session_id):
+        return self.mine(session_id, 'last_touched', None)
+
+    def catalog(self):
+        """Pi's list of what it can run, with Anthropic's models usable when Claude Code is here."""
+        pi = self.wakers.get('pi')
+        found = pi.catalog() if hasattr(pi, 'catalog') else None
+        if found and 'claude-code' in self.wakers:
+            for vendor in found.get('vendors', ()):
+                if vendor.get('name') == 'anthropic':
+                    vendor['usable'] = True
+        return found
+
+
 LETTER = Path(__file__).with_name('letter.md')  # magent's; another agent brings its own (--letter)
 
 
@@ -667,6 +748,32 @@ def lost_session_opening(slug, session_id, letter_path=LETTER, agent='magent'):
             'summary, and get_message_context for anything it points to) until you know what is settled and '
             'what is open. Then answer what was asked.', '',
             letter, '</session-lost>', '']
+
+
+def harness_back_opening(slug, was, now, since=None):
+    """What a session is told when the Mood's model brings its harness back:
+    that it spoke here meanwhile, through the other, in sessions it hasn't seen."""
+    since_text = f' (from about {since:%Y-%m-%d %H:%M}Z)' if since else ''
+    return [f'<harness-switch mood="{slug}">',
+            f"This Mood's model runs on {HARNESS_NAMES.get(now, now)} again, so this turn resumes your last "
+            f'session here on it. Since that session\'s last turn you have also answered here through '
+            f"{HARNESS_NAMES.get(was, was)}, in sessions this one hasn't seen. Before you answer, read what you "
+            f'said there: read_mood "{slug}"{since_text}.', '</harness-switch>', '']
+
+
+def harness_new_opening(slug, was, now, letter_path=LETTER, agent='magent'):
+    """What a session is told when the Mood's model moves it to a harness that
+    has no session of its here: that it has been here, through the other, and
+    where to find what it knew."""
+    letter = letter_text(letter_path, agent)
+    return [f'<harness-switch mood="{slug}">',
+            f"You have been in this Mood before, through {HARNESS_NAMES.get(was, was)}. This Mood's model now "
+            f'runs on {HARNESS_NAMES.get(now, now)}, which cannot resume those sessions, so this one has just '
+            'started, with none of that history in it. The record kept everything: what you said here, what '
+            'was asked, what was settled. Before you answer, read the letter you left yourself, below; then '
+            f'catch up on this Mood from the record (read_mood "{slug}", from its start or its latest summary, '
+            'and get_message_context for anything it points to) until you know what is settled and what is '
+            'open. Then answer what was asked.', '', letter, '</harness-switch>', '']
 
 
 # Greeting someone (Justin, 2026-10-06: the greetings sounded generic). In every
@@ -1389,11 +1496,15 @@ class MoodPoller:
             cut_off = [f for f in self.state['cut_off'] if {t['id'] for t in owed} & {t['id'] for t in f['turns']}]
             if cut_off:
                 prompt = cut_off_note(cut_off[0]['started']) + prompt
+        session, switched = (None, []) if fresh or lost or commands else self.session_for(slug, sessions)
+        if commands:
+            session = sessions[0]
         if fresh:
             prompt = '\n'.join(new_mood_opening(slug, self.letter, self.agent)) + prompt
         elif lost:
             prompt = '\n'.join(lost_session_opening(slug, sessions[0], self.letter, self.agent)) + prompt
-        session = None if fresh or lost else sessions[0]
+        elif switched:
+            prompt = '\n'.join(switched) + prompt
         if self.dry_run:
             logger.info(f'{slug}: would wake {session or "a new session"} {"with full tools " if full else ""}with:\n{prompt}')
             return settled, 'woken'
@@ -1408,6 +1519,8 @@ class MoodPoller:
                        full=full)
         if commands:
             del options['effort']
+            if hasattr(self.waker, 'owner'):  # a command is for the session it names, on its own harness
+                options['harness'] = self.waker.owner(session)
         # Stopped from the Mood after what woke it: end the turn.
         options['since'] = owed[-1]['created_at']
         if full and self.knob(slug, 'ultracode'):
@@ -1508,13 +1621,17 @@ class MoodPoller:
     def run_turn_for(self, slug, session_id, prompt, **options):
         """Wake one turn; (outcome, reply, what it cost). Safe to run beside others."""
         new_session = options.pop('new_session', None) or str(uuid.uuid4())
+        if hasattr(self.waker, 'harness_for'):  # two harnesses: settled here, so the poster suits it
+            options['harness'] = options.get('harness') or self.waker.harness_for(options.get('model'))
         poster = None
         if self.streamer:
             # A fork goes on from the session it copied; a poster that can say
             # so (pi_harness.EventsPoster) is told which.
-            takes_parent = 'forked_from' in getattr(getattr(self.streamer, '__code__', None), 'co_varnames', ())
-            poster = (self.streamer(slug, new_session, forked_from=session_id) if takes_parent
-                      else self.streamer(slug, new_session))
+            takes = getattr(getattr(self.streamer, '__code__', None), 'co_varnames', ())
+            extra = {'forked_from': session_id} if 'forked_from' in takes else {}
+            if 'harness' in takes and options.get('harness'):
+                extra['harness'] = options['harness']
+            poster = self.streamer(slug, new_session, **extra)
         if poster is not None and options.get('effort'):
             poster.effort = options['effort']
         if poster is not None:
@@ -1536,8 +1653,11 @@ class MoodPoller:
         cost = (getattr(self.waker, 'last_result', None) or {}).get('run_cost_usd')
         ending = (getattr(self.waker, 'last_result', None) or {}).get('subtype') or ''
         command = (getattr(self.waker, 'last_result', None) or {}).get('local_command')
+        error = (getattr(self.waker, 'last_result', None) or {}).get('error')
         said = ('stayed silent' if _SILENT_REPLY.match(reply or '') else f'ran /{command}' if command
                 else f'replied {len(reply)} chars' if reply else f'ended without a word ({ending or "no reply"})')
+        if error:
+            said += f': {error}'
         logger.info(f'{slug}: ' + (f'woke {session_id} as {new_session}' if session_id else f'started {new_session}')
                     + f'; {said}'
                     + (f'; ${cost:.4f}' if isinstance(cost, (int, float)) else '')
@@ -1698,6 +1818,24 @@ class MoodPoller:
         return done
 
     OURS_FOR = timedelta(seconds=60)
+
+    def session_for(self, slug, sessions):
+        """(session, opening): which of the agent's sessions in `slug` (newest first) a turn there
+        resumes, and what it's told first. The newest, unless the Mood's model runs on the other of two
+        harnesses (Harnesses): then that harness's newest, told it has been away; with none, a new
+        session (None), told where to catch up. Only asked once the newest is this machine's."""
+        harness_for = getattr(self.waker, 'harness_for', None)
+        if not sessions or harness_for is None:
+            return (sessions[0] if sessions else None), []
+        harness, was = harness_for(self.knob(slug, 'model')), self.waker.owner(sessions[0])
+        if was in (None, harness):
+            return sessions[0], []
+        own = next((s for s in sessions if self.waker.wakers[harness].can_wake(s)), None)
+        if own:
+            logger.info(f'{slug}: back on {harness}, from {own}')
+            return own, harness_back_opening(slug, was, harness, self.waker.last_touched(own))
+        logger.info(f'{slug}: moving to {harness}: a new session there')
+        return None, harness_new_opening(slug, was, harness, self.letter, self.agent)
 
     def ours(self, slug):
         """Whether this runner can wake the agent in `slug`: its newest session there
@@ -1895,8 +2033,14 @@ class MoodPoller:
         sessions = self.api.sessions(slug, self.agent)
         if not sessions or not self.waker.can_wake(sessions[0]):
             return 'elsewhere'
+        session, switched = self.session_for(slug, sessions)
+        if session is None:
+            # Its model moved it to a harness with no session here: a mention starts one, a look doesn't.
+            logger.info(f'{slug}: not considering: no session here on the harness its model runs on')
+            return 'elsewhere'
+        prompt = '\n'.join(switched) + prompt if switched else prompt
         if self.dry_run:
-            logger.info(f'{slug}: would consider, waking {sessions[0]} with:\n{prompt}')
+            logger.info(f'{slug}: would consider, waking {session} with:\n{prompt}')
             return 'silent'
         st = self.state['consider'][slug]
         st['wakes'] = [w for w in st.get('wakes', []) if self.now() - parse_time(w) < timedelta(hours=1)]
@@ -1905,12 +2049,12 @@ class MoodPoller:
         # The cap is for what the consideration does, on top of reading the
         # session: a cold read of a long one alone can pass $4, and a cap below
         # it ends the turn after its first response, before it can look anything up.
-        cold = getattr(self.waker, 'cold_read_usd', lambda s: 0.0)(sessions[0])
+        cold = getattr(self.waker, 'cold_read_usd', lambda s: 0.0)(session)
         options = dict(effort=self.knob(slug, 'consider_effort', self.consider_effort), budget=self.consider_budget + cold,
                        model=self.knob(slug, 'model'))
 
         def turn():
-            outcome, reply, cost = self.run_turn_for(slug, sessions[0], prompt, **options)
+            outcome, reply, cost = self.run_turn_for(slug, session, prompt, **options)
             if outcome == 'failed' or not (reply or '').strip():
                 return 'failed', cost  # a turn that said nothing didn't speak: the wait still doubles
             return ('silent' if _SILENT_REPLY.match(reply) else 'spoke'), cost
@@ -2054,6 +2198,9 @@ def main(argv=None):
     parser.add_argument('--harness', choices=('claude-code', 'pi'), default='claude-code',
                         help="What runs the agent's turns: Claude Code, or Pi (poller/pi_harness.py), which "
                              "posts memory-lane's own record events")
+    parser.add_argument('--also-harness', choices=('claude-code', 'pi'), default=None,
+                        help="A second harness, for the models the first doesn't run (Harnesses): a Mood whose "
+                             "model is Anthropic's runs on Claude Code, another vendor's (vendor/model) on Pi")
     parser.add_argument('--pi', default='pi', help="Pi's executable, with --harness pi")
     parser.add_argument('--pi-sessions', default='~/.local/state/magenta/pi-sessions',
                         help='Where Pi keeps the sessions the runner starts and forks')
@@ -2112,24 +2259,36 @@ def main(argv=None):
     # The runner's key, from the vault via the hunter deploy. Without it,
     # woken turns still reach their Mood through the transcript watcher.
     key = runner_key()
-    if args.harness == 'pi':
-        try:
-            from poller.pi_harness import EventsPoster, PiWaker
-        except ImportError:  # run as a script from its own directory, as deployed
-            from pi_harness import EventsPoster, PiWaker
-        waker = PiWaker(pi=args.pi, model=args.model, session_dir=args.pi_sessions, new_cwd=args.new_cwd,
-                        quiet_limit=args.quiet_limit)
-        # No transcript watcher reads Pi's sessions: without a key, nothing reaches the Mood.
-        streamer = ((lambda slug, session, forked_from=None: EventsPoster(
-            args.base, key, slug, session, harness=waker.harness(), forked_from=forked_from)) if key else None)
-        logger.info(f'waking {args.agent} through {waker.harness()}, streaming its turns to their Moods'
-                    if key else 'no runner key: a Pi turn reaches no Mood without one')
-    else:
-        waker = ClaudeCodeWaker(model=args.model, full_timeout=args.full_timeout, quiet_limit=args.quiet_limit,
+
+    def harness(name, model):
+        """(waker, streamer) for one harness."""
+        if name == 'pi':
+            try:
+                from poller.pi_harness import EventsPoster, PiWaker
+            except ImportError:  # run as a script from its own directory, as deployed
+                from pi_harness import EventsPoster, PiWaker
+            waker = PiWaker(pi=args.pi, model=model, session_dir=args.pi_sessions, new_cwd=args.new_cwd,
+                            quiet_limit=args.quiet_limit)
+            # No transcript watcher reads Pi's sessions: without a key, nothing reaches the Mood.
+            logger.info(f'waking {args.agent} through {waker.harness()}, streaming its turns to their Moods'
+                        if key else 'no runner key: a Pi turn reaches no Mood without one')
+            return waker, ((lambda slug, session, forked_from=None: EventsPoster(
+                args.base, key, slug, session, harness=waker.harness(), forked_from=forked_from)) if key else None)
+        waker = ClaudeCodeWaker(model=model, full_timeout=args.full_timeout, quiet_limit=args.quiet_limit,
                                 new_cwd=args.new_cwd)
-        streamer = (lambda slug, session: StreamPoster(args.base, key, slug, session)) if key else None
-        logger.info('streaming woken turns straight to their Moods' if key else
+        logger.info('streaming Claude Code turns straight to their Moods' if key else
                     'no MEMORY_LANE_RUNNER_KEY: woken turns reach Moods through the transcript watcher')
+        return waker, ((lambda slug, session, forked_from=None: StreamPoster(args.base, key, slug, session))
+                       if key else None)
+
+    waker, streamer = harness(args.harness, args.model)
+    if args.also_harness and args.also_harness != args.harness:
+        # --model is the first's; the second only runs a model named for it, so it needs no default.
+        other, other_streamer = harness(args.also_harness, None)
+        waker = Harnesses({args.harness: waker, args.also_harness: other}, args.harness)
+        streamers = {args.harness: streamer, args.also_harness: other_streamer}
+        streamer = ((lambda slug, session, forked_from=None, harness=None: streamers[harness or args.harness](
+            slug, session, forked_from=forked_from)) if key else None)
     # The screen is a Claude Code call; with Pi, the agent looks for itself.
     screen = (None if args.screen_model == 'none' or args.harness == 'pi'
               else ClaudeCodeScreen(agent=args.agent, model=args.screen_model))

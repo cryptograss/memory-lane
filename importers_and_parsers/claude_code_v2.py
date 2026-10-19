@@ -279,7 +279,7 @@ def poller_or(user, content, event):
     return user
 
 
-def import_line_from_claude_code_v2(line, era, filename, username='justin', keep_tool_output=True):
+def import_line_from_claude_code_v2(line, era, filename, username='justin', keep_tool_output=True, assistant='magent'):
         """
         keep_tool_output=False stores tool results with their link but no
         output, whatever TOOL_RESULT_CONTENT_CHARS says; ingest passes it
@@ -295,9 +295,11 @@ def import_line_from_claude_code_v2(line, era, filename, username='justin', keep
             name=username,
             defaults={'is_biological_human': True}
         )
-        # magent is always the AI assistant
+        # The AI assistant: magent, unless the line came from another agent's
+        # own harness (the runner's stream says whose, by its key). Still
+        # called `magent` below, as it was when magent was the only one.
         magent, _ = ThinkingEntity.objects.get_or_create(
-            name='magent',
+            name=assistant,
             defaults={'is_biological_human': False}
         )
 

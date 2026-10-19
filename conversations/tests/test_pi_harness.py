@@ -56,6 +56,19 @@ class TranslatorTest(TestCase):
         _, events = translated()
         self.assertFalse(any('expert coding assistant' in json.dumps(e) for e in events))
 
+    def test_a_refused_call_ends_the_turn_saying_why(self):
+        # re on Anthropic through Pi, 2026-10-19: the subscription refused, and the Mood saw nothing.
+        t = PiTranslator(SESSION)
+        refusal = ('400 {"type":"error","error":{"type":"invalid_request_error","message":"Third-party apps now '
+                   'draw from your extra usage, not your plan limits."}}')
+        t.feed({'type': 'session', 'timestamp': '2026-10-19T17:29:36.413Z'})
+        said = t.feed({'type': 'message_end', 'message': {'role': 'assistant', 'content': [], 'stopReason': 'error',
+                                                          'errorMessage': refusal, 'usage': {}}})
+        self.assertEqual(said, [])
+        ended = t.feed({'type': 'agent_settled'})[0]
+        self.assertEqual(ended['outcome'], 'failed')
+        self.assertIn('Third-party apps', ended['error'])
+
     def test_a_compaction_and_an_aborted_run(self):
         t = PiTranslator(SESSION)
         compacted = t.feed({'type': 'compaction_end', 'reason': 'threshold',
